@@ -28,19 +28,70 @@ serial; WebNFC reaches NDEF only.
 
 ## Readers
 
-The tool drives four kinds of reader; the workbench offers those the platform
-exposes and remembers the last choice.
+The tool drives four kinds of reader — five in M5cet Desktop; the workbench
+offers those the platform exposes, says under each choice which reader it is
+for (and, folded, *Which choice fits my reader?*), and remembers the last choice.
 
-| Reader | Web | Android |
-|--------|-----|---------|
-| **This device** (internal antenna) | WebNFC (`NDEFReader`, Android Chrome) | `NfcAdapter` reader-mode |
-| **USB** PC/SC (CCID) — ACR122U, ACR1252U… | WebUSB | USB host (CCID) |
-| **Bluetooth** (PN532 / vendor bridge) | Web Bluetooth | BLE (interface; connect your reader) |
-| **Serial** (PN532 on USB-serial) | Web Serial | — |
+| Reader | Web | M5cet Desktop | Android |
+|--------|-----|---------------|---------|
+| **System reader (PC/SC)** — a USB smart-card reader (CCID): ACR122U, ACR1252U, ACR1281… (6.13.1) | — | PC/SC through the system's smart-card service (`desktop-pcsc`, first in the list) | — |
+| **This device** (internal antenna) | WebNFC (`NDEFReader`, Android Chrome) | — | `NfcAdapter` reader-mode |
+| **USB** CCID directly | WebUSB — only where the OS does not hold the reader (below) | WebUSB (same limits) | USB host (CCID) |
+| **Bluetooth** (PN532 on a BLE module: Nordic UART, HM-10) | Web Bluetooth | Web Bluetooth (native chooser, 6.13.1) | BLE (interface; connect your reader) |
+| **Serial** (PN532 on a USB-serial adapter, or on a Bluetooth SPP module such as HC-05/06) | Web Serial | Web Serial | — |
 
 WebNFC needs Android Chrome; desktop browsers reach cards only through a USB /
 serial / Bluetooth reader. The workbench feature-detects each transport and says
 which are available.
+
+### Readers per platform (6.13.1)
+
+Which way reaches which reader, and why:
+
+| Reader | macOS | Windows | Linux |
+|--------|-------|---------|-------|
+| **USB CCID** (ACR122U, ACR1252U, ACR1281…) — browser (WebUSB) | **no**: the system's smart-card service (CryptoTokenKit with the `ifd-ccid` / ACS drivers) owns the reader, `claimInterface` fails ("Unable to claim interface") | only after replacing `usbccid.sys` with **WinUSB** (Zadig) — then no other program can use the reader | only with **pcscd stopped** (it holds the reader) and a udev rule for the device |
+| **USB CCID** — M5cet Desktop, System reader (PC/SC) | **yes** (verified: ACR1281 1S Dual Reader, three slots) | yes, through the Windows smart-card service (not run on Windows yet) | through pcsclite (not built for Linux) |
+| **PN532 on USB-serial** (FTDI, CP210x, CH340, PL2303) — Serial | yes (browser and desktop) | yes (the adapter's driver) | yes (`dialout` group) |
+| **PN532 on Bluetooth SPP** (HC-05/06, "PN532_SPP") — Serial | yes: pair it in System Settings; the chooser shows it as a Bluetooth port, or choose *Show all serial ports* (`/dev/cu.PN532_SPP`) | yes: pair it; the chooser shows the Bluetooth port (or its COM port under *all serial ports*) | yes: pair it (BlueZ) |
+| **PN532 on BLE** (Nordic UART, HM-10) — Bluetooth | yes (Chrome; desktop: native chooser) | yes | yes (Chrome with BlueZ) |
+| **A phone** | the M5cet Android app, or Chrome on Android (This device) | | |
+
+What changed in 6.13.1:
+
+* **Web Serial** asks with `allowedBluetoothServiceClassIds: [SPP]` and a
+  `{ bluetoothServiceClassId: SPP }` filter next to the USB-UART vendor filters
+  (Chromium hides an RFCOMM port otherwise), and *Show all serial ports* asks
+  without filters. The first contact **wakes the PN532** (HSU preamble `55 55 00…`),
+  sends SAMConfiguration and GetFirmwareVersion, and retries while a Bluetooth link
+  comes up (3 rounds over ~6 s for a Bluetooth or USB-id-less port, 2 for a
+  USB-serial one); a reader that never answers says *"The reader does not answer —
+  is it switched on and, over Bluetooth, paired?"* (`no-answer`). The PN532 codec
+  no longer drops a response that arrives in the same read as its ACK, and a
+  timed-out command no longer swallows the next command's frames.
+* **WebUSB** failures of `open()` / `claimInterface()` (`NetworkError`,
+  `InvalidStateError`, `SecurityError` "Access denied") are `reader-owned-by-os`,
+  explained per platform (macOS: use M5cet Desktop's system reader, a PN532 over
+  Bluetooth / serial, or the Android app; Windows: WinUSB via Zadig or M5cet
+  Desktop; Linux: stop pcscd or use the desktop app); the browser's own message is
+  shown only after the explanation.
+* **System reader (PC/SC)** in M5cet Desktop (`client/src/lib/nfc/transports/desktop-pcsc.ts`,
+  the app side `desktop/src/pcsc.ts`, see `docs/desktop.md` § 4.4): the app asks once
+  per server, the user picks the reader (unless exactly one holds a card), the page
+  exchanges APDUs with the card. Capabilities: **APDU** yes (ISO 14443-4 cards on a
+  contactless slot, any contact card), **MIFARE Classic** through the PC/SC Part 3
+  pseudo-APDUs (`FF 82` load key, `FF 86` authenticate, `FF B0` / `FF D6` read /
+  update binary — implemented and unit-tested, not tried on a Classic card yet),
+  **raw ISO 14443-3 frames** no (PC/SC has none; the reader's escape commands are
+  not exposed), **emulation** no. The identity comes from the ATR (PC/SC Part 3:
+  a storage card's name, e.g. `00 01` = MIFARE Classic 1K) and, on a contactless
+  slot only, the reader's GET UID `FF CA 00 00 00` (never sent to a contact card).
+  A dual reader's slots (ACR1281: contact, contactless, SAM) are separate readers
+  with labels. The G-18 read-only rules for models and templates apply unchanged —
+  they sit in the executor and the template runner, before any transport.
+* **Card detection** reads a PC/SC storage card's name from the right ATR bytes; an
+  ISO-DEP card's ATR is no longer taken for an Ultralight, and a WebUSB CCID ISO-DEP
+  card is marked ISO-DEP.
 
 ## Card technologies
 

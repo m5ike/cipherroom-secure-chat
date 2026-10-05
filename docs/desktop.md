@@ -166,12 +166,55 @@ jinak účet založte v prohlížeči (nebo v Androidu) a v aplikaci se přihlas
 ### 4.4 NFC, zařízení, hovory
 
 * **Web NFC v desktopovém Chromiu není**: tag z telefonu nepřečtete, jen čtečkami.
-* **Web Serial — PN532** na převodníku USB-UART (FTDI / CP210x / CH340): funguje na obou
-  systémech (macOS i Windows mají ovladače), včetně emulace tagu.
-* **WebUSB — CCID (ACR122U, ACR1252U)**: na macOS čtečku obvykle drží systémový ovladač čipových
-  karet a `claimInterface` selže — stejně jako v Chromu; na Windows potřebuje WebUSB ovladač
-  WinUSB (Zadig) místo `usbccid.sys` — stejně jako v Chromu.
-* **Web Bluetooth — PN532 přes BLE**: nativní výběr zařízení.
+* **Systémová čtečka (PC/SC) — 6.13.1.** Čtečka čipových karet na USB (CCID: ACR122U,
+  ACR1252U, ACR1281 …) patří systémové službě čipových karet (macOS CryptoTokenKit s ovladači
+  `ifd-ccid` / ACS, Windows `usbccid.sys` a služba Čipová karta, Linux pcscd), takže ji WebUSB
+  nikdy neotevře. Aplikace k ní proto jde přes **PC/SC** (`desktop/src/pcsc.ts`,
+  `desktop/src/pcsc-backend.ts` s knihovnou **pcsc-mini 0.1.3** — N-API nad `PCSC.framework` /
+  `winscard.dll`) a stránce dává úzký most `window.m5desktop.pcsc` (`listReaders`, `connect`,
+  `transmit`, `disconnect`, `onChange`; smlouva `client/src/lib/nfc/pcsc-bridge.ts`). V dílně
+  NFC je to volba **Systémová čtečka (PC/SC)**, v aplikaci první v seznamu.
+  * **Kdo smí:** jen hlavní rámec stránky v okně aplikace na originu zvoleného serveru (tatáž
+    kontrola odesílatele jako u ostatních zpráv mostu, `senderPage()`); funkční sandbox, podokna,
+    stránky aplikace nic.
+  * **Dotaz jednou na server:** první použití ukáže nativní dotaz *„Povolit serveru … používat
+    čtečky čipových karet?“* (stránka uvidí názvy čteček a bude si moci vyměňovat příkazy s kartou
+    ve čtečce, kterou vyberete). *Povolit* se uloží do šifrovaných nastavení (`safeStorage`,
+    pole `pcsc`), *Nepovolit* platí do dalšího načtení stránky (žádná smršť dotazů); odvolání
+    i povolení v nabídce **Server › Povolit čtečky čipových karet** — odvolání hned zavře
+    spojení stránky a zastaví události. Odebrání serveru odebere i povolení.
+  * **Čtečku vybírá uživatel** (nativní výběr se slotem a „s kartou“) — kromě případu, kdy kartu
+    drží právě jedna čtečka; čtečka vybraná na stránce zůstane vybraná do dalšího načtení.
+    Stránka nemůže tiše jmenovat jinou čtečku (cizí jméno = výběr znovu). Duální čtečka (ACR1281)
+    má tři čtečky: *kontaktní*, *bezkontaktní*, *SAM*.
+  * **Spojení:** `SCardConnect` ve **sdíleném** režimu (middleware e-ID / tokenů běží dál),
+    T=0/T=1, odpojení `LEAVE`; `SCardControl` (escape příkazy čtečky) se **nenabízí**. APDU 4 až
+    65 544 B (rozšířené), odpověď do 65 538 B, jedno APDU naráz na kartu, časové limity
+    (spojení 10 s, APDU 30 s), limity rychlosti (APDU 400 nárazově / 200 za s, ostatní volání
+    30 / 10 za s), nejvýš 4 spojení na stránku; chyby jako stálé kódy (`no-card`, `removed`,
+    `busy` = kartu výlučně drží jiný program, `unavailable`, `denied`, `cancelled`, `locked` …).
+  * **Konec přístupu:** navigace nebo zavření stránky, odvolání, **zamčení obrazovky**
+    (`powerMonitor` lock-screen — do odemčení nic) a ukončení aplikace zavřou všechna spojení.
+  * **Identita karty** z ATR (PC/SC Part 3: jméno paměťové karty) a — jen na bezkontaktním slotu —
+    z `FF CA 00 00 00` (GET UID); kontaktní kartě se CLA FF nikdy neposílá. Pravidla G-18 (model
+    a šablona jen čtou) platí beze změny.
+  * **Ověřeno na tomto Macu** (ACR1281 1S Dual Reader, zabalená ad-hoc aplikace, self-test
+    `M5CET_SMOKE_PCSC=1`): tři sloty, karta ve slotu 2 — ATR a UID, viz § 9. Hardened runtime
+    bez App Sandboxu entitlement `com.apple.security.smartcard` **nepotřebuje** (ten je jen pro
+    sandboxované aplikace); CryptoTokenKit/PC/SC v ad-hoc buildu funguje.
+* **Web Serial — PN532** na převodníku USB-UART (FTDI / CP210x / CH340 / PL2303) **nebo na modulu
+  Bluetooth SPP** (HC-05/06, spárovaném v systému): funguje na obou systémech, včetně emulace
+  tagu. 6.13.1: výběr portu ukazuje porty Bluetooth SPP (`allowedBluetoothServiceClassIds`
+  + filtr třídy služby) a volbu *Ukázat všechny sériové porty*; první kontakt PN532 probudí
+  a u Bluetooth to opakuje, dokud se spojení nerozběhne (`docs/nfc.md` › Readers per platform).
+* **WebUSB — CCID (ACR122U, ACR1252U)**: na macOS čtečku drží systémová služba čipových karet
+  a `claimInterface` selže — stejně jako v Chromu; na Windows potřebuje WebUSB ovladač WinUSB
+  (Zadig) místo `usbccid.sys`. 6.13.1: dílna to řekne slovy a nabídne Systémovou čtečku (PC/SC).
+* **Web Bluetooth — PN532 přes BLE** (6.13.1): Electron bez obsluhy `select-bluetooth-device`
+  každý `requestDevice()` zruší. Aplikace teď sbírá nalezená zařízení (~2,5 s), pak ukáže
+  nativní výběr; nic do 15 s = zrušeno s hláškou; navigace žádost zruší (`desktop/src/bluetooth.ts`).
+  Párování (`setBluetoothPairingHandler`, Windows / Linux): potvrzení a porovnání PINu nativně,
+  zadání PINu ne — takové zařízení spárujte nejdřív v systému. macOS páruje sám.
 * Výběr USB / sériových / HID / Bluetooth zařízení a obrazovky pro sdílení je **nativní dialog**
   (na macOS 15+ systémový výběr obrazovky); povolení kamery, mikrofonu a polohy hlídá systém
   (macOS: lokalizované texty v `Info.plist`, entitlementy hardened runtime).
@@ -207,8 +250,9 @@ používá `WEBAUTHN_ORIGINS`, nemusí se měnit — aplikace má origin serveru
 | Integrita | pojistky Electronu `EnableEmbeddedAsarIntegrityValidation` + `OnlyLoadAppFromAsar` (hash hlavičky `app.asar` v `Info.plist` / v prostředku `.exe`), aplikace navíc ověřuje SHA-256 každého podávaného souboru |
 | Pojistky (fuses) | `RunAsNode` off, `EnableNodeOptionsEnvironmentVariable` off, `EnableNodeCliInspectArguments` off, `EnableCookieEncryption` on, `GrantFileProtocolExtraPrivileges` off |
 | Ladění | vydání odmítne `--remote-debugging-port`, `--inspect*`, `--js-flags`; DevTools jen v nezabaleném buildu |
-| Renderer | `sandbox`, `contextIsolation`, `nodeIntegration: false`, `webSecurity`, bez `<webview>`, bez `remote`; preload vystavuje jen `window.m5desktop` (upozornění, odznak, otevření odkazu po potvrzení, přihlášení přes prohlížeč, verze, stav aktualizací; seznam ostatních serverů uživatele záměrně ne — stránka jednoho serveru nemá vědět o dalších) a hlavní proces u každé zprávy ověří odesílatele (hlavní rámec okna, origin serveru) |
+| Renderer | `sandbox`, `contextIsolation`, `nodeIntegration: false`, `webSecurity`, bez `<webview>`, bez `remote`; preload vystavuje jen `window.m5desktop` (upozornění, odznak, otevření odkazu po potvrzení, přihlášení přes prohlížeč, verze, stav aktualizací, od 6.13.1 čtečky čipových karet přes PC/SC; seznam ostatních serverů uživatele záměrně ne — stránka jednoho serveru nemá vědět o dalších) a hlavní proces u každé zprávy ověří odesílatele (hlavní rámec okna, origin serveru) |
 | Oprávnění | jen origin serveru a jen hlavní rámec: kamera, mikrofon, upozornění, zápis do schránky, poloha, sdílení obrazovky, výběr reproduktoru, celá obrazovka, File System Access, USB / sériová / HID; vše ostatní (čtení schránky, MIDI, …) odmítnuto |
+| Čtečky čipových karet (PC/SC, 6.13.1) | jen hlavní rámec stránky na originu serveru; nativní dotaz jednou na server (povolení v šifrovaných nastaveních, odvolání v nabídce), čtečku vybírá uživatel, sdílený režim, bez `SCardControl`, limity velikosti a rychlosti, nic při zamčené obrazovce, spojení končí s načtením stránky (§ 4.4) |
 | Navigace | jen origin serveru; jinam po potvrzení do systémového prohlížeče |
 | Uložená data aplikace | seznam serverů a volby šifrované `safeStorage` (Klíčenka macOS, DPAPI Windows); data webového klienta v jeho úložišti jako na webu |
 | Aktualizace | jen podepsaný build: `electron-updater` ověří SHA-512 a na Windows vydavatele podpisu, na macOS Squirrel.Mac podpis téhož týmu |
@@ -252,6 +296,25 @@ Hardened runtime (macOS) povoluje jen `allow-jit` (V8 a WebAssembly), kameru, mi
 a síťového klienta (`desktop/build/entitlements.mac.plist`); `Info.plist` má lokalizované texty
 dotazů na kameru, mikrofon, polohu, Bluetooth a zvuk při sdílení obrazovky (9 jazyků).
 
+**Nativní modul PC/SC (6.13.1).** `pcsc-mini` je závislost `desktop/package.json` (přesně 0.1.3)
+a hlavní proces ho při kompilaci nechává vně balíku (`external`); jeho binárky (`addon.node`,
+N-API) se **rozbalí z `app.asar`** (`asarUnpack: node_modules/@pcsc-mini/**`). npm instaluje jen
+binárku stroje, na kterém běží, proto `desktop/scripts/pcsc-prebuilds.mjs` (volá ho
+`build.mjs`) doplní chybějící balíčky cílů — **macOS** `@pcsc-mini/macos-aarch64` +
+`macos-x86_64`, **Windows** `@pcsc-mini/windows-x86_64-electron` + `windows-aarch64-electron` —
+přes `npm pack` v přesné verzi a s ověřením **sha512 z `desktop/package-lock.json`**. Každý
+artefakt nese jen binárky svého systému (`mac.files` / `win.files` vylučují ostatní, ve Windows
+i varianty `-node` / `-bun`); obě binárky Windows jsou v obou instalátorech (modul si vybere
+podle `process.arch`, ~0,3 MB navíc). Univerzální aplikace pro macOS nese obě binárky v obou
+polovinách a slučuje je jako `x64ArchFiles`.
+
+**Pozor na binárku x86_64:** `@pcsc-mini/macos-x86_64` 0.1.3 (sestavená Zigem) není podepsaná
+a za jejími load commands nezbývá místo — `codesign` by novým `LC_CODE_SIGNATURE` přepsal prvních
+16 bajtů kódu a podepsaná knihovna by při načtení spadla (SIGSEGV; zjištěno spuštěním Intel
+poloviny univerzální aplikace pod Rosettou). `desktop/scripts/macho-signable.mjs` proto před
+balením odstraní informativní `LC_SOURCE_VERSION` (16 B, za běhu ho nic nečte), aby se podpis
+vešel; kód ani data se neposunou. Binárka arm64 podpis už má a nemění se.
+
 Vydání aktualizace: sestavte podepsaný build s `M5CET_UPDATE_GITHUB` / `M5CET_UPDATE_URL`
 a nahrajte artefakty **včetně `latest-mac.yml` / `latest.yml` a `.blockmap`** (např.
 `npx electron-builder --publish always` v `desktop/` s `GH_TOKEN`, nebo ručně na feed).
@@ -278,7 +341,8 @@ Podpisy z tajemství repozitáře (`MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPL
 | `test/desktop-web-headers.test.ts` | hlavičky aplikace = hlavičky skutečného serveru |
 | `test/desktop-auth.test.ts` | přihlášení přes prohlížeč: šifrování ke klíči aplikace, vazba na id a origin, poškozený / cizí / prošlý výsledek, jednorázovost, tajemství, limity, celý průběh přes HTTP, probuzení odkazem, zrušení |
 | `test/desktop-build-config.test.ts` | podpis jen z prostředí, entitlementy, pojistky, cíle, feed aktualizací, texty `Info.plist`, hlavička `app.asar` |
-| `desktop/scripts/smoke.mjs` | zabalená (nebo nezabalená) aplikace proti běžícímu serveru: stránka z balíku, API ze sítě, cizí `/assets` 404, most, žádný Node, přibalený service worker, CSP serveru, integrita, architektura |
+| `test/desktop-pcsc.test.ts` (6.13.1) | most PC/SC s falešným pcsc-mini a falešnými dialogy: odesílatel, dotaz jednou na server (souběžná volání, „nepovolit“ do načtení, bez PC/SC bez dotazu), seznam se sloty, výběr čtečky (jediná s kartou bez výběru, cizí jméno = výběr znovu, zrušení), prázdná čtečka, APDU (rozšířené na hranici, nad ní odmítnuto, cizí handle), limity rychlosti, chyby PC/SC, zaseknutá karta, události (jen změny, jen povoleným), vyjmutí karty, navigace, odvolání, zámek obrazovky, ukončení, self-test; výběr Bluetooth; povolení v nastavení; balení (`asarUnpack`, `x64ArchFiles`, soubory na systém, binárka x86_64 podepsatelná) |
+| `desktop/scripts/smoke.mjs` | zabalená (nebo nezabalená) aplikace proti běžícímu serveru: stránka z balíku, API ze sítě, cizí `/assets` 404, most, žádný Node, přibalený service worker, CSP serveru, integrita, architektura; s `M5CET_SMOKE_PCSC=1` (nebo `--pcsc`) i čtečky přes PC/SC — jen čtení (ATR, `FF CA 00 00 00`) přes aplikaci i přes most stránky |
 | `desktop/scripts/e2e.mjs` | Playwright (nezabalená aplikace): výběr serveru, odmítnutí http, SPA, okna, navigace, sandbox funkcí |
 
 ## 10. Co nebylo ověřeno
@@ -291,4 +355,8 @@ Podpisy z tajemství repozitáře (`MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPL
 * **Upozornění a odznak** na skutečném systému s podepsaným buildem; podepsání, notarizace
   a aktualizace (žádné certifikáty v tomto prostředí).
 * Intel Mac: univerzální build ověřen pod Rosettou, ne na fyzickém Intel Macu.
-* Čtečky NFC, Bluetooth a sdílení obrazovky v aplikaci.
+* Čtečky: **ověřena** systémová čtečka PC/SC s ACS ACR1281 1S Dual Reader na Apple Silicon
+  (nativně i Intel polovina pod Rosettou; § 4.4). **Neověřeno:** PN532 přes Bluetooth SPP
+  a BLE v aplikaci (modul byl vypnutý), MIFARE Classic přes pseudo-APDU PC/SC (žádná karta
+  Classic), PC/SC na Windows (balíky x64 i arm64 se postavily s binárkami `windows-*-electron`, ale nespustily se), párování
+  Bluetooth na Windows. Sdílení obrazovky v aplikaci.
