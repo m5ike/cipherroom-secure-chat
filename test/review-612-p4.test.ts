@@ -152,8 +152,8 @@ describe("REVIEW-612 P02 — hello v4 fields outside sig4", () => {
   // or `user`. Whoever can rewrite the data channel (the server swapping DTLS fingerprints in signaling it can
   // open with the room key, i.e. server + an ex-member) strips "media" (App.tsx:2872: no protocol-4 media key is
   // sent, frames go unsealed — the call is protected by the attacker's DTLS-SRTP only) and `sth` (KT gossip off).
-  // Fails today: the tampered hello verifies.
-  it.skip("a hello whose caps or tree head were changed in transit does not verify", async () => {
+  // Fixed: sig4 covers capsDigest, userDigest and sthDigest (spec § 2).
+  it("a hello whose caps or tree head were changed in transit does not verify", async () => {
     const { ha, hb } = await hellos();
     const stripped = { ...hb.hello, caps: hb.hello.caps.filter((c) => c !== "media") };
     expect((await ha.acceptHello(stripped)).verdict.ok).toBe(false);

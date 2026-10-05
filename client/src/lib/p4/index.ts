@@ -15,7 +15,7 @@ export { type KemKeyPair, kemKeygen, kemKeygenFromSeed, kemEncaps, kemEncapsWith
 export {
   type HelloV4, type HelloV3Part, type HelloSecrets, type HelloVerdict, type BuildHelloOptions, type Party, type PairSession,
   type EstablishInput, type PairHandshakeOptions,
-  buildHello, verifyHello, verifyAccount, certifyDeviceV2, helloSig4Data, mbDigest, accDigest, helloRef,
+  buildHello, verifyHello, verifyAccount, certifyDeviceV2, helloSig4Data, mbDigest, accDigest, capsDigest, userDigest, sthDigest, isCap, helloRef,
   buildKemMessage, openKemMessage, roleOf, transcriptHash, rootSchedule, establishSession, PairHandshake,
 } from "./handshake";
 export {
@@ -25,7 +25,7 @@ export {
 export { type SkInner, SenderKeys4, senderKeyAad, skCertData, p4Signer } from "./sender-keys4";
 export {
   type BundleKeys, type BundleStore, type SealInput, type OpenedMailboxItem,
-  MemoryBundleStore, Mailbox, createBundle, bundleSignedData, checkBundle, isBundleShape, mailboxAad,
+  MemoryBundleStore, Mailbox, createBundle, bundleSignedData, checkBundle, isBundleShape, isAccShape, accountDigest, mailboxAad,
   sealMailboxItem, openMailboxItem, mailboxSet, isMailboxItem, isMailboxSet,
 } from "./mailbox";
 export { type MediaInner, MEDIA_FRAME_LIMIT, frameIv, ivEpoch, newMediaKey, importMediaKey, MediaSender, MediaReceiver, sealedFrameIv } from "./media4";
