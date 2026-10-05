@@ -47,6 +47,8 @@ public final class Run {
      * error) — unless the call was cancelled: then nothing more comes.
      */
     public interface Listener {
+        /** 6.11: any event of the stream but its end (start, progress, an output, a question, a log line) — a sign of life (RunWatch). */
+        default void alive() { }
         default void start(String runId) { }
         /** p as the function reported it, and its text. */
         default void progress(double p, String text) { }
@@ -165,10 +167,20 @@ public final class Run {
          * @param name       its name, likewise
          * @param visibility "room" or "caller" when the server did not say (a command's own; "caller" for an event)
          */
-        public Message message(String keyword, String name, String visibility) {
+        public Message message(String keyword, String name, String visibility) { return message(keyword, name, visibility, null); }
+
+        /**
+         * 6.11: with the model's icon in the flags (the answer's avatar, here
+         * and at the peers': keyword, name and icon are its identity) — the
+         * server's when it sends one, else the command's.
+         */
+        public Message message(String keyword, String name, String visibility, String icon) {
             try {
                 String kw = this.keyword.isEmpty() ? keyword : this.keyword;
                 JSONObject meta = new JSONObject().put("keyword", kw).put("name", this.name.isEmpty() ? name : this.name);
+                String ic = ModelIdentity.safeIcon(raw.opt("icon"));
+                if (ic == null) ic = ModelIdentity.safeIcon(icon);
+                if (ic != null) meta.put("icon", ic);
                 if (model != null && !model.isEmpty()) meta.put("model", model);
                 if (chain != null && !chain.isEmpty()) meta.put("chain", chain);
                 if (call != null) meta.put("call", (int) call);
@@ -222,6 +234,8 @@ public final class Run {
         try {
             JSONObject out = new JSONObject().put("keyword", keyword).put("name", name.isEmpty() ? keyword : name);
             if (fn.opt("model") instanceof String && MODEL.matcher(fn.optString("model")).matches()) out.put("model", fn.optString("model"));
+            String icon = ModelIdentity.safeIcon(fn.opt("icon")); // 6.11: the model's avatar
+            if (icon != null) out.put("icon", icon);
             if (fn.opt("chain") instanceof String && CHAIN.matcher(fn.optString("chain")).matches()) out.put("chain", fn.optString("chain"));
             if (fn.opt("call") instanceof Number) {
                 double call = ((Number) fn.opt("call")).doubleValue();
@@ -256,6 +270,7 @@ public final class Run {
 
             @Override public void event(String name, JSONObject d) {
                 if (over) return;
+                if (!name.equals("done") && !name.equals("error")) l.alive();
                 switch (name) {
                     case "start": l.start(string(d, "runId")); break;
                     case "progress": l.progress(Js.toNumber(d.opt("p")), d.opt("text") == null || d.opt("text") == JSONObject.NULL ? "" : Js.str(d.opt("text"))); break;

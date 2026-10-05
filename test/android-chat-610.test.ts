@@ -42,7 +42,7 @@ describe("android chat 6.10 — the bubbles", () => {
     const photo = find(face, "photo")!;
     expect(photo.el).toBe("image");
     expect(photo.props?.src).toBe("=$msg.photo");
-    expect(avatar.if).toBe("!$msg.photo");
+    expect(avatar.if).toContain("!$msg.photo"); // 6.11 adds: not for a model's answer (its own face, design-611-fn.ts)
     expect(photo.style).toMatchObject({ width: AVATAR, height: AVATAR, radius: AVATAR / 2 });
   });
 

@@ -633,7 +633,8 @@ public final class RoomSession {
     JSONObject payloadOf(ChatMessage m) {
         try {
             JSONObject payload = new JSONObject().put("id", m.id).put("text", m.text).put("createdAt", m.createdAt).put("senderId", myId).put("senderName", userName);
-            if (m.replyToId != null) payload.put("replyTo", new JSONObject().put("id", m.replyToId).put("senderName", m.replyToSender).put("text", m.replyToText));
+            // 6.11: a model's room answer replies to the command's own bubble, which is never sent — that quote stays here (and the command's arguments with it).
+            if (m.replyToId != null && !m.replyToId.startsWith("fncall-")) payload.put("replyTo", new JSONObject().put("id", m.replyToId).put("senderName", m.replyToSender).put("text", m.replyToText));
             if (m.fileDataUrl != null) payload.put("attachment", new JSONObject().put("kind", m.fileImage ? "image" : "file").put("name", m.fileName).put("mime", m.fileMime).put("size", m.fileSize).put("dataUrl", m.fileDataUrl));
             if (m.ttlMinutes > 0) payload.put("ttlMinutes", m.ttlMinutes);
             JSONObject flags = new JSONObject();
@@ -842,7 +843,7 @@ public final class RoomSession {
     public void markRead(List<ChatMessage> shown) {
         if (!app.settings.bool("messages.readReceipts")) return;
         for (ChatMessage m : shown) {
-            if (m.mine || m.relayed || "sys".equals(m.kind) || m.readSent || m.senderId.isEmpty()) continue;
+            if (m.mine || m.relayed || "sys".equals(m.kind) || m.readSent || m.senderId.isEmpty() || cz.m5cet.app.fn.ModelIdentity.reservedSender(m.senderId)) continue; // 6.11: no receipt to the app's own sender
             m.readSent = true;
             queueReceipt(m.senderId, "read", m.id);
         }
@@ -964,11 +965,13 @@ public final class RoomSession {
     /**
      * 6.5: a command call shows at once as the sender's own bubble — pulsing,
      * with a loading indicator under the query (App.tsx runChatCommand). The
-     * call state lives in fnLocal (query / pending / status), so the renderer
-     * draws it and settleFnCall* replace the loading in place. Returns the
-     * message so the caller can settle it.
+     * call state lives in fnLocal (query / pending / progress / status), so
+     * the renderer draws it and fnCallStatus replaces the loading in place.
+     * Returns the message so the caller can settle it. 6.11: the model's
+     * answer is its own message below (addModelAnswer), replying to this one;
+     * the history keeps this bubble's status (ChatMessage.callState).
      */
-    public ChatMessage startFnCall(String keyword, String name, String query) {
+    public ChatMessage startFnCall(String keyword, String name, String query, String icon) {
         ChatMessage m = new ChatMessage();
         m.id = "fncall-" + Crypto.hex(Crypto.random(10));
         m.roomKey = key;
@@ -983,51 +986,86 @@ public final class RoomSession {
         try {
             org.json.JSONObject fn = new org.json.JSONObject();
             fn.put("keyword", keyword).put("name", name).put("query", m.text).put("pending", true);
+            if (icon != null) fn.put("icon", icon);
             m.fnLocal = fn;
         } catch (org.json.JSONException ignored) { }
         post(() -> { add(m, false); changed(); });
         return m;
     }
 
-    /** The loading becomes the caller-only answer, inside the same bubble (the query stays). */
-    public void fnCallResult(ChatMessage m, String text, org.json.JSONObject fnLocal) {
-        if (m == null) return;
-        post(() -> {
-            m.text = text == null ? "" : text;
-            m.fnLocal = fnLocal;
-            rooms.messageChanged(this, m);
-        });
-    }
-
-    /** The loading becomes a short status chip (a room answer that went out, or an error / status). */
-    public void fnCallStatus(ChatMessage m, String kind, String label) {
+    /**
+     * The loading becomes a short status chip: the answer is below it (6.11:
+     * its own message), went to the room, or an error / a cancel. kind: ok,
+     * error, info; code: what it was (timeout, cancelled, bad-input,
+     * answered, sent…) — the icon, and the words when label is "".
+     */
+    public void fnCallStatus(ChatMessage m, String kind, String label, String code) {
         if (m == null) return;
         post(() -> {
             try {
                 org.json.JSONObject fn = m.fnLocal != null ? m.fnLocal : new org.json.JSONObject();
                 fn.put("pending", false);
                 fn.remove("outputs");
-                fn.put("status", new org.json.JSONObject().put("kind", kind).put("label", label == null ? "" : label));
+                fn.remove("progress");
+                org.json.JSONObject st = new org.json.JSONObject().put("kind", kind).put("label", label == null ? "" : label);
+                if (code != null) st.put("code", code);
+                fn.put("status", st);
                 m.fnLocal = fn;
             } catch (org.json.JSONException ignored) { }
             rooms.messageChanged(this, m);
         });
     }
 
-    /** A caller-only command result (App.tsx showFnResult): a message here only, from the model, never sent. */
-    public void addLocalFn(String keyword, String name, String text, org.json.JSONObject fn) {
+    /** 6.11: what a running command says it is doing (its progress: 0–1 or −1 when unknown, and a text) — under the loading. */
+    public void fnCallProgress(ChatMessage m, double p, String text) {
+        if (m == null) return;
         post(() -> {
-            ChatMessage m = new ChatMessage();
-            m.id = "fn-" + Crypto.hex(Crypto.random(10));
-            m.roomKey = key;
-            m.senderId = "function:" + keyword;
-            m.senderName = name;
-            m.text = text == null ? "" : text;
-            m.createdAt = System.currentTimeMillis();
-            m.verified = true;
-            m.fnLocal = fn;
-            add(m, false);
+            org.json.JSONObject fn = m.fnLocal;
+            if (fn == null || !fn.optBoolean("pending")) return;
+            try {
+                String t = text == null ? "" : text.length() > 200 ? text.substring(0, 200) : text;
+                fn.put("progress", new org.json.JSONObject().put("p", Double.isFinite(p) ? Math.max(-1, Math.min(1, p)) : -1).put("text", t));
+            } catch (org.json.JSONException ignored) { }
+            rooms.messageChanged(this, m);
         });
+    }
+
+    /**
+     * 6.11: a model's answer as an INCOMING message from system-messenger —
+     * the model's name as the sender, its identity (keyword, name, icon) for
+     * the avatar, a reply to the command that asked (the call bubble, or the
+     * message whose button or form it answers). Here only, never sent; the
+     * history keeps it with what fits into a message (share), this run shows
+     * every output (local).
+     */
+    public ChatMessage addModelAnswer(org.json.JSONObject identity, String text, org.json.JSONObject share, org.json.JSONObject local, ChatMessage replyTo) {
+        ChatMessage m = new ChatMessage();
+        m.id = "fn-" + Crypto.hex(Crypto.random(10));
+        m.roomKey = key;
+        m.senderId = cz.m5cet.app.fn.ModelIdentity.SYSTEM_MESSENGER_ID;
+        m.senderName = identity == null ? cz.m5cet.app.fn.ModelIdentity.SYSTEM_MESSENGER_NAME : identity.optString("name", cz.m5cet.app.fn.ModelIdentity.SYSTEM_MESSENGER_NAME);
+        m.text = text == null ? "" : text;
+        m.createdAt = Math.max(System.currentTimeMillis(), replyTo == null ? 0 : replyTo.createdAt + 1);
+        m.verified = true;
+        m.model = identity;
+        m.fn = share;
+        m.fnLocal = local;
+        m.mark("displayed", "", m.createdAt);
+        if (replyTo != null) {
+            m.replyToId = replyTo.id;
+            m.replyToSender = replyTo.senderName;
+            String q = replyTo.visibleText();
+            m.replyToText = q.length() > 200 ? q.substring(0, 200) : q;
+        }
+        post(() -> add(m, false));
+        return m;
+    }
+
+    /** A message of this room by id (null: not here). */
+    public ChatMessage message(String id) {
+        if (id == null) return null;
+        synchronized (messages) { for (int i = messages.size() - 1; i >= 0; i--) if (id.equals(messages.get(i).id)) return messages.get(i); }
+        return null;
     }
 
     /**

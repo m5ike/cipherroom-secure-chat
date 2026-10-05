@@ -35,6 +35,7 @@ import cz.m5cet.app.ui.bubble.BubbleSwipe;
 import cz.m5cet.app.ui.bubble.Hides;
 import cz.m5cet.app.ui.bubble.Kinds;
 import cz.m5cet.app.ui.bubble.MapPolicy;
+import cz.m5cet.app.ui.bubble.ModelFace;
 import cz.m5cet.app.ui.bubble.ReplyQuote;
 import cz.m5cet.app.ui.bubble.Runs;
 
@@ -298,7 +299,9 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
         if (canReply(m)) out.add(new BubbleRow.A11y(app.t("notify.reply"), () -> reply(m)));
         if (canForward(m)) out.add(new BubbleRow.A11y(app.t("msg.forward"), () -> parts.forward(m)));
         if (m.replyToId != null && !m.replyToId.isEmpty()) out.add(new BubbleRow.A11y(app.t("quote.go"), () -> parts.quote(m.replyToId)));
-        if (!m.mine && !"sys".equals(m.kind)) out.add(new BubbleRow.A11y(app.t("sender.profile") + ": " + m.senderName, () -> parts.showSender(m.id)));
+        cz.m5cet.app.fn.ModelIdentity model = ModelFace.of(m);
+        if (model != null) out.add(new BubbleRow.A11y(app.t("fnm.about") + ": " + model.name, () -> parts.showSender(m.id)));
+        else if (!m.mine && !"sys".equals(m.kind)) out.add(new BubbleRow.A11y(app.t("sender.profile") + ": " + m.senderName, () -> parts.showSender(m.id)));
         return out;
     }
 
@@ -550,7 +553,8 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
     private final class Adapter extends RecyclerView.Adapter<Holder> {
         @Override public int getItemViewType(int i) {
             ChatMessage m = items.get(i);
-            return "sys".equals(m.kind) ? SYS : m.mine ? OUT : IN;
+            // 6.11: a model's answer is an incoming message — also the one this device sent to the room for it.
+            return "sys".equals(m.kind) ? SYS : m.mine && ModelFace.of(m) == null ? OUT : IN;
         }
 
         @Override public Holder onCreateViewHolder(ViewGroup parent, int type) {
@@ -589,6 +593,10 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
                 // 6.10: the quote card, a run of one person's messages, the photo they share with the room.
                 if (quote != null) ms.put("replyTo", quote);
                 ms.put("cont", i > 0 && Runs.continues(items.get(i - 1), m)).put("photo", m.mine ? "" : senderPhoto(m));
+                // 6.11: a model's answer — the model is the sender (its name, its face), the line says how it came; no "forwarded from /kw".
+                JSONObject model = ModelFace.scope(m, a.app()::t, name -> cz.m5cet.app.ui.Icons.has(a, name));
+                ms.put("model", model == null ? JSONObject.NULL : model);
+                if (model != null) ms.put("sender", model.optString("name")).put("photo", "").put("forwarded", "");
             } catch (org.json.JSONException ignored) { }
             s.put("msg", ms);
             s.put("_msg", m);
@@ -628,7 +636,8 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
     private void describe(BubbleRow row, ChatMessage m, JSONObject quote) {
         cz.m5cet.app.M5 app = a.app();
         View face = row.content.findViewWithTag("face");
-        if (face != null) face.setContentDescription(app.t("sender.profile") + ": " + m.senderName);
+        cz.m5cet.app.fn.ModelIdentity model = ModelFace.of(m);
+        if (face != null) face.setContentDescription(model != null ? app.t("fnm.about") + ": " + model.name : app.t("sender.profile") + ": " + m.senderName);
         View q = row.content.findViewWithTag("quote");
         if (q != null && quote != null) q.setContentDescription(app.t("quote.replyTo") + " " + quote.optString("sender") + ": " + quote.optString("text") + ". " + app.t("quote.go"));
     }

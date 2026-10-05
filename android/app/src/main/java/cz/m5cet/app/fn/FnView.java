@@ -56,6 +56,8 @@ public final class FnView extends LinearLayout {
     public interface Host {
         /** A click or a form for the model (Commands.event with meta and ev); done(true) when the model answered. */
         void event(JSONObject meta, JSONObject ev, Consumer<Boolean> done);
+        /** 6.11: the same, knowing the message it came from (its id: the answer replies to it). */
+        default void event(String key, JSONObject meta, JSONObject ev, Consumer<Boolean> done) { event(meta, ev, done); }
         /** A notice of a fresh message. level: info, success, warning, error. */
         void flash(String text, String level);
         /** Save (open false) or open a file the function returned (or an image tapped). */
@@ -405,7 +407,7 @@ public final class FnView extends LinearLayout {
         boolean reachable = Commands.answers(meta, "form");
         String used = key + "#" + index + ":used";
         FnForm f = new FnForm(getContext(), theme, host::openLink, o, reachable, Boolean.TRUE.equals(o.opt("once")) && happened(used), (values, done) ->
-            host.event(meta, Commands.form(o.optString("name"), values), (ok) -> {
+            host.event(key, meta, Commands.form(o.optString("name"), values), (ok) -> {
                 if (ok && Boolean.TRUE.equals(o.opt("once"))) firstTime(used);
                 done.accept(ok);
             }));
@@ -479,7 +481,7 @@ public final class FnView extends LinearLayout {
             view.removeCallbacks(unconfirm);
             set("busy");
             int gen = generation;
-            host.event(meta, Commands.button(o.optString("name"), o.opt("data")), (ok) -> {
+            host.event(key, meta, Commands.button(o.optString("name"), o.opt("data")), (ok) -> {
                 if (ok && Boolean.TRUE.equals(o.opt("once"))) firstTime(used);
                 if (gen == generation) set(ok && Boolean.TRUE.equals(o.opt("once")) ? "done" : "idle");
             });

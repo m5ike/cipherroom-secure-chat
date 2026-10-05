@@ -1,0 +1,85 @@
+{
+  "about": "6.11 — the contract of client/src/lib/system-messenger.ts in vectors: test/android-fn-611.test.ts checks the TypeScript gives these, fn/ModelIdentityTest and fn/CommandCheckTest that the Java port does.",
+  "colors": {
+    "mail": "#36b234",
+    "hlr": "#7bb234",
+    "x": "#34b234",
+    "dns": "#6834b2",
+    "emv-history": "#3e34b2",
+    "phone_bridge": "#3440b2",
+    "a": "#64b234",
+    "zz": "#b234a9",
+    "": "#b23434",
+    "weather": "#34b2a1",
+    "Weather": "#34b24d",
+    "žluťoučký": "#b29f34",
+    "ŽLUŤOUČKÝ": "#34b26a",
+    "my-model_2": "#34b29f",
+    "translate": "#348cb2"
+  },
+  "identities": [
+    { "in": { "keyword": "Mail", "name": "" }, "out": { "keyword": "Mail", "name": "/Mail", "icon": "mail", "color": "#36b234" } },
+    { "in": { "keyword": "emv-history", "name": "EMV" }, "out": { "keyword": "emv-history", "name": "EMV", "icon": "receipt", "color": "#3e34b2" } },
+    { "in": { "keyword": "dns-check", "name": "DNS" }, "out": { "keyword": "dns-check", "name": "DNS", "icon": "globe", "color": "#3c34b2" } },
+    { "in": { "keyword": "foo_bar", "name": "Foo", "icon": " 🦊 " }, "out": { "keyword": "foo_bar", "name": "Foo", "icon": "🦊", "color": "#b23834" } },
+    { "in": { "keyword": "zzz", "name": "Z" }, "out": { "keyword": "zzz", "name": "Z", "icon": "bot", "color": "#34a5b2" } },
+    { "in": { "keyword": "hlr", "name": "HLR", "icon": "radar" }, "out": { "keyword": "hlr", "name": "HLR", "icon": "radar", "color": "#7bb234" } }
+  ],
+  "command": {
+    "keyword": "hlr",
+    "inputs": [
+      { "name": "number", "type": "phone", "required": true },
+      { "name": "format", "type": "enum", "required": false, "values": ["short", "long"] },
+      { "name": "n", "type": "integer", "required": true, "default": 3, "min": 1, "max": 10 },
+      { "name": "flag", "type": "boolean", "required": false },
+      { "name": "code", "type": "string", "required": false, "pattern": "^[A-Z]{3}$" },
+      { "name": "x", "type": "number", "required": false, "min": 0.5 }
+    ]
+  },
+  "usage": { "/": "/hlr <number> [format] [n] [flag] [code] [x]", "!": "!hlr <number> [format] [n] [flag] [code] [x]" },
+  "expectations": [
+    "a phone number in international form (+420…)",
+    "one of: short, long",
+    "a integer 1–10",
+    "true / false",
+    "text matching ^[A-Z]{3}$",
+    "a number 0.5–…"
+  ],
+  "moreExpectations": [
+    { "input": { "name": "p", "type": "string", "required": false, "pattern": "^\\+[1-9]\\d{1,14}$" }, "out": "a phone number in international form (+420…)" },
+    { "input": { "name": "p", "type": "", "required": false }, "out": "a value" },
+    { "input": { "name": "p", "type": "number", "required": false, "max": 5 }, "out": "a number …–5" },
+    { "input": { "name": "p", "type": "email", "required": true }, "out": "a email" }
+  ],
+  "checks": [
+    { "values": {}, "out": [{ "input": "number", "label": "number", "problem": "missing", "expected": "a phone number in international form (+420…)" }] },
+    { "values": { "number": "+420 777 123 456" }, "out": [] },
+    { "values": { "number": "777", "format": "mid", "n": "2.5", "flag": "maybe", "code": "abc", "x": "0.1" }, "out": [
+      { "input": "number", "label": "number", "problem": "pattern", "expected": "a phone number in international form (+420…)" },
+      { "input": "format", "label": "format", "problem": "values", "expected": "one of: short, long" },
+      { "input": "n", "label": "n", "problem": "type", "expected": "a integer 1–10" },
+      { "input": "flag", "label": "flag", "problem": "type", "expected": "true / false" },
+      { "input": "code", "label": "code", "problem": "pattern", "expected": "text matching ^[A-Z]{3}$" },
+      { "input": "x", "label": "x", "problem": "range", "expected": "a number 0.5–…" }
+    ] },
+    { "values": { "number": "+420777123456", "format": "long", "n": "11", "flag": "ANO", "code": "ABC", "x": "1e3" }, "out": [
+      { "input": "n", "label": "n", "problem": "range", "expected": "a integer 1–10" }
+    ] },
+    { "values": { "number": "  ", "n": "0x10", "x": "Infinity" }, "out": [
+      { "input": "number", "label": "number", "problem": "missing", "expected": "a phone number in international form (+420…)" },
+      { "input": "n", "label": "n", "problem": "range", "expected": "a integer 1–10" },
+      { "input": "x", "label": "x", "problem": "type", "expected": "a number 0.5–…" }
+    ] },
+    { "values": { "number": "+1 (555) 010-9999", "n": "", "flag": "0", "code": "ABCD" }, "out": [
+      { "input": "code", "label": "code", "problem": "pattern", "expected": "text matching ^[A-Z]{3}$" }
+    ] }
+  ],
+  "badPattern": {
+    "inputs": [
+      { "name": "re", "type": "string", "required": false, "pattern": "([a-z" },
+      { "name": "lbl", "label": "Label", "type": "email", "required": true }
+    ],
+    "values": { "re": "zzz" },
+    "out": [{ "input": "lbl", "label": "Label", "problem": "missing", "expected": "a email" }]
+  }
+}

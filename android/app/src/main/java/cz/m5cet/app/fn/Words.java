@@ -30,6 +30,7 @@ final class Words {
         EN.put("fnui.webOnly", "Opens in the web app");
         EN.put("functions.send", "Send");
         EN.put("functions.cancel", "Cancel");
+        EN.put("fnm.ask.required", "Fill in the required fields");
     }
 
     /** The text of key, with {name} filled from pairs ("what", "buttons", …). */

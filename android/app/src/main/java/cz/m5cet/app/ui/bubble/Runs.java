@@ -19,7 +19,11 @@ public final class Runs {
     /** Does `cur` continue the run of `prev` (the message shown just above it)? */
     public static boolean continues(ChatMessage prev, ChatMessage cur) {
         if (prev == null || cur == null) return false;
-        if ("sys".equals(prev.kind) || "sys".equals(cur.kind) || prev.mine != cur.mine) return false;
+        if ("sys".equals(prev.kind) || "sys".equals(cur.kind)) return false;
+        // 6.11: a model's answer is its own run (never the asker's): only the same model's answers continue it.
+        String pm = ModelFace.runKey(prev), cm = ModelFace.runKey(cur);
+        if (pm != null || cm != null) return pm != null && pm.equals(cm) && cur.createdAt - prev.createdAt >= 0 && cur.createdAt - prev.createdAt <= GAP_MS;
+        if (prev.mine != cur.mine) return false;
         if (prev.senderId == null || prev.senderId.isEmpty() || !prev.senderId.equals(cur.senderId)) return false;
         long gap = cur.createdAt - prev.createdAt;
         return gap >= 0 && gap <= GAP_MS;
