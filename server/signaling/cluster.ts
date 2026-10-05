@@ -33,10 +33,12 @@ export type MemberView = {
   /** 6.7: presence — the app in the foreground, and when it last was. */
   foreground?: boolean;
   lastSeen?: number;
+  /** 6.12: the member's join proved the room key (signaling/proof.ts). */
+  proven?: boolean;
 };
 
 /** 6.7: a member whose connection went without a goodbye (presence.ts › HeldMember). */
-export type HeldView = { name: string; joinedAt: number; lastSeen: number; since: number; accountId?: string; resumeHash?: string; tokenHash?: string };
+export type HeldView = { name: string; joinedAt: number; lastSeen: number; since: number; accountId?: string; resumeHash?: string; tokenHash?: string; proven?: boolean };
 
 export type RemoteMember = MemberView & { inst: string };
 
@@ -238,6 +240,7 @@ export class ClusterRooms {
         this.hooks.left(room, peerId, {
           name: m.name, joinedAt: m.joinedAt, lastSeen: m.foreground === false ? m.lastSeen ?? now : now, since: now,
           ...(m.accountId ? { accountId: m.accountId } : {}), ...(m.resumeHash ? { resumeHash: m.resumeHash } : {}),
+          ...(m.proven === true ? { proven: true } : {}),
         });
       }
       if (map.size === 0) this.remote.delete(room);

@@ -10,6 +10,9 @@
 //                            several tiles, and a room's history several maps
 //   the passkey ceremonies   30 in 10 minutes (accounts/routes.ts) — so a busy
 //                            browser can still sign in
+//   /api/kt/…                600 in 15 minutes (kt/routes.ts, 6.12) — clients
+//                            check the key-transparency log for every peer
+//   PUT /api/keys/bundle     60 in 15 minutes (keys/routes.ts, 6.12)
 //
 // Before 6.8 a page that drew a few maps used up the 100 requests and the
 // next passkey sign-in got "Too many requests, please try again later."
@@ -43,7 +46,7 @@ export function apiLimitConfig(env: Record<string, string | undefined> = process
 }
 
 /** Prefixes whose routes have a bucket of their own (the path itself or below it). */
-const OWN_BUCKET_PREFIXES = ["/api/account/vault", "/api/storage", "/api/admin", "/api/android", "/api/profile", "/api/map/tile"];
+const OWN_BUCKET_PREFIXES = ["/api/account/vault", "/api/storage", "/api/admin", "/api/android", "/api/profile", "/api/map/tile", "/api/kt"];
 
 /** The passkey ceremonies (accounts/routes.ts ceremonyLimiter, registrationLimiter, recoveryLimiter). */
 const OWN_BUCKET_ROUTES = new Set([
@@ -51,6 +54,8 @@ const OWN_BUCKET_ROUTES = new Set([
   "POST /api/account/signin/options", "POST /api/account/signin/verify", "POST /api/account/unlock",
   "POST /api/account/passkeys/options", "POST /api/account/passkeys/verify",
   "POST /api/account/recovery/start", "POST /api/account/recovery/finish",
+  // 6.12: the key directory (keys/routes.ts, 60 in 15 minutes).
+  "PUT /api/keys/bundle",
 ]);
 
 /** Whether a request is counted by its own route's limiter instead of the general one. */

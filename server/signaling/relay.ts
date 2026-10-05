@@ -22,6 +22,11 @@
 //     whether an account exists;
 //   - signing out (or being deleted) ends the relay for that account at
 //     once, including on sockets that are still open.
+//
+// 6.12 (protocol 4, § 7.4): a relay frame may carry an envelope per
+// recipient (`per[ref]`, sealed for that account's devices' mailboxes);
+// each queue item gets its own, the others `envelope`. The size limit is the
+// queue's, per item; receipts and the ledger are unchanged.
 
 import type { WebSocket } from "ws";
 import type { AccountStore } from "../accounts/store";
@@ -269,8 +274,19 @@ export class AwayRelay {
 
   /* -------------------------------------------------------------- relay */
 
-  /** A sender relays room-key ciphertext to members it cannot reach. */
-  async relay(client: RelayPeer, frame: { messageId: string; to: string[]; envelope: QueueEnvelope; expiresAt?: number; mention?: string[]; call?: boolean }): Promise<void> {
+  /** Accounts that belong to `room` — away, or present on this instance: the
+   *  only ones a room-scoped reference can resolve to (relay, key directory). */
+  candidates(room: string): Set<string> {
+    return new Set<string>([
+      ...[...(this.awayByRoom.get(room)?.keys() ?? [])],
+      ...this.members(room).map((p) => p.accountId).filter((a): a is string => Boolean(a)),
+    ]);
+  }
+
+  /** A sender relays room-key ciphertext to members it cannot reach. 6.12:
+   *  `per[ref]` is that recipient's own envelope (protocol 4: sealed for its
+   *  devices' mailboxes); recipients without one get `envelope`. */
+  async relay(client: RelayPeer, frame: { messageId: string; to: string[]; envelope?: QueueEnvelope; per?: Record<string, QueueEnvelope>; expiresAt?: number; mention?: string[]; call?: boolean }): Promise<void> {
     const room = client.room;
     if (!room) return;
     const queue = this.queue();
@@ -279,10 +295,7 @@ export class AwayRelay {
 
     // Only accounts that belong to this room — present or away — can be
     // addressed; anything else gets the same answer, whatever the reason.
-    const candidates = new Set<string>([
-      ...[...(this.awayByRoom.get(room)?.keys() ?? [])],
-      ...this.members(room).map((p) => p.accountId).filter((a): a is string => Boolean(a)),
-    ]);
+    const candidates = this.candidates(room);
     const from = { peerId: client.id, name: client.name, ...(client.accountId ? { accountId: client.accountId } : {}) };
     // 6.7: the notifier may try several channels (each with its timeout): one
     // recipient's wake-up does not hold up the next one's "stored".
@@ -295,7 +308,9 @@ export class AwayRelay {
 
       const awayEntry = this.awayByRoom.get(room)?.get(accountId);
       const name = awayEntry?.name ?? this.members(room).find((p) => p.accountId === accountId)?.name ?? "";
-      const result = queue.enqueue({ accountId, room, kind: "message", messageId: frame.messageId, from, envelope: frame.envelope, expiresAt: frame.expiresAt });
+      const envelope = (frame.per && Object.hasOwn(frame.per, ref) ? frame.per[ref] : undefined) ?? frame.envelope;
+      if (!envelope) { status(ref, "rejected", name, "no envelope"); continue; }
+      const result = queue.enqueue({ accountId, room, kind: "message", messageId: frame.messageId, from, envelope, expiresAt: frame.expiresAt });
       if (!result.ok) {
         status(ref, "rejected", name, result.reason === "too-large" ? "too large" : "mailbox full");
         audit.add({ category: "security", level: "warn", event: "relay.refused", actor: client.id, accountId, roomHash: hashRoom(room), status: result.reason });

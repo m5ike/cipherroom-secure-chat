@@ -29,6 +29,14 @@
 // resumed with { kind: "route", ok: true } and continues at on_success; its
 // next actions are run on the live call. The caller hanging up ends it all.
 //
+// 6.12 (G-09): a room's audio and a member named by display name reach only
+// members who proved they hold the room key when they joined (the hub's join
+// proof, signaling/proof.ts › reachable): in a room where at least one member
+// proved, the unproven ones are not offered the call; in a room where nobody
+// proves (only clients before 6.12) everyone is, as before — unless
+// HUB_REQUIRE_ROOM_PROOF=1, then proven members only. "@account" is
+// authenticated by the member's session and needs no proof.
+//
 // Privacy: the room is found on the signaling hub by its blind id (r3.…) —
 // the only id a v3 room has there; its name never reaches the server. Only
 // the room the code names is ever routed to (an "@account" member found in
@@ -50,6 +58,7 @@ import { Framer, Segmenter, StreamResampler, mulawDecode, mulawEncode, pcm16From
 import { MIX_FRAME, MIX_RATE, Mixer } from "./mixer";
 import { hashRoom } from "../monitor/traffic";
 import { stt, tts, type Caller as AiCaller } from "../ai/service";
+import { reachable } from "../signaling/proof";
 
 /** Limits of a routed call (tests shorten them). */
 export const routeLimits = {
@@ -80,7 +89,8 @@ const language = () => env("TELEPHONY_ROUTE_LANGUAGE") || "cs";
 
 /* ------------------------------------------------------------ the hub */
 
-export type RouteMember = { peerId: string; name: string; accountId?: string };
+/** 6.12 `proven`: the member's join proved the room key (signaling/proof.ts); absent = not proven. */
+export type RouteMember = { peerId: string; name: string; accountId?: string; proven?: boolean };
 
 /** What routing needs from the signaling hub (main service: routes.ts sets it). */
 export type RouteHub = {
@@ -106,8 +116,10 @@ export function routeTargets(entry: Pick<InrouteEntry, "type" | "room" | "user">
   if (!isBlindRoomId(entry.room)) return { targets: [], problem: "the code's room is not a blind room id (r3.…)" };
   if (!h) return { targets: [], problem: "the chat's signaling hub is not in this process" };
   const members = h.members(entry.room);
+  // 6.12 (G-09): by room or by display name, only members the server may reach (proven ones once anyone proved).
+  const proven = reachable(members);
   const here = (list: RouteMember[]): RouteTarget[] => list.map((m) => ({ room: entry.room, peerId: m.peerId, name: m.name, inRoom: true }));
-  if (entry.type === "room") return { targets: here(members), problem: "" };
+  if (entry.type === "room") return { targets: here(proven), problem: "" };
   if (entry.type !== "user") return { targets: [], problem: `unknown route type "${String(entry.type)}"` };
   const user = String(entry.user ?? "").trim();
   if (!user) return { targets: [], problem: "the code names no member" };
@@ -120,7 +132,7 @@ export function routeTargets(entry: Pick<InrouteEntry, "type" | "room" | "user">
     return { targets: h.accountMembers(account).filter((m) => isBlindRoomId(m.room)).map((m) => ({ ...m, inRoom: m.room === entry.room })), problem: "" };
   }
   const name = user.toLowerCase();
-  return { targets: here(members.filter((m) => m.name.toLowerCase() === name)), problem: "" };
+  return { targets: here(proven.filter((m) => m.name.toLowerCase() === name)), problem: "" };
 }
 
 export type RouteDecision =

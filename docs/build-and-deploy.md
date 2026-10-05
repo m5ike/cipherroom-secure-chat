@@ -73,6 +73,9 @@ proměnné ze skutečného prostředí mají přednost. `.env` je v `.dockerigno
 | `VONAGE_ALLOW_UNSIGNED_SMS`| 6.7: `1` = přijmout Vonage SMS bez podpisu.          |
 | `ANDROID_DESIGN_IMAGE_HOSTS`| 6.7: povolení hostitelé obrázků v designu Androidu (výchozí žádný). |
 | `NOTIFY_DIR`               | 6.7: nastavení upozornění (`$DATA_DIR/notify`).      |
+| `HUB_REQUIRE_ROOM_PROOF`   | 6.12: `1` = místnost se slepým ID (`r3.…`) přijme jen člena, který doloží znalost klíče místnosti (důkaz při `join`, G-09); klienti před 6.12 dostanou `room-proof-required`. Místnosti s čitelným jménem (protokol 2) důkaz podat nemohou a zůstávají „starší“. Bez `1` (výchozí): join bez důkazu projde a člen je označen `proven: false`; zvuk telefonu do místnosti, hovor nabídnutý místnosti a cíl podle jména dostanou jen prokázaní členové, jakmile v místnosti nějaký je (jinak všichni jako dřív). |
+| `HUB_ROOM_PROOF_TTL_DAYS`  | 6.12: dny, po kterých server zapomene ověřovací klíč místnosti, kterou nikdo s důkazem nenavštívil (365; 1–3650). Ověřovače jsou v globální SQLite (sdílené instancemi clusteru), bez úložiště jen v paměti instance. |
+| `KEYS_MAX_DEVICES`         | 6.12: nejvýše zařízení jednoho účtu v adresáři klíčů (`PUT /api/keys/bundle`; 10; 1–50). Odhlášení zařízení ho z adresáře odebere (záznam `rev` v transparentnosti klíčů). |
 
 Úplný seznam proměnných je v [dokumentaci › Nasazení](site/index.html#promenne),
 změny 6.7 v [`deployment.md`](deployment.md#přechod-na-67). `.dockerignore`

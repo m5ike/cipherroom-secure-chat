@@ -170,6 +170,17 @@ export function getMasterKey(): { key: Buffer; source: "env" | "file" } {
   return { key: keys.master, source: keys.source };
 }
 
+/** 6.12: what else is derived from the master key (HKDF, one subkey per purpose):
+ *  the key-transparency signing seed (Ed25519, server/kt) and the HMAC key that
+ *  names rooms in the hub's verifier table (server/signaling/proof.ts). */
+export type ServerKeyPurpose = "kt-signing-key" | "hub-room-verifier";
+
+/** A 32-byte subkey of the master key for `purpose`. Never logged or written
+ *  anywhere; the caller zeroes it when done. Throws MasterKeyError like the rest. */
+export function serverSubkey(purpose: ServerKeyPurpose): Buffer {
+  return derive(masterKeys().master, purpose);
+}
+
 /** Loads the master key once, for start-up: ok, or the reason storage is off. */
 export function checkMasterKey(): { ok: true; source: "env" | "file" } | { ok: false; reason: string } {
   try {

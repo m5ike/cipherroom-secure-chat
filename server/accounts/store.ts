@@ -230,6 +230,8 @@ export function tokenHash(token: string): string {
 
 /** Told when sessions end: one token (its hash), or every session of the account (null). */
 export type RevokeListener = (accountId: string, tokenHash: string | null, reason: "sign-out" | "sign-out-everywhere" | "deleted" | "admin") => void;
+/** 6.12: the account's public signing key was set or changed (key transparency logs it — server/keys/service.ts). */
+export type IdentityListener = (accountId: string, publicKey: string, previous: string | null) => void;
 const ID = /^[A-Za-z0-9_-]{10,64}$/;
 
 /** Stable, non-reversible account id derived from the credential id. */
@@ -250,6 +252,7 @@ export class AccountStore {
   private memory = new Map<string, unknown>();
   private writeError: string | null = null;
   private revokeListeners = new Set<RevokeListener>();
+  private identityListeners = new Set<IdentityListener>();
   private queueStats: ((accountId: string) => { pending: number; bytes: number }) | null = null;
 
   constructor(private readonly dir: string = accountsDir()) {}
@@ -782,10 +785,20 @@ export class AccountStore {
     const acc = this.get(accountId);
     if (!acc || typeof publicKey !== "string" || !/^[A-Za-z0-9+/=_-]{40,64}$/.test(publicKey)) return false;
     if (acc.identity?.publicKey === publicKey) return true;
+    const previous = acc.identity?.publicKey ?? null;
     acc.identity = { publicKey, updatedAt: now };
     this.addAudit(accountId, "identity-set", {}, now);
     this.persist();
+    for (const listener of this.identityListeners) {
+      try { listener(accountId, publicKey, previous); } catch (err) { console.warn(`[accounts] identity listener failed: ${(err as Error).message}`); }
+    }
     return true;
+  }
+
+  /** 6.12: told when an account's public signing key is set or changed. */
+  onIdentity(listener: IdentityListener): () => void {
+    this.identityListeners.add(listener);
+    return () => this.identityListeners.delete(listener);
   }
 
   /** Open sessions (valid tokens), for one account or all of them. */
