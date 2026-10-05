@@ -123,7 +123,7 @@ export class KtClient {
     if (this.off || !lookup) return "unverified";
     const u = user ? await ktUser(user) : undefined;
     // `u` undefined: the entries are not checked against a user (the hub answered for the member's reference).
-    const run = (user?: string) => this.state.lookup(this.origin, lookup, user as string, this.consistency).catch(() => ({ ok: false as const, why: "error" }));
+    const run = (user?: string) => this.state.lookup(this.origin, lookup, user, this.consistency).catch(() => ({ ok: false as const, why: "error" }));
     let checked = await run(u);
     // A claimed username the server stores otherwise: the entries still say what they say.
     if (!checked.ok && checked.why === "wrong-user" && u) checked = await run(undefined);

@@ -262,8 +262,12 @@ export class KtState {
     });
   }
 
-  /** A lookup: its head goes through `update` first, then inclusion of every entry. */
-  async lookup(origin: string, lookup: KtLookup, u: string, fetchConsistency: ConsistencyFetcher): Promise<{ ok: true; entries: VerifiedEntry[] } | { ok: false; why: string }> {
+  /**
+   * A lookup: its head goes through `update` first, then inclusion of every
+   * entry. `u` undefined: the entries are not checked against a user (a lookup
+   * the hub answered for a member's room-scoped reference names no username).
+   */
+  async lookup(origin: string, lookup: KtLookup, u: string | undefined, fetchConsistency: ConsistencyFetcher): Promise<{ ok: true; entries: VerifiedEntry[] } | { ok: false; why: string }> {
     const upd = await this.update(origin, lookup?.sth, fetchConsistency);
     if (upd.status !== "ok") return { ok: false, why: upd.status };
     const key = (await this.load(origin)).key!;
