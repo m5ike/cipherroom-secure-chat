@@ -88,6 +88,9 @@ dependencies {
     // 6.1: passkeys (the user's account) through the platform's Credential Manager.
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    // 6.12: protocol 4 — ML-KEM-768 (FIPS 203) and Ed25519 through Bouncy Castle's lightweight
+    // API only (no JCA provider is registered; R8 keeps just the classes cz.m5cet.app.p4 uses).
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
 
     testImplementation("junit:junit:4.13.2")
     // The real org.json on the JVM (android.jar only has stubs).

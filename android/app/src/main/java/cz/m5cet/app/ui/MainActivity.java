@@ -530,7 +530,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
                 String pinKey = app.lock.pinKeyLevel();
                 s.put("security", jo("biometricAvailable", !"off".equals(app.lock.biometricMode()) && Biometric.available(this), "biometric", app.vault.bioEnrolled(),
                     "pinLength", (double) app.lock.pinLength(), "maxAttempts", (double) app.lock.maxAttempts(), "wipe", app.config.lockPolicy().optBoolean("wipe", true), "screenshots", app.lock.screenshots(),
-                    "pinKey", pinKey, "pinKeyLabel", pinKey.isEmpty() ? "—" : app.t("set.security.pinKey." + pinKey), "duress", cz.m5cet.app.security.Duress.active(app)));
+                    "pinKey", pinKey, "pinKeyLabel", pinKey.isEmpty() ? "—" : app.t("set.security.pinKey." + pinKey), "duress", cz.m5cet.app.security.Duress.active(app),
+                    "ktAlert", ktAlert()));
                 break;
             }
             case "attach": case "send.options": s.put("composer", parts.composerScope()); break; // 6.8: + asVoice, voiceText, sealCode, count
@@ -650,8 +651,15 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         java.util.List<cz.m5cet.app.chat.RoomSession> rooms = app.rooms.connectedSessions();
         int joined = 0;
         for (cz.m5cet.app.chat.RoomSession r : rooms) if (r.connected()) joined++;
+        // 6.12: protocol 4 with 6.12 peers, protocol 3 with older ones; key transparency's alert for this server (§ 14.4).
         return jo("server", app.config.server(), "rooms", (double) joined, "status", joined > 0 ? "joined" : "offline", "push", app.push.enabled() ? "fcm" : "poll",
-            "checkin", (double) app.checkin.lastAt(), "protocol", 2.0, "crypto", "v3", "turn", (double) cz.m5cet.app.rtc.Rtc.iceCount());
+            "checkin", (double) app.checkin.lastAt(), "protocol", 2.0, "crypto", "p4 (ML-KEM-768 + ECDH) · v3", "turn", (double) cz.m5cet.app.rtc.Rtc.iceCount(),
+            "ktAlert", ktAlert());
+    }
+
+    /** 6.12: the persistent key-transparency alert for this server, in words ("" when none). */
+    private String ktAlert() {
+        try { return app.rooms.loaded() ? app.rooms.ktAlert() : ""; } catch (RuntimeException e) { return ""; }
     }
     @Override public boolean animateEnter() { return animate; }
     @Override public View slot(String name, Renderer.Bound bound) { return parts.create(name, bound); }

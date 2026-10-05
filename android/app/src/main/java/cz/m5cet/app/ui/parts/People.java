@@ -174,7 +174,9 @@ public final class People {
         RtcStats.Summary st = me ? null : r.peerStats(id);
         String transport = me ? "self" : !open || st == null || st.transport().isEmpty() ? "connecting" : st.transport();
         String theirs = u.optString("publicKey"), mine = r.myPublicKey();
-        boolean safety = !me && !theirs.isEmpty() && !mine.isEmpty();
+        // 6.12 (§ 12.2): both account keys when both devices are attested, else both device keys.
+        String[] keys = me ? new String[]{mine, theirs} : r.safetyKeys(id);
+        boolean safety = !me && !keys[0].isEmpty() && !keys[1].isEmpty();
         String candidates = "";
         if (st != null && !st.localType.isEmpty()) {
             candidates = st.localType + " → " + st.remoteType + (st.protocol.isEmpty() ? "" : " · " + st.protocol.toUpperCase(java.util.Locale.ROOT))
@@ -190,7 +192,7 @@ public final class People {
                 .put("traffic", st == null ? "—" : Presence.bytes(st.bytesSent) + " / " + Presence.bytes(st.bytesReceived))
                 .put("security", security).put("dtls", st == null ? "" : st.dtlsFingerprint)
                 .put("fingerprint", Safety.fingerprint(me ? mine : theirs))
-                .put("hasSafety", safety).put("safety", safety ? Safety.lines(Safety.number(mine, theirs)) : "")
+                .put("hasSafety", safety).put("safety", safety ? Safety.lines(Safety.number(keys[0], keys[1])) : "")
                 .put("room", r.label).put("contactsOn", app().settings.bool("people.contacts"))
                 .put("others", (double) Math.max(0, r.userCount() - 1));
         } catch (JSONException ignored) { }
@@ -369,6 +371,10 @@ public final class People {
         SecureDialog.show(a, new android.app.AlertDialog.Builder(a).setTitle(t("people.safety")).setView(box) // 6.7 N18
             .setPositiveButton(done ? t("people.verify.undo") : t("people.verify.match"), (d, w) -> {
                 Store.setVerified(app(), kid, !done);
+                // 6.12 (§ 12): a verified identity is accepted — a changed one's pins follow and its held messages appear;
+                // an attested device's account counts as verified everywhere.
+                RoomSession room = app().rooms.activeSession();
+                if (room != null) room.identityVerified(id, !done);
                 if (!done) a.flash("", fill(t("people.verify.done"), name, ""), "success");
                 refreshAll();
             })

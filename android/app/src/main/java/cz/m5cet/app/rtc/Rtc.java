@@ -72,8 +72,8 @@ public final class Rtc {
                 if (s.has("credential")) b.setPassword(s.optString("credential"));
                 out.add(b.createIceServer());
             }
-            long ttl = answer.optLong("ttlSeconds", 0);
-            if (ttl > 120) until = System.currentTimeMillis() + (ttl - 60) * 1000;
+            until = cacheUntil(answer, System.currentTimeMillis());
+            if (until == 0) Log.d("rtc", "STUN only until this device's hub socket is up (pending)");
         } catch (Exception e) {
             Log.w("rtc", "no ICE servers from the server: " + e.getMessage());
         }
@@ -81,6 +81,25 @@ public final class Rtc {
         ice = out;
         iceUntil = until;
         return out;
+    }
+
+    /**
+     * 6.12: how long an /api/turn answer may be reused. The server hands TURN
+     * credentials only to an address with a live hub WebSocket; before that it
+     * answers STUN only with {@code pending: true} (an expiry of "now") — such
+     * an answer is never cached (0), so the next peer connection asks again,
+     * by then over a connected room. Otherwise 10 minutes, or the TURN
+     * credentials' lifetime less a minute. Pure (JVM tests).
+     */
+    public static long cacheUntil(JSONObject answer, long now) {
+        if (answer == null || answer.optBoolean("pending", false)) return 0;
+        long ttl = answer.optLong("ttlSeconds", 0);
+        return ttl > 120 ? now + (ttl - 60) * 1000 : now + 10 * 60_000;
+    }
+
+    /** 6.12: a room's hub socket joined — an answer without TURN is not reused for the calls that follow. */
+    public static synchronized void hubConnected() {
+        if (iceUntil == 0) ice = null;
     }
 
     /** How many ICE servers the server gave (the settings' connection info). */

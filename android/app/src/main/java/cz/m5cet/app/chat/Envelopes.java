@@ -4,10 +4,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.security.GeneralSecurityException;
-import java.security.KeyFactory;
-import java.security.PublicKey;
-import java.security.Signature;
-import java.security.spec.X509EncodedKeySpec;
 
 import cz.m5cet.app.security.Crypto;
 import cz.m5cet.app.security.Ec;
@@ -83,19 +79,9 @@ public final class Envelopes {
         }
     }
 
-    private static final byte[] ED25519_SPKI = Crypto.unhex("302a300506032b6570032100");
-
-    /** identity.ts verifyDeviceCert — Ed25519 where the platform has it (Android 13+), else "not proven". */
+    /** identity.ts verifyDeviceCert (v1). 6.12: Ed25519 through Bouncy Castle — on every Android, not only 13+. */
     static boolean verifyDeviceCert(String accountKey, String cert, String devicePublicKey) {
-        try {
-            PublicKey key = KeyFactory.getInstance("Ed25519").generatePublic(new X509EncodedKeySpec(Crypto.concat(ED25519_SPKI, Crypto.unb64(accountKey))));
-            Signature sig = Signature.getInstance("Ed25519");
-            sig.initVerify(key);
-            sig.update(Crypto.utf8("m5cet/device-cert/1|" + devicePublicKey));
-            return sig.verify(Crypto.unb64(cert));
-        } catch (GeneralSecurityException | RuntimeException e) {
-            return false;
-        }
+        return cz.m5cet.app.p4.Handshake.verifyDeviceCertV1(accountKey, cert, devicePublicKey);
     }
 
     static JSONObject sealed(byte[] key, byte[] plain, byte[] ctx) {
@@ -124,20 +110,22 @@ public final class Envelopes {
         } catch (JSONException e) { throw new IllegalStateException(e); }
     }
 
+    /**
+     * Opens a protocol-3 room envelope (v: 3). 6.12 (protocol 4 § 1, F-20):
+     * envelope versions 1 and 2 — only clients older than 3.1 made them — are
+     * no longer opened.
+     */
     public static Opened openMessage(RoomKeys keys, JSONObject envelope) throws GeneralSecurityException {
         int v = envelope.optInt("v", 1);
-        if (v == 2 && keys.version == 3) return openMessage(keys.previous(), envelope);
-        if (v == 2 || v == 3) {
-            if (v != keys.version) throw new GeneralSecurityException("envelope from another key version");
-            String id = envelope.optString("id", "");
-            if (id.isEmpty()) throw new GeneralSecurityException("envelope without id");
-            byte[] ctx = context("msg", keys.room, id);
-            Body b = readBody(open(keys.message, envelope.optString("iv"), envelope.optString("ciphertext"), ctx), ctx);
-            JSONObject payload = parse(b.body);
-            if (!id.equals(payload.optString("id", null))) throw new GeneralSecurityException("envelope id mismatch");
-            return new Opened(payload, v, b.signer);
-        }
-        throw new GeneralSecurityException("version 1 envelopes are not supported on Android");
+        if (v != 3) throw new GeneralSecurityException("envelope version " + v + " is no longer opened");
+        if (v != keys.version) throw new GeneralSecurityException("envelope from another key version");
+        String id = envelope.optString("id", "");
+        if (id.isEmpty()) throw new GeneralSecurityException("envelope without id");
+        byte[] ctx = context("msg", keys.room, id);
+        Body b = readBody(open(keys.message, envelope.optString("iv"), envelope.optString("ciphertext"), ctx), ctx);
+        JSONObject payload = parse(b.body);
+        if (!id.equals(payload.optString("id", null))) throw new GeneralSecurityException("envelope id mismatch");
+        return new Opened(payload, v, b.signer);
     }
 
     public static JSONObject parse(String json) throws GeneralSecurityException {

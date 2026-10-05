@@ -43,6 +43,17 @@ final class Peer {
     String publicKey;
     boolean verified;
     boolean changed;
+    /** 6.12: "v4" (protocol 4), "legacy" (protocol 3) or "downgrade" (refused, § 1); "" before its hello. */
+    String protocol = "";
+    boolean downgrade;
+    /** 6.12 § 12.1: new, verified, account or changed (Trust). */
+    String trust = Trust.NEW;
+    /** 6.12 § 14.4: what key transparency says of its attested device: "" (not checked), ok, missing, revoked. */
+    String kt = "";
+    /** The caps its hello listed. */
+    org.json.JSONArray caps;
+    /** 6.12: payloads for it before its hello said which protocol it speaks ({payload, private?}); sent then. */
+    final List<Object[]> beforeHello = new ArrayList<>();
     final List<RtpSender> senders = new ArrayList<>();
     VideoTrack remoteVideo;
     /** 6.1: the peer's audio (audio ↔ text calls transcribe it). */

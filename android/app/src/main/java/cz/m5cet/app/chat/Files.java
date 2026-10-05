@@ -17,10 +17,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 import cz.m5cet.app.core.Io;
 import cz.m5cet.app.core.Log;
+import cz.m5cet.app.p4.Files4;
+import cz.m5cet.app.p4.P4Error;
+import cz.m5cet.app.p4.Rng;
 import cz.m5cet.app.security.Crypto;
 import cz.m5cet.app.security.FileVault;
 
@@ -32,6 +37,14 @@ import cz.m5cet.app.security.FileVault;
  * the end carries SHA-256 over the chunks' SHA-256s. Chunks go as binary
  * frames to peers that announced "bin", as JSON to the others; missing
  * chunks are asked for again (file-need, three rounds).
+ *
+ * 6.12 (protocol 4, § 8): between protocol-4 peers the room key no longer
+ * protects files — the sender picks a random FK per transfer and hands it to
+ * each such peer over the pair ratchet (a `file` inner message) before the
+ * meta; the key is HKDF(salt = transferId, FK, "m5cet/p4/file"), the AADs
+ * are protocol 4's, meta and end bodies padded (not signed — the session
+ * authenticates them). Older peers get the same file the protocol-3 way: one
+ * transfer, two lanes. A file through the server (no channel) stays protocol 3.
  *
  * The receiver keeps the (still encrypted) frames in a temporary file and
  * only at the end decrypts, verifies and stores the file in the vault
@@ -55,6 +68,8 @@ final class Files {
         final String id, transport;
         final Peer from;
         final byte[] key;
+        /** 6.12: a protocol-4 transfer (per-transfer key, protocol-4 AADs, padded bodies). */
+        final boolean p4;
         JSONObject meta;
         String signer;
         int total, chunkSize;
@@ -67,9 +82,8 @@ final class Files {
         ChatMessage message;
         long lastUi = 0;
 
-        In(String id, Peer from, String transport) {
-            this.id = id; this.from = from; this.transport = transport;
-            this.key = room.keys.fileKey(id);
+        In(String id, Peer from, String transport, byte[] key, boolean p4) {
+            this.id = id; this.from = from; this.transport = transport; this.key = key; this.p4 = p4;
         }
 
         int slot() { return 12 + chunkSize + 16; }
@@ -130,12 +144,32 @@ final class Files {
 
     private void onMeta(Peer p, String id, JSONObject f, boolean proxy) {
         if (incoming.containsKey(id) || outgoing.containsKey(id)) return;
-        if (f.optInt("v", 1) != 2) return; // v1 (3.0 and older) is not received here
-        In in = new In(id, p, proxy ? "proxy" : "p2p");
+        int v = f.optInt("v", 1);
+        if (v != 2 && v != 4) return; // v1 (3.0 and older) is not received here
+        // 6.12 (§ 8): a protocol-4 transfer (v 4) opens only with the FK the sender's session handed us over the
+        // ratchet before the meta — never the room key; over a protocol-4 peer's channel a v2 file is not taken.
+        byte[] fk = v != 4 || p == null || proxy || room.p4 == null ? null : room.p4.fileKey(p.id, id);
+        if (v == 4 && fk == null) { Log.w("files", "a protocol-4 file without its key refused"); return; }
+        if (v == 2 && p != null && !proxy && room.isV4(p)) { Log.w("files", "a protocol-3 file from a protocol-4 peer refused"); return; }
+        In in;
         try {
-            Envelopes.Body body = Envelopes.openFileBodyFull(in.key, Envelopes.fileMetaContext(id), f.optString("iv"), f.optString("ciphertext"));
-            if (body.signer != null && !body.signer.valid) throw new GeneralSecurityException("bad signature");
-            JSONObject m = Envelopes.parse(body.body);
+            in = fk != null ? new In(id, p, "p2p", Files4.fileKey(fk, id), true) : new In(id, p, proxy ? "proxy" : "p2p", room.keys.fileKey(id), false);
+        } catch (P4Error e) {
+            return;
+        } finally {
+            Crypto.wipe(fk);
+        }
+        try {
+            JSONObject m;
+            if (in.p4) {
+                m = Envelopes.parse(Files4.openBody(in.key, Files4.metaAad(id), f.optString("iv"), f.optString("ciphertext")));
+                in.signer = room.p4.helloPk(p.id); // the session authenticated it
+            } else {
+                Envelopes.Body body = Envelopes.openFileBodyFull(in.key, Envelopes.fileMetaContext(id), f.optString("iv"), f.optString("ciphertext"));
+                if (body.signer != null && !body.signer.valid) throw new GeneralSecurityException("bad signature");
+                m = Envelopes.parse(body.body);
+                in.signer = body.signer == null ? null : body.signer.publicKey;
+            }
             if (!id.equals(m.optString("transferId"))) throw new GeneralSecurityException("transfer id");
             long size = m.optLong("size", -1);
             int chunkSize = m.optInt("chunkSize", 0);
@@ -143,7 +177,6 @@ final class Files {
             if (size < 0 || size > MAX_BYTES || chunkSize < 1 || chunkSize > 1_048_576) throw new GeneralSecurityException("size");
             if (total != Math.max(1, (int) ((size + chunkSize - 1) / chunkSize)) || total > MAX_CHUNKS) throw new GeneralSecurityException("chunks");
             in.meta = m;
-            in.signer = body.signer == null ? null : body.signer.publicKey;
             in.size = size;
             in.chunkSize = chunkSize;
             in.total = total;
@@ -216,16 +249,21 @@ final class Files {
     private void finish(In in, JSONObject f) {
         FileVault.Writer w = null;
         try {
-            Envelopes.Body body = Envelopes.openFileBodyFull(in.key, Envelopes.fileEndContext(in.id), f.optString("iv"), f.optString("ciphertext"));
-            if (in.signer != null && (body.signer == null || !body.signer.valid || !in.signer.equals(body.signer.publicKey))) throw new GeneralSecurityException("the end is not signed by the sender");
-            JSONObject end = Envelopes.parse(body.body);
+            JSONObject end;
+            if (in.p4) {
+                end = Envelopes.parse(Files4.openBody(in.key, Files4.endAad(in.id), f.optString("iv"), f.optString("ciphertext")));
+            } else {
+                Envelopes.Body body = Envelopes.openFileBodyFull(in.key, Envelopes.fileEndContext(in.id), f.optString("iv"), f.optString("ciphertext"));
+                if (in.signer != null && (body.signer == null || !body.signer.valid || !in.signer.equals(body.signer.publicKey))) throw new GeneralSecurityException("the end is not signed by the sender");
+                end = Envelopes.parse(body.body);
+            }
             if (end.optInt("totalChunks") != in.total || end.optLong("size") != in.size) throw new GeneralSecurityException("size");
             String rootB64 = end.optString("root");
             // 6.12 (F-16): the app is locked — the vault cannot take the file now. Checked in full, it stays
             // encrypted under its transfer key, which goes to the lock inbox; the unlock stores it (LockedRooms).
             if (LockedRooms.active()) {
-                decryptSlots(in.slots, in.key, in.id, in.total, in.chunkSize, in.lengths, in.size, rootB64, null);
-                if (LockedRooms.keepFile(room.app, room.key, in.id, in.key, in.tmp, in.slots, in.chunkSize, in.total, in.size, in.lengths, rootB64)) {
+                decryptSlots(in.slots, in.key, in.id, in.total, in.chunkSize, in.lengths, in.size, rootB64, null, in.p4);
+                if (LockedRooms.keepFile(room.app, room.key, in.id, in.key, in.tmp, in.slots, in.chunkSize, in.total, in.size, in.lengths, rootB64, in.p4)) {
                     in.close();
                     done(in);
                     return;
@@ -233,7 +271,7 @@ final class Files {
                 // The inbox closed meanwhile (the app was unlocked): stored the usual way.
             }
             w = new FileVault.Writer(room.app, in.id);
-            decryptSlots(in.slots, in.key, in.id, in.total, in.chunkSize, in.lengths, in.size, rootB64, w);
+            decryptSlots(in.slots, in.key, in.id, in.total, in.chunkSize, in.lengths, in.size, rootB64, w, in.p4);
             w.close();
             w = null;
             in.close();
@@ -252,7 +290,7 @@ final class Files {
             m.filePath = in.id;
             m.fileProgress = -1;
             m.fileVerified = in.signer != null;
-            m.verified = m.fileVerified;
+            m.verified = m.fileVerified && (in.from == null || Trust.VERIFIED.equals(in.from.trust)); // 6.12 § 12.1
             room.fileDone(m);
         });
     }
@@ -261,9 +299,10 @@ final class Files {
      * The chunks of a received file (its slots file: iv 12 ‖ ct per slot of
      * 12 + chunkSize + 16 bytes) decrypted in order and checked against the
      * end's root; into the vault (w), or only checked (w null). 6.12: also the
-     * unlock's way to store a file kept in the lock inbox (LockedRooms).
+     * unlock's way to store a file kept in the lock inbox (LockedRooms); `p4`:
+     * a protocol-4 transfer (its chunks' AAD is protocol 4's, § 8).
      */
-    static void decryptSlots(RandomAccessFile slots, byte[] key, String id, int total, int chunkSize, int[] lengths, long size, String rootB64, FileVault.Writer w)
+    static void decryptSlots(RandomAccessFile slots, byte[] key, String id, int total, int chunkSize, int[] lengths, long size, String rootB64, FileVault.Writer w, boolean p4)
         throws IOException, GeneralSecurityException {
         MessageDigest root = MessageDigest.getInstance("SHA-256");
         long bytes = 0;
@@ -275,7 +314,7 @@ final class Files {
             slots.seek((long) seq * slot);
             slots.readFully(iv);
             slots.readFully(ct);
-            byte[] plain = Crypto.gcmOpen(key, iv, ct, Envelopes.fileChunkContext(id, seq, total));
+            byte[] plain = Crypto.gcmOpen(key, iv, ct, p4 ? Files4.chunkAad(id, seq, total) : Envelopes.fileChunkContext(id, seq, total));
             if (plain.length > chunkSize) throw new GeneralSecurityException("chunk too large");
             root.update(MessageDigest.getInstance("SHA-256").digest(plain));
             if (w != null) w.write(plain, 0, plain.length);
@@ -294,15 +333,29 @@ final class Files {
 
     /* ================================================================== send */
 
+    /** One way a transfer goes: the peers on it and its key (protocol 4: from the FK; protocol 3: from the room key). */
+    private static final class Lane {
+        final boolean p4;
+        final List<Peer> peers;
+        final byte[] key;
+        String endFrame;
+        Lane(boolean p4, List<Peer> peers, byte[] key) { this.p4 = p4; this.peers = peers; this.key = key; }
+    }
+
     private final class Out {
         final String id;
-        String vaultId, endFrame;
-        final byte[] key;
+        String vaultId;
         final int total;
         final long size;
         final long startedAt = System.currentTimeMillis();
+        final List<Lane> lanes = new ArrayList<>();
         volatile boolean cancelled;
-        Out(String id, long size) { this.id = id; this.key = room.keys.fileKey(id); this.size = size; this.total = Math.max(1, (int) ((size + CHUNK - 1) / CHUNK)); }
+        Out(String id, long size) { this.id = id; this.size = size; this.total = Math.max(1, (int) ((size + CHUNK - 1) / CHUNK)); }
+
+        Lane laneOf(Peer p) {
+            for (Lane l : lanes) if (p == null ? l.peers.isEmpty() : l.peers.contains(p)) return l;
+            return null;
+        }
     }
 
     /**
@@ -319,44 +372,81 @@ final class Files {
                 List<Peer> peers = openPeers();
                 boolean proxy = peers.isEmpty();
                 if (proxy && !room.canProxy()) throw new IOException("nobody to send it to");
+                planLanes(out, peers);
                 String transport = proxy ? "proxy" : "p2p";
                 JSONObject meta = new JSONObject().put("transferId", id).put("name", name.length() > 200 ? name.substring(0, 200) : name).put("mime", mime)
                     .put("size", size).put("totalChunks", out.total).put("chunkSize", CHUNK).put("senderId", room.myId()).put("senderName", room.userName)
                     .put("createdAt", System.currentTimeMillis());
-                JSONObject sealedMeta = Envelopes.sealFileBody(out.key, Envelopes.fileMetaContext(id), meta, room.identity);
-                JSONObject metaFrame = new JSONObject().put("kind", "file-meta").put("transferId", id).put("transport", transport).put("v", 2)
-                    .put("iv", sealedMeta.getString("iv")).put("ciphertext", sealedMeta.getString("ciphertext"));
-                broadcast(peers, metaFrame, "proxy-meta");
+                for (Lane lane : out.lanes) {
+                    JSONObject sealedMeta = lane.p4 ? Files4.sealBody(lane.key, Files4.metaAad(id), meta.toString(), Rng.SYSTEM)
+                        : Envelopes.sealFileBody(lane.key, Envelopes.fileMetaContext(id), meta, room.identity);
+                    JSONObject metaFrame = new JSONObject().put("kind", "file-meta").put("transferId", id).put("transport", transport).put("v", lane.p4 ? 4 : 2)
+                        .put("iv", sealedMeta.getString("iv")).put("ciphertext", sealedMeta.getString("ciphertext"));
+                    broadcast(lane.peers, metaFrame, "proxy-meta");
+                }
                 MessageDigest root = MessageDigest.getInstance("SHA-256");
                 byte[] buf = new byte[CHUNK];
                 for (int seq = 0; seq < out.total && !out.cancelled; seq++) {
                     int n = Math.max(0, r.readAt((long) seq * CHUNK, buf, 0, CHUNK));
                     byte[] plain = java.util.Arrays.copyOf(buf, n);
                     root.update(MessageDigest.getInstance("SHA-256").digest(plain));
-                    sendChunk(peers, id, seq, out, plain, transport);
+                    for (Lane lane : out.lanes) sendChunk(lane, id, seq, out, plain, transport);
                     if (bubble != null && (seq % 8 == 0 || seq == out.total - 1)) {
                         bubble.fileProgress = (seq + 1) / (double) out.total;
                         room.fileChanged(bubble);
                     }
                 }
                 if (out.cancelled) {
-                    broadcast(peers, new JSONObject().put("kind", "file-cancel").put("transferId", id).put("transport", transport), "proxy-cancel");
+                    for (Lane lane : out.lanes) broadcast(lane.peers, new JSONObject().put("kind", "file-cancel").put("transferId", id).put("transport", transport), "proxy-cancel");
                     throw new IOException("cancelled");
                 }
                 JSONObject end = new JSONObject().put("root", Crypto.b64(root.digest())).put("totalChunks", out.total).put("size", size);
-                JSONObject sealedEnd = Envelopes.sealFileBody(out.key, Envelopes.fileEndContext(id), end, room.identity);
-                JSONObject endFrame = new JSONObject().put("kind", "file-end").put("transferId", id).put("transport", transport).put("v", 2)
-                    .put("iv", sealedEnd.getString("iv")).put("ciphertext", sealedEnd.getString("ciphertext"));
-                out.endFrame = endFrame.toString();
-                broadcast(peers, endFrame, "proxy-end");
+                for (Lane lane : out.lanes) {
+                    JSONObject sealedEnd = lane.p4 ? Files4.sealBody(lane.key, Files4.endAad(id), end.toString(), Rng.SYSTEM)
+                        : Envelopes.sealFileBody(lane.key, Envelopes.fileEndContext(id), end, room.identity);
+                    JSONObject endFrame = new JSONObject().put("kind", "file-end").put("transferId", id).put("transport", transport).put("v", lane.p4 ? 4 : 2)
+                        .put("iv", sealedEnd.getString("iv")).put("ciphertext", sealedEnd.getString("ciphertext"));
+                    lane.endFrame = endFrame.toString();
+                    broadcast(lane.peers, endFrame, "proxy-end");
+                }
                 if (bubble != null) { bubble.fileProgress = -1; bubble.raise(proxy ? "stored" : "sent"); room.fileChanged(bubble); }
-                Log.i("files", "sent " + size + " B in " + out.total + " chunks (" + transport + ")");
+                Log.i("files", "sent " + size + " B in " + out.total + " chunks (" + transport + ", " + out.lanes.size() + " lane(s))");
             } catch (Exception e) {
                 Log.w("files", "sending failed: " + e.getMessage());
                 if (bubble != null) { bubble.fileProgress = -2; room.fileChanged(bubble); }
                 room.systemNotice("⚠ " + name + ": " + e.getMessage());
             }
         });
+    }
+
+    /**
+     * Protocol-4 peers with a session get a fresh FK each over the ratchet (on
+     * the room's thread, before the meta goes); older peers and the server the
+     * room-key lane. A protocol-4 peer still making its session, or a refused
+     * (downgraded) one, does not get this file.
+     */
+    private void planLanes(Out out, List<Peer> peers) throws InterruptedException, P4Error, IOException {
+        List<Peer> v4 = new ArrayList<>(), v3 = new ArrayList<>();
+        byte[] fk = Crypto.random(32);
+        try {
+            CountDownLatch done = new CountDownLatch(1);
+            room.post(() -> {
+                try {
+                    for (Peer p : peers) {
+                        // A peer whose hello has not come yet (its protocol unknown) or a refused one does not get this file.
+                        if (p.downgrade || (p.protocol.isEmpty() && room.p4 != null)) continue;
+                        if (room.isV4(p)) { if (room.p4.ready(p.id) && room.p4.sendFileKey(p.id, out.id, fk)) v4.add(p); }
+                        else v3.add(p);
+                    }
+                } finally { done.countDown(); }
+            });
+            if (!done.await(10, TimeUnit.SECONDS)) throw new InterruptedException("the room did not answer");
+            if (!v4.isEmpty()) out.lanes.add(new Lane(true, v4, Files4.fileKey(fk, out.id)));
+            if (!v3.isEmpty() || peers.isEmpty()) out.lanes.add(new Lane(false, v3, room.keys.fileKey(out.id)));
+            if (out.lanes.isEmpty()) throw new IOException("the connections are still being secured — try again in a moment");
+        } finally {
+            Crypto.wipe(fk);
+        }
     }
 
     private List<Peer> openPeers() {
@@ -371,10 +461,10 @@ final class Files {
         for (Peer p : peers) p.send(text);
     }
 
-    private void sendChunk(List<Peer> peers, String id, int seq, Out out, byte[] plain, String transport) throws Exception {
+    private void sendChunk(Lane lane, String id, int seq, Out out, byte[] plain, String transport) throws Exception {
         byte[] iv = Crypto.random(12);
-        byte[] ct = Crypto.gcmSeal(out.key, iv, plain, Envelopes.fileChunkContext(id, seq, out.total));
-        if (peers.isEmpty()) {
+        byte[] ct = Crypto.gcmSeal(lane.key, iv, plain, lane.p4 ? Files4.chunkAad(id, seq, out.total) : Envelopes.fileChunkContext(id, seq, out.total));
+        if (lane.peers.isEmpty()) {
             room.sendServer(new JSONObject().put("type", "proxy-chunk").put("kind", "file-chunk").put("transferId", id).put("seq", seq)
                 .put("transport", "proxy").put("v", 2).put("iv", Crypto.b64(iv)).put("ciphertext", Crypto.b64(ct)));
             Thread.sleep(Math.max(1, ct.length / 1600)); // ~1.6 MB/s: under the server's proxy budget
@@ -382,46 +472,52 @@ final class Files {
         }
         String json = null;
         byte[] binary = null;
-        for (Peer p : peers) {
+        for (Peer p : lane.peers) {
             long waited = 0;
             while (p.open() && p.buffered() > 1_048_576 && waited < 10_000) { Thread.sleep(20); waited += 20; }
             if (!p.open()) continue;
             if (p.bin) {
-                if (binary == null) binary = binaryFrame(id, seq, iv, ct, (byte) 0x01);
+                if (binary == null) binary = binaryFrame(id, seq, iv, ct, (byte) 0x01, lane.p4 ? 4 : 2);
                 p.sendBinary(binary);
             } else {
-                if (json == null) json = new JSONObject().put("kind", "file-chunk").put("transferId", id).put("seq", seq).put("transport", transport).put("v", 2)
+                if (json == null) json = new JSONObject().put("kind", "file-chunk").put("transferId", id).put("seq", seq).put("transport", transport).put("v", lane.p4 ? 4 : 2)
                     .put("iv", Crypto.b64(iv)).put("ciphertext", Crypto.b64(ct)).toString();
                 p.send(json);
             }
         }
     }
 
-    static byte[] binaryFrame(String id, int seq, byte[] iv, byte[] ct, byte type) {
+    static byte[] binaryFrame(String id, int seq, byte[] iv, byte[] ct, byte type) { return binaryFrame(id, seq, iv, ct, type, 2); }
+
+    /** 6.12: `version` 4 for a protocol-4 transfer (the web's binary-frames.ts carries the frame's v). */
+    static byte[] binaryFrame(String id, int seq, byte[] iv, byte[] ct, byte type, int version) {
         byte[] idb = id.getBytes(StandardCharsets.UTF_8);
         ByteBuffer b = ByteBuffer.allocate(4 + idb.length + 4 + 12 + ct.length);
-        b.put((byte) 0x4D).put(type).put((byte) 2).put((byte) idb.length).put(idb).putInt(seq).put(iv).put(ct);
+        b.put((byte) 0x4D).put(type).put((byte) version).put((byte) idb.length).put(idb).putInt(seq).put(iv).put(ct);
         return b.array();
     }
 
-    /** file-need: those chunks again (new IVs), then the end frame again. */
+    /** file-need: those chunks again (new IVs, the asking peer's lane), then the end frame again. */
     private void resend(Out out, Peer p, JSONArray seqs) {
         if (seqs == null || seqs.length() == 0 || seqs.length() > 5000) return;
+        Lane lane = out.laneOf(p != null && p.open() ? p : null);
+        if (lane == null) return;
         Io.bg(() -> {
             if (out.vaultId == null) return;
             try (FileVault.Reader r = new FileVault.Reader(room.app, out.vaultId)) {
                 byte[] buf = new byte[CHUNK];
                 List<Peer> to = new ArrayList<>();
                 if (p != null && p.open()) to.add(p);
+                Lane one = new Lane(lane.p4, to, lane.key);
                 for (int i = 0; i < seqs.length(); i++) {
                     int seq = seqs.optInt(i, -1);
                     if (seq < 0 || seq >= out.total) continue;
                     int n = Math.max(0, r.readAt((long) seq * CHUNK, buf, 0, CHUNK));
-                    sendChunk(to, out.id, seq, out, java.util.Arrays.copyOf(buf, n), to.isEmpty() ? "proxy" : "p2p");
+                    sendChunk(one, out.id, seq, out, java.util.Arrays.copyOf(buf, n), to.isEmpty() ? "proxy" : "p2p");
                 }
-                if (out.endFrame != null) {
-                    if (to.isEmpty()) room.sendServer(new JSONObject(out.endFrame).put("type", "proxy-end"));
-                    else for (Peer x : to) x.send(out.endFrame);
+                if (lane.endFrame != null) {
+                    if (to.isEmpty()) room.sendServer(new JSONObject(lane.endFrame).put("type", "proxy-end"));
+                    else for (Peer x : to) x.send(lane.endFrame);
                 }
             } catch (Exception e) {
                 Log.w("files", "resend failed: " + e.getMessage());
@@ -432,6 +528,7 @@ final class Files {
     void clear() {
         for (In in : incoming.values()) in.close();
         incoming.clear();
+        for (Out out : outgoing.values()) for (Lane l : out.lanes) Crypto.wipe(l.key);
         outgoing.clear();
     }
 

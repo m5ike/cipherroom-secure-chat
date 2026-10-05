@@ -145,7 +145,7 @@ public final class LockedRooms {
      * the caller then stores it the usual way (the slots file untouched).
      */
     static boolean keepFile(M5 app, String roomKey, String id, byte[] key, File tmp, RandomAccessFile slots,
-                            int chunkSize, int total, long size, int[] lengths, String root) {
+                            int chunkSize, int total, long size, int[] lengths, String root, boolean p4) {
         synchronized (LOCK) {
             if (pub == null) return false;
             File dest = new File(filesDir(app), partName(id));
@@ -157,7 +157,8 @@ public final class LockedRooms {
                 Vault.syncDir(dest.getParentFile());
                 JSONArray lens = new JSONArray();
                 for (int i = 0; i < total; i++) lens.put(lengths[i]);
-                if (seal(item("file", "room", roomKey, "id", id, "key", Crypto.b64(key), "chunkSize", chunkSize, "total", total, "size", size, "lengths", lens, "root", root))) {
+                // 6.12: "p4" — a protocol-4 transfer (its chunks' AAD is protocol 4's).
+                if (seal(item("file", "room", roomKey, "id", id, "key", Crypto.b64(key), "chunkSize", chunkSize, "total", total, "size", size, "lengths", lens, "root", root, "p4", p4))) {
                     try { slots.close(); } catch (IOException ignored) { }
                     return true;
                 }
@@ -351,7 +352,7 @@ public final class LockedRooms {
             byte[] key = Crypto.unb64(f.optString("key"));
             FileVault.Writer w = new FileVault.Writer(app, id);
             try (RandomAccessFile slots = new RandomAccessFile(part, "r")) {
-                Files.decryptSlots(slots, key, id, total, f.optInt("chunkSize"), lengths, f.optLong("size"), f.optString("root"), w);
+                Files.decryptSlots(slots, key, id, total, f.optInt("chunkSize"), lengths, f.optLong("size"), f.optString("root"), w, f.optBoolean("p4"));
                 w.close();
             } catch (IOException | GeneralSecurityException | RuntimeException e) {
                 w.abort();

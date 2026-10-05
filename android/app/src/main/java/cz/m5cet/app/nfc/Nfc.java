@@ -31,16 +31,20 @@ import cz.m5cet.app.core.Log;
 
 /**
  * NFC (6.1): a room's connection card, compatible with the web client
- * (client/src/lib/nfc.ts, nfc/cards/connection-card.ts) —
- *  - the card is an NDEF record of type application/vnd.m5cet.conn whose
- *    payload is "m5cet:nfc:v1:" + base64(salt 16 ‖ iv 12 ‖ AES-GCM) of
- *    {v: 1, room, passphrase, name?, app?}, the key PBKDF2-SHA256 of a PIN
- *    (4–16 digits, 200 000 rounds), no AAD; an older form is a text record
- *    with the same string;
- *  - read: any NDEF tag (its records are listed), a card is opened with the
- *    PIN and offered for joining;
- *  - write: the active room onto a tag (NTAG215/216 — ~250 bytes);
- *  - emulate: the phone answers as a Type 4 tag with that card
+ * (client/src/lib/nfc.ts, nfc/cards/connection-card.ts, nfc/tag-v2.ts) —
+ *  - the card is an NDEF record of type application/vnd.m5cet.conn; 6.12
+ *    (protocol 4 § 16, F-12): its body is format 2 — "m5cet:nfc:v2:" + JSON,
+ *    an invitation (the room key stays on the server) or an offline tag
+ *    (under a 20-symbol code that is not on the tag), see TagV2 / ConnTag.
+ *    Format 1 ("m5cet:nfc:v1:" + base64(salt 16 ‖ iv 12 ‖ AES-GCM) of {v: 1,
+ *    room, passphrase, name?, app?}, the key PBKDF2-SHA256 of a 4–16 digit PIN)
+ *    is only read — marked weak, with the offer to rewrite it as format 2; an
+ *    older form is a text record with the same string;
+ *  - read: any NDEF tag (its records are listed), a card is opened (an
+ *    invitation with this app's server, an offline tag with its code, a
+ *    format-1 card with its PIN) and offered for joining;
+ *  - write: a prepared format-2 body onto a tag (NTAG215/216);
+ *  - emulate: the phone answers as a Type 4 tag with that body
  *    (CardService), so another phone reads it.
  * The tag's own identity is shown as the phone sees it; nothing else of a
  * tag is read than its NDEF content.
@@ -56,8 +60,12 @@ public final class Nfc {
     private final Activity activity;
     private final Listener listener;
     private String mode = "idle";
-    private String pin = "";
-    private JSONObject card;
+    /** What the reader typed: an offline tag's code, or a format-1 PIN. */
+    private String secret = "";
+    /** The format-2 body to write. */
+    private String body;
+    /** The connection-tag body last read (to open again with a code); never shown. */
+    private String lastBody;
     private JSONObject last;
     private String message = "";
 
@@ -80,19 +88,25 @@ public final class Nfc {
 
     public static boolean validPin(String p) { return p != null && p.matches("^[0-9]{4,16}$"); }
 
+    /** The app's server: an invitation tag is redeemed only there. */
+    static String trustedOrigin() {
+        try { return cz.m5cet.app.M5.get().config.server(); } catch (RuntimeException e) { return ""; }
+    }
+
     /* ------------------------------------------------------------ modes */
 
-    /** Waits for a tag to read (pin opens a card on it; may be empty — then the records are only listed). */
-    public void read(String pin) { start("read", pin, null); }
+    /** Waits for a tag to read; `secret` (an offline tag's code or a format-1 PIN) may be empty — then it is asked for. */
+    public void read(String secret) { start("read", secret, null); }
 
-    /** Waits for a tag to write the card to (the card: {room, passphrase, name}). */
-    public void write(String pin, JSONObject card) { start("write", pin, card); }
+    /** Waits for a tag to write a prepared format-2 body to (ConnTag.prepare). */
+    public void write(String preparedBody) { start("write", "", preparedBody); }
 
-    /** Answers as a tag with the card until stop(). */
-    public void emulate(String pin, JSONObject card) {
+    /** Answers as a tag with a prepared format-2 body until stop(). */
+    public void emulate(String preparedBody) {
         stopReader();
         try {
-            CardService.serve(message(seal(card, pin)));
+            if (preparedBody == null || !preparedBody.startsWith(TagV2.PREFIX)) throw new IOException("no tag prepared");
+            CardService.serve(message(preparedBody));
             mode = "emulate";
             message = "";
         } catch (Exception e) {
@@ -102,6 +116,22 @@ public final class Nfc {
         emit();
     }
 
+    /** The last read tag again, with the code (or PIN) the reader typed now (background). */
+    public void openLast(String typed) {
+        String b = lastBody;
+        if (b == null) return;
+        mode = "opening";
+        message = "";
+        emit();
+        Io.bg(() -> {
+            ConnTag.Read r = ConnTag.open(b, typed, trustedOrigin());
+            try { if (last != null) last.put("conn", r.json()); } catch (JSONException ignored) { }
+            message = r.error;
+            mode = "idle";
+            emit();
+        });
+    }
+
     public void stop() {
         stopReader();
         CardService.serve(null);
@@ -109,11 +139,11 @@ public final class Nfc {
         emit();
     }
 
-    private void start(String m, String p, JSONObject c) {
+    private void start(String m, String s, String b) {
         CardService.serve(null);
         mode = m;
-        pin = p == null ? "" : p;
-        card = c;
+        secret = s == null ? "" : s;
+        body = b;
         message = "";
         NfcAdapter n = NfcAdapter.getDefaultAdapter(activity);
         if (n == null) { mode = "idle"; message = "unavailable"; emit(); return; }
@@ -141,6 +171,21 @@ public final class Nfc {
 
     /* ------------------------------------------------------------ read */
 
+    /** The connection-tag body among a message's records: the MIME record first, else a text record holding one. */
+    public static String connectionBody(NdefMessage msg) {
+        if (msg == null) return null;
+        String text = null;
+        for (NdefRecord r : msg.getRecords()) {
+            try {
+                JSONObject rec = describe(r);
+                if (MIME.equals(rec.optString("mime"))) return new String(r.getPayload(), StandardCharsets.UTF_8);
+                String s = rec.optString("text", "");
+                if (text == null && (s.startsWith(PREFIX) || s.startsWith(TagV2.PREFIX))) text = s;
+            } catch (JSONException ignored) { }
+        }
+        return text;
+    }
+
     private JSONObject readFrom(Tag tag) throws IOException, FormatException, JSONException {
         JSONObject out = new JSONObject();
         JSONArray techs = new JSONArray();
@@ -149,28 +194,24 @@ public final class Nfc {
         Ndef ndef = Ndef.get(tag);
         if (ndef == null) { out.put("ndef", false); return out; }
         ndef.connect();
+        String blob;
         try {
             out.put("ndef", true).put("type", ndef.getType()).put("capacity", ndef.getMaxSize()).put("writable", ndef.isWritable());
             NdefMessage msg = ndef.getNdefMessage();
             JSONArray records = new JSONArray();
-            String blob = null;
-            if (msg != null) for (NdefRecord r : msg.getRecords()) {
-                JSONObject rec = describe(r);
-                records.put(rec);
-                String s = rec.optString("text", "");
-                if (MIME.equals(rec.optString("mime")) || s.startsWith(PREFIX)) blob = rec.optString("mime").equals(MIME) ? new String(r.getPayload(), StandardCharsets.UTF_8) : s;
-            }
+            if (msg != null) for (NdefRecord r : msg.getRecords()) records.put(describe(r));
             out.put("records", records);
-            if (blob != null) {
-                out.put("card", true);
-                if (validPin(pin)) {
-                    JSONObject opened = open(blob, pin);
-                    if (opened == null) message = "wrong-pin";
-                    else out.put("room", opened);
-                }
-            }
+            blob = connectionBody(msg);
         } finally {
             try { ndef.close(); } catch (IOException ignored) { }
+        }
+        lastBody = blob;
+        if (blob != null) {
+            out.put("card", true);
+            // After the tag left the field: an invitation goes to the server, an offline tag runs Argon2id.
+            ConnTag.Read r = ConnTag.open(blob, secret, trustedOrigin());
+            out.put("conn", r.json());
+            if (!r.error.isEmpty()) message = r.error;
         }
         return out;
     }
@@ -192,8 +233,8 @@ public final class Nfc {
     /* ----------------------------------------------------------- write */
 
     private void writeTo(Tag tag) throws Exception {
-        if (card == null || !validPin(pin)) throw new IOException("pin");
-        NdefMessage msg = message(seal(card, pin));
+        if (body == null || !body.startsWith(TagV2.PREFIX)) throw new IOException("no tag prepared");
+        NdefMessage msg = message(body);
         int need = msg.getByteArrayLength();
         Ndef ndef = Ndef.get(tag);
         if (ndef != null) {
@@ -218,7 +259,11 @@ public final class Nfc {
 
     /* ---------------------------------------------------------- crypto */
 
-    /** {v:1, room, passphrase, name?, app?} sealed with the PIN (nfc.ts sealWithPin). */
+    /**
+     * Format 1 — {v:1, room, passphrase, name?, app?} sealed with the PIN (nfc.ts
+     * sealWithPin). 6.12: the app never writes it any more (§ 16.5); kept for the
+     * parity test with the web's format-1 vectors.
+     */
     public static String seal(JSONObject card, String pin) throws GeneralSecurityException {
         if (!validPin(pin)) throw new GeneralSecurityException("pin");
         byte[] salt = new byte[16], iv = new byte[12];
@@ -235,7 +280,7 @@ public final class Nfc {
         return PREFIX + Base64.getEncoder().encodeToString(all);
     }
 
-    /** The card, or null when the PIN is wrong or it is not one. */
+    /** A format-1 card, or null when the PIN is wrong or it is not one. */
     public static JSONObject open(String blob, String pin) {
         try {
             if (blob == null || !blob.startsWith(PREFIX)) return null;
