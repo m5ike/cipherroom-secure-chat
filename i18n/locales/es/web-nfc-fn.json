@@ -1,0 +1,12 @@
+{
+ "nfcfn.done": "Hecho.",
+ "nfcfn.noReader": "Este dispositivo no tiene lector NFC.",
+ "nfcfn.status.auth-failed": "Ha fallado la autenticación de la tarjeta",
+ "nfcfn.status.denied": "Acceso a NFC denegado",
+ "nfcfn.status.error": "Error de NFC: {message}",
+ "nfcfn.status.no-card": "Sin tarjeta",
+ "nfcfn.status.ok": "Hecho",
+ "nfcfn.status.timeout": "No se acercó ninguna tarjeta a tiempo",
+ "nfcfn.status.unsupported": "No compatible con este dispositivo",
+ "nfcfn.waiting": "Acerca una tarjeta al dispositivo…"
+}
