@@ -28,6 +28,19 @@ export const LANGS = ["en", "cs", "de", "es", "it", "fr", "sk", "sl", "fi"];
 /** Chromium's locale packs to keep (es-419, pt… go; macOS .lproj names). */
 const ELECTRON_LANGS = ["en", "en-GB", "en-US", "cs", "de", "es", "it", "fr", "sk", "sl", "fi"];
 
+/** What goes into app.asar (a platform's own `files` REPLACES this list in electron-builder, so it repeats it). */
+export const APP_FILES = ["dist/**/*", "web/**/*", "web-index.json", "package.json", "!**/*.map"];
+
+/** 6.13.1: pcsc-mini's per-platform binaries — unpacked from app.asar, only the target's own in each artifact. */
+export const PCSC_UNPACK = "node_modules/@pcsc-mini/**";
+const dropPcsc = (...globs) => globs.map((g) => `!node_modules/@pcsc-mini/${g}{,/**/*}`);
+export const PCSC_EXCLUDE = {
+  mac: dropPcsc("windows-*", "linux-*"),
+  // Windows: the "-electron" builds only (the "-node" / "-bun" ones link against another host).
+  win: dropPcsc("macos-*", "linux-*", "windows-*-node", "windows-*-bun"),
+};
+export const PCSC_MAC_ARCH_FILES = "Contents/Resources/app.asar.unpacked/node_modules/@pcsc-mini/macos-*/addon.node";
+
 export function signing(env = process.env) {
   const azure = Boolean(env.AZURE_TENANT_ID && env.AZURE_CLIENT_ID && env.AZURE_CLIENT_SECRET && env.M5CET_AZURE_ENDPOINT && env.M5CET_AZURE_ACCOUNT && env.M5CET_AZURE_PROFILE);
   return {
@@ -63,8 +76,10 @@ export function builderConfig(env = process.env, { lprojDir } = {}) {
     directories: { output: join(DESKTOP, "release"), buildResources: join(DESKTOP, "build") },
     // The app: the compiled main process, preloads and pages, and the web client (inside app.asar,
     // covered by the asar integrity check that the fuses make Electron enforce).
-    files: ["dist/**/*", "web/**/*", "web-index.json", "package.json", "!**/*.map"],
+    files: APP_FILES,
     asar: true,
+    // 6.13.1: the PC/SC module's native binaries (pcsc-mini) load from outside the archive.
+    asarUnpack: [PCSC_UNPACK],
     electronLanguages: ELECTRON_LANGS,
     protocols: [{ name: "M5cet", schemes: ["m5cet"] }],
     publish,
@@ -96,6 +111,10 @@ export function builderConfig(env = process.env, { lprojDir } = {}) {
       notarize: s.mac && s.notarize,
       extendInfo: { ...usageInfo(), LSApplicationCategoryType: "public.app-category.social-networking" },
       ...(lprojDir ? { extraResources: [{ from: lprojDir, to: ".", filter: ["**/InfoPlist.strings"] }] } : {}),
+      // 6.13.1: both macOS PC/SC binaries are in both halves of the universal app (the module picks
+      // by process.arch); identical single-arch Mach-O files must be named for the merge.
+      files: [...APP_FILES, ...PCSC_EXCLUDE.mac],
+      x64ArchFiles: PCSC_MAC_ARCH_FILES,
     },
     dmg: { writeUpdateInfo: false },
     win: {
@@ -105,6 +124,8 @@ export function builderConfig(env = process.env, { lprojDir } = {}) {
       requestedExecutionLevel: "asInvoker",
       // Resource editing (icon, version info, the asar integrity resource) is pure JS (resedit): no Wine.
       signAndEditExecutable: true,
+      // 6.13.1: the Electron builds of the PC/SC module for x64 and arm64 (the module picks by process.arch).
+      files: [...APP_FILES, ...PCSC_EXCLUDE.win],
       ...(s.azure ? {
         azureSignOptions: {
           endpoint: env.M5CET_AZURE_ENDPOINT,

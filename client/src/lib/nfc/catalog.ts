@@ -152,7 +152,7 @@ export type ReaderKind = "internal" | "usb" | "bluetooth" | "serial";
 export type ReaderInfo = { kind: ReaderKind; label: string; help: string };
 export const NFC_READERS: ReaderInfo[] = [
   { kind: "internal", label: "This device", help: "The phone or tablet's own NFC (Android: internal antenna; web: WebNFC in Android Chrome)." },
-  { kind: "usb", label: "USB reader", help: "A PC/SC (CCID) reader over USB — e.g. ACR122U, ACR1252 (web: WebUSB; Android: USB host)." },
-  { kind: "bluetooth", label: "Bluetooth reader", help: "A BLE reader based on the PN532 or a vendor bridge (web: Web Bluetooth)." },
-  { kind: "serial", label: "Serial reader", help: "A PN532 on a USB-serial adapter (web: Web Serial)." },
+  { kind: "usb", label: "USB reader", help: "A PC/SC (CCID) reader over USB — e.g. ACR122U, ACR1252, ACR1281 (M5cet Desktop: the system reader over PC/SC; web: WebUSB where the OS does not hold the reader; Android: USB host)." },
+  { kind: "bluetooth", label: "Bluetooth reader", help: "A BLE reader based on the PN532 or a vendor bridge (web and M5cet Desktop: Web Bluetooth)." },
+  { kind: "serial", label: "Serial reader", help: "A PN532 on a USB-serial adapter or a Bluetooth SPP module (web: Web Serial)." },
 ];

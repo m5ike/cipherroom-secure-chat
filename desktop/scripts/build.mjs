@@ -16,6 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { builderConfig, publishConfig, signing } from "./builder-config.mjs";
 import { compile } from "./compile.mjs";
+import { ensurePcscPrebuilds } from "./pcsc-prebuilds.mjs";
 import { writeInfoPlistStrings } from "./infoplist.mjs";
 import { copyWeb } from "./web.mjs";
 
@@ -42,6 +43,9 @@ if (!existsSync(join(desktop, "build", "icon.png"))) {
 }
 await compile({ target: wantWin && !wantMac ? "win32" : process.platform });
 console.log("› compiled the main process, preloads and app pages");
+// 6.13.1: the PC/SC module's binaries for every target (lockfile-pinned, integrity checked).
+const prebuilds = ensurePcscPrebuilds([...(wantMac ? ["mac"] : []), ...(wantWin ? ["win"] : [])]);
+console.log(`› PC/SC binaries: ${prebuilds.join(", ")}`);
 
 const s = signing();
 const warn = (m) => console.warn(`\u001b[33m!! ${m}\u001b[0m`);

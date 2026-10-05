@@ -11,6 +11,10 @@
 //     version manifest is the bundled build, an unknown /assets file is 404)
 //   * the API went to the network (/api/health 200)
 //   * the bridge is there and Node is not
+//   * 6.13.1, with M5CET_SMOKE_PCSC=1 (or --pcsc): the smart-card readers through PC/SC —
+//     the readers, for a reader with a card its ATR and, on a contactless slot, GET UID
+//     (FF CA 00 00 00); then the same through the page's bridge (list; connect, GET UID and
+//     disconnect when exactly one reader holds a card). Read-only: nothing else reaches a card.
 // Exit 0 = pass. A packaged release refuses --remote-debugging-port and the
 // node inspector (fuses), so Playwright cannot drive it; the self-test needs
 // neither.
@@ -28,6 +32,8 @@ const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : def; };
 const server = opt("--server", "http://localhost:5181");
 const appPath = opt("--app", "");
+// 6.13.1: also read the smart-card readers (M5CET_SMOKE_PCSC=1 or --pcsc).
+const pcscWanted = process.env.M5CET_SMOKE_PCSC === "1" || args.includes("--pcsc");
 
 const work = mkdtempSync(join(tmpdir(), "m5cet-smoke-"));
 const report = join(work, "report.json");
@@ -41,6 +47,7 @@ const env = {
   M5CET_SMOKE_SERVER: server,
   M5CET_ALLOW_LOOPBACK: "1",
   ELECTRON_RUN_AS_NODE: "",
+  ...(pcscWanted ? { M5CET_SMOKE_PCSC: "1" } : {}),
 };
 
 // --arch x86_64 on Apple Silicon: the Intel half of a universal app, under Rosetta.
@@ -64,6 +71,27 @@ rmSync(work, { recursive: true, force: true });
 console.log(JSON.stringify(r, null, 2));
 
 const bundled = JSON.parse(readFileSync(join(desktop, "web-index.json"), "utf8"));
+
+/** 6.13.1: with M5CET_SMOKE_PCSC=1 (needs a PC/SC service; a reader with a card for the full test). */
+function pcscChecks(rep) {
+  const app = rep.pcsc ?? {};
+  const pg = rep.pcscPage ?? {};
+  const readers = Array.isArray(app.readers) ? app.readers : [];
+  const withCard = readers.filter((x) => x.card);
+  const out = [
+    ["PC/SC: the native module loaded and the readers were listed", app.ok === true],
+    ["PC/SC: the page's bridge lists the same readers", Array.isArray(pg.list) && pg.list.length === readers.length],
+    ["PC/SC: an unknown connection handle is refused", pg.badHandle === "bad-handle"],
+    ["PC/SC: no connection left open", rep.pcscOpenAfter === 0],
+  ];
+  for (const x of withCard) out.push([`PC/SC: ${x.name} — ATR read`, typeof x.atr === "string" && x.atr.length >= 4]);
+  for (const x of withCard.filter((y) => y.slot === "contactless")) out.push([`PC/SC: ${x.name} — GET UID answered 9000`, x.sw === "9000" && typeof x.uid === "string"]);
+  if (withCard.length === 1) {
+    out.push(["PC/SC: the page connected to the only card without a chooser", typeof pg.connect === "object" && pg.connect?.reader === withCard[0].name]);
+    if (withCard[0].slot === "contactless") out.push(["PC/SC: the page's GET UID matches the app's", typeof pg.getUid === "string" && pg.getUid === `${withCard[0].uid}9000`]);
+  }
+  return out;
+}
 const checks = [
   ["self-test ran", r.ok === true],
   ["page loaded from the server origin", typeof r.url === "string" && r.url.startsWith(server)],
@@ -80,6 +108,8 @@ const checks = [
   ["the sign-in handoff endpoint answers (400 for an empty request)", r.page?.handoff === 400],
   ...(appPath ? [["every served client file is checked against the signed app.asar header", r.integrityChecked === true]] : []),
   ...(arch ? [[`ran as ${arch}`, r.arch === (arch === "x86_64" ? "x64" : arch)]] : []),
+  // 6.13.1, M5CET_SMOKE_PCSC=1: the smart-card readers through PC/SC (read-only: ATR, GET UID).
+  ...(pcscWanted ? pcscChecks(r) : []),
 ];
 let failed = 0;
 for (const [name, ok] of checks) {

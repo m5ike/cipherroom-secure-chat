@@ -5,6 +5,111 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.13.1] – 2026-10-05
+
+**Čtečky NFC a čipových karet na počítači.** Na macOS nefungovala žádná čtečka — ani v Chromu,
+ani v M5cet Desktop: USB čtečka hlásila jen `Failed to execute 'claimInterface' on 'USBDevice':
+Unable to claim interface.` a volby Sériová a Bluetooth nic nenašly. Příčiny: čtečku čipových
+karet na USB (CCID, např. ACS ACR1281) drží systémová služba čipových karet, takže ji WebUSB
+nikdy neotevře; výběr sériového portu ukazoval jen převodníky USB–sériová linka, ne porty
+Bluetooth SPP (PN532 přes HC-05/06); Web Bluetooth zná jen BLE a v desktopové aplikaci chyběla
+obsluha výběru zařízení. Podrobnosti `docs/nfc.md` › Readers per platform, `docs/desktop.md` § 4.4.
+
+### Opraveno
+- **Web Serial (prohlížeč i aplikace):** výběr portu ukazuje i **porty Bluetooth SPP**
+  (`allowedBluetoothServiceClassIds` + filtr třídy služby SPP vedle filtrů FTDI / CP210x /
+  CH340 / PL2303; starší prohlížeč dostane jen filtry USB) a nová volba **Ukázat všechny
+  sériové porty** (jiné převodníky, `/dev/cu.PN532_SPP` na macOS). První kontakt PN532 ho
+  **probudí** (HSU `55 55 00 …`), pošle SAMConfiguration a GetFirmwareVersion a u Bluetooth
+  (nebo portu bez USB ID) to zkusí 3× během ~6 s, než se spojení rozběhne; čtečka, která
+  neodpovídá, hlásí *„Čtečka neodpovídá — je zapnutá a u Bluetooth spárovaná s tímto
+  počítačem?“*; port Bluetooth, který nejde otevřít, totéž; obsazený port USB „port používá
+  jiný program“.
+- **Kodek PN532:** odpověď, která přišla ve stejném čtení jako její ACK (nebo dřív, než na ni
+  příkaz čekal), se už **neztratí**; příkaz, který vypršel, už nespolkne rámce dalšího příkazu
+  (týká se Web Serial i Web Bluetooth).
+- **WebUSB:** selhání `open()` / `claimInterface()` (`NetworkError` „Unable to claim
+  interface“, `SecurityError` „Access denied“, `InvalidStateError`) je nový kód
+  `reader-owned-by-os` a dílna řekne **podle systému**, co dělat: macOS — čtečku používá
+  služba čipových karet, použijte M5cet Desktop (Systémová čtečka), PN532 přes Bluetooth /
+  sériovou linku nebo aplikaci pro Android; Windows — ovladač WinUSB (Zadig), nebo M5cet
+  Desktop; Linux — zastavit pcscd, nebo M5cet Desktop. Hláška prohlížeče je jen v závorce za
+  vysvětlením.
+- **Rozpoznání karty z ATR:** paměťová karta PC/SC se čte podle jména ve správných bajtech
+  ATR; karta ISO-DEP (např. ATR `3B 8F 80 01 31 01 F1 …`) se už nehlásí jako Ultralight
+  a přes WebUSB CCID je označená jako ISO-DEP.
+- **Web Bluetooth v M5cet Desktop:** Electron bez obsluhy `select-bluetooth-device` každé
+  `requestDevice()` zrušil. Aplikace nalezená zařízení ~2,5 s sbírá a pak ukáže nativní výběr
+  (nic do 15 s = zrušeno s hláškou, navigace žádost zruší); párování na Windows / Linuxu
+  (potvrzení a porovnání PINu) nativně.
+
+### Přidáno
+- **Systémová čtečka (PC/SC) v M5cet Desktop** — skutečná oprava pro čtečky CCID: hlavní proces
+  mluví s čtečkami přes PC/SC (`desktop/src/pcsc.ts`, knihovna **pcsc-mini 0.1.3**), stránka
+  dostane úzký most `window.m5desktop.pcsc` (`listReaders`, `connect`, `transmit`,
+  `disconnect`, `onChange`) a dílna NFC novou volbu **Systémová čtečka (PC/SC)**, v aplikaci
+  první. Seznam čteček s připojením / odpojením a vložením / vyjmutím karty, sdílený režim
+  (middleware e-ID / tokenů běží dál), krátká i rozšířená APDU (do 64 KiB), časové limity,
+  stálé kódy chyb; `SCardControl` se nenabízí. Duální čtečka má tři čtečky se štítky
+  *kontaktní / bezkontaktní / SAM*. Identita z ATR a — jen na bezkontaktním slotu — z
+  `FF CA 00 00 00`; MIFARE Classic přes pseudo-APDU PC/SC (`FF 82/86/B0/D6`).
+- **Bezpečnost mostu PC/SC:** jen hlavní rámec stránky na originu zvoleného serveru; první
+  použití na serveru **nativní dotaz** *„Povolit serveru … používat čtečky čipových karet?“*,
+  povolení v šifrovaných nastaveních a odvolatelné v nabídce **Server › Povolit čtečky
+  čipových karet** (odvolání zavře spojení), *Nepovolit* platí do dalšího načtení stránky;
+  **čtečku vybírá uživatel** (nativní výběr), jen když kartu drží právě jedna čtečka, vezme se
+  sama; limity rychlosti a velikosti; nic při **zamčené obrazovce**; spojení končí s navigací,
+  zavřením stránky a ukončením aplikace. Pravidla G-18 (model a šablona jen čtou) platí i pro
+  tuto čtečku.
+- **Výběr čtečky vysvětluje,** pro jakou čtečku je každá volba, a složený návod *Kterou volbu
+  zvolit pro moji čtečku?* (CCID → Systémová čtečka; PN532 na USB–sériové lince nebo Bluetooth
+  SPP → Sériová; PN532 na BLE → Bluetooth; telefon → aplikace pro Android). Všechny nové texty
+  v 9 jazycích (web i nativní dialogy aplikace).
+- **Balení:** `.node` modulu PC/SC rozbalený z `app.asar`; univerzální aplikace pro macOS nese
+  `@pcsc-mini/macos-aarch64` i `macos-x86_64` (sloučené jako `x64ArchFiles`), Windows
+  `windows-x86_64-electron` a `windows-aarch64-electron`; chybějící balíčky dotáhne
+  `desktop/scripts/pcsc-prebuilds.mjs` v přesné verzi a s kontrolou **integrity z lockfile**.
+  Binárka `macos-x86_64` (Zig, bez podpisu, bez místa za load commands) by po `codesign`
+  spadla (podpis přepsal začátek kódu — zjištěno na Intel polovině pod Rosettou):
+  `desktop/scripts/macho-signable.mjs` z ní před balením odebere informativní
+  `LC_SOURCE_VERSION`, aby se podpis vešel. Self-test zabalené aplikace `M5CET_SMOKE_PCSC=1`
+  (jen čtení: ATR a GET UID). Velikost artefaktů +0,1 MB.
+
+### Ověřeno
+- **Na Macu s čtečkou ACS ACR1281 1S Dual Reader** (zabalená univerzální ad-hoc aplikace,
+  Apple Silicon nativně i Intel polovina pod Rosettou, proti vývojovému serveru; smoke test
+  22 / 22): tři čtečky `(1)` kontaktní, `(2)` bezkontaktní
+  s kartou, `(3)` SAM; karta ve slotu 2: ATR `3b8f80013101f1564011001900000000000000d1`, T=1,
+  GET UID `0201be4925a000` / 9000 — přes aplikaci i přes most stránky (spojení bez výběru,
+  protože kartu drží jediná čtečka; neznámý handle odmítnut; po testu žádné otevřené spojení).
+  Hardened runtime bez App Sandboxu entitlement `com.apple.security.smartcard` nepotřebuje.
+
+### Testy
+- `npx vitest run`: 318 souborů, 3926 testů (6 přeskočených; jediné selhání `tsa-runtime` ›
+  „synthesized speech by token“ je stejné na čistém 6.13.0 — prostředí tohoto stroje), z toho
+  68 nových: `test/nfc-readers-6131.test.ts` (falešný sériový port: Bluetooth, zpožděná první
+  odpověď, žádná odpověď, pozdní odpověď, obsazený port, starší prohlížeč; chyby WebUSB; ATR;
+  sloty), `test/nfc-desktop-pcsc.test.ts` (transport proti falešnému mostu, G-18),
+  `test/desktop-pcsc.test.ts` (most PC/SC s falešným pcsc-mini: seznam, spojení, APDU,
+  události, odesílatel, dotaz, výběr, limity, zámek, navigace, odvolání, self-test; výběr
+  Bluetooth; nastavení; balení; podepsatelná binárka x86_64), `test/nfc-workbench-readers.test.tsx`,
+  `test/nfc-workbench-usb-error.test.tsx`. E2E 76 / 76; `i18n-check` čistý pro es, it, fr, sk,
+  sl, fi; typecheck kořene i desktopu; `npm run build`; desktop: macOS univerzální a Windows
+  x64 / arm64 se postavily, smoke test zabalené macOS aplikace s PC/SC 22 / 22 (arm64 i x86_64).
+
+### Známá omezení
+- **PN532 přes Bluetooth SPP** nebyl vyzkoušen se skutečným modulem (na tomto Macu byl vypnutý):
+  oprava je ověřená testy proti falešnému portu. Totéž **PN532 přes BLE** v aplikaci.
+- **Windows:** instalátory a zipy pro x64 a arm64 se postavily (na macOS; obě binárky
+  `windows-*-electron` uvnitř, nic z macOS), ale nespustily se — systémová čtečka přes
+  winscard na Windows neověřena; Linux se jako balíček nestaví.
+- **MIFARE Classic přes PC/SC** (pseudo-APDU `FF 82/86`) je jen otestovaný proti simulaci —
+  na kartě Classic neověřeno; surové rámce ISO 14443-3 (Ultralight / NTAG nativní příkazy)
+  systémová čtečka neumí, NDEF tagu typu 2 přes ni proto nečte.
+- PC/SC ve sdíleném režimu nedrží transakci: čtení s bezpečným kanálem (e-ID) může narušit
+  jiný program, který kartu současně používá.
+- Dokumentační web a PDF (`docs/site/`) zůstávají na 6.13.0.
+
 ## [6.13.0] – 2026-10-05
 
 **Devět jazyků a M5cet Desktop.** Web, aplikace pro Android, texty serveru

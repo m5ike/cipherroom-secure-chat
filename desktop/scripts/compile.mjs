@@ -59,8 +59,9 @@ export async function compile({ target = process.platform } = {}) {
     entryPoints: { main: join(desktop, "src/main.ts") },
     outdir: out,
     outExtension: { ".js": ".cjs" },
-    // electron is the runtime; electron-updater ships in node_modules of the app (its own dependency).
-    external: ["electron", "electron-updater", "original-fs"],
+    // electron is the runtime; electron-updater and pcsc-mini (6.13.1, a native module whose
+    // .node files are unpacked from app.asar) ship in node_modules of the app.
+    external: ["electron", "electron-updater", "original-fs", "pcsc-mini"],
   });
   await build({
     ...common,

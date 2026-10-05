@@ -17,7 +17,10 @@ export type MenuContext = {
   startAtLogin: boolean;
   closeToTray: boolean;
   unread: number;
+  /** 6.13.1: the current server may use the smart-card readers. */
+  pcscAllowed: boolean;
   actions: {
+    setPcscAllowed(on: boolean): void;
     about(): void;
     checkUpdates(): void;
     switchServer(): void;
@@ -57,6 +60,8 @@ export function applicationMenu(c: MenuContext): Menu {
           { label: L("menu.passkeysBrowser"), type: "radio", checked: c.passkeys === "browser", click: () => c.actions.setPasskeys("browser") },
         ],
       },
+      // 6.13.1: the answer to "Allow <server> to use smart-card readers?", to withdraw (or give) here.
+      { label: L("menu.pcsc"), type: "checkbox", enabled: Boolean(c.server), checked: c.pcscAllowed, click: (item) => c.actions.setPcscAllowed(item.checked) },
       { type: "separator" },
       { label: L("menu.startAtLogin"), type: "checkbox", checked: c.startAtLogin, click: (item) => c.actions.setStartAtLogin(item.checked) },
       { label: L("menu.closeToTray"), type: "checkbox", checked: c.closeToTray, click: (item) => c.actions.setCloseToTray(item.checked) },

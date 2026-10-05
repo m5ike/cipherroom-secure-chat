@@ -10,11 +10,15 @@
 //     window to the front before the page's own click handler opens the room;
 //   * the passkey sign-in through the system browser (desktop-auth.ts) — the
 //     app opens the browser and shows the verification code natively;
-//   * the m5cet:// callback that says the browser is done.
+//   * the m5cet:// callback that says the browser is done;
+//   * 6.13.1: the computer's smart-card readers through PC/SC (`pcsc`, used by
+//     lib/nfc/transports/desktop-pcsc.ts — the NFC workbench's System reader).
 // The unread count reaches the dock / taskbar badge without help: the app
 // reads it from the title ("(3) M5cet"), as the page already writes it.
 // Deliberately NOT in the bridge: the list of the user's other servers (one
 // server's page has no business knowing which others the user uses).
+
+import type { PcscBridge } from "./nfc/pcsc-bridge";
 
 export type DesktopPasskeyMode = "app" | "browser";
 
@@ -40,12 +44,24 @@ export type M5Desktop = {
     offerBrowser(): Promise<boolean>;
     onCallback(fn: (id: string) => void): () => void;
   };
+  /**
+   * 6.13.1: the computer's smart-card readers through the system (PC/SC) —
+   * lib/nfc/pcsc-bridge.ts. The app asks the user once per server and lets
+   * them pick the reader; the page never gets a reader silently.
+   */
+  pcsc?: PcscBridge;
 };
 
 export function desktop(): M5Desktop | null {
   if (typeof window === "undefined") return null;
   const d = (window as unknown as { m5desktop?: M5Desktop }).m5desktop;
   return d && d.isDesktop === true ? d : null;
+}
+
+/** The system smart-card reader bridge, when this is M5cet Desktop 6.13.1+. */
+export function desktopPcsc(): PcscBridge | null {
+  const p = desktop()?.pcsc;
+  return p && typeof p.connect === "function" && typeof p.transmit === "function" ? p : null;
 }
 
 export function isDesktopApp(): boolean {
