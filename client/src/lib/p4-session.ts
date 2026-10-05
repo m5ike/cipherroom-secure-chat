@@ -38,7 +38,13 @@ import type { RoomKeys, Signer } from "./envelope";
 import type { Identity } from "./identity";
 import { signerOf, type AccountClaim } from "./p4-trust";
 
-export type PeerProtocol = "pending" | 3 | 4 | "refused";
+/**
+ * "pending": nothing known yet (no hello). "p4-pending" (6.12 review P03): the
+ * peer speaks protocol 4 — its valid hello v4 was accepted, or its device key
+ * did before — but the session is not up yet: hold what is for it (never the
+ * room key). 3 / 4: the session's protocol. "refused": nothing goes.
+ */
+export type PeerProtocol = "pending" | "p4-pending" | 3 | 4 | "refused";
 
 /** What we know about a peer once its hello was accepted. */
 export type PeerInfo = {
@@ -110,7 +116,10 @@ type PeerState = {
   resets: number[];
   /** Resets came too fast and the app closes the channel: ignore its frames until a new channel opens. */
   closed?: boolean;
-  waiters: Array<() => void>;
+  /** The device key of this peer's last hello — kept across channels of this page (review P03). */
+  knownPk?: string;
+  /** Wake-ups for `settled`: each returns true when it is done (and is dropped). */
+  waiters: Array<() => boolean>;
   mediaEpoch: number;
 };
 
@@ -155,21 +164,47 @@ export class P4Room {
     return info ? signerOf(info.pk, info.account) : null;
   }
 
-  /** Resolves once the peer's protocol is known (3, 4 or refused) or after `ms`. */
-  settled(peerId: string, ms: number): Promise<PeerProtocol> {
+  /**
+   * Resolves once the peer's protocol is known or after `ms`: 3, 4, refused —
+   * or "p4-pending" (its valid hello v4 is in hand, or its device key spoke
+   * protocol 4 before: protocol 4, the session not up yet). With `session`,
+   * "p4-pending" is waited out as well (until 4, or the time is up).
+   */
+  settled(peerId: string, ms: number, opts: { session?: boolean } = {}): Promise<PeerProtocol> {
     const st = this.state(peerId);
-    if (st.protocol !== "pending") return Promise.resolve(st.protocol);
+    const done = () => st.protocol !== "pending" && !(opts.session && st.protocol === "p4-pending");
+    if (done()) return Promise.resolve(st.protocol);
     return new Promise((resolve) => {
-      const done = () => { clearTimeout(timer); resolve(st.protocol); };
-      const timer = setTimeout(() => { st.waiters = st.waiters.filter((w) => w !== done); resolve(st.protocol); }, ms);
-      st.waiters.push(done);
+      const check = () => { if (!done()) return false; clearTimeout(timer); resolve(st.protocol); return true; };
+      const timer = setTimeout(() => { st.waiters = st.waiters.filter((w) => w !== check); resolve(st.protocol); }, ms);
+      st.waiters.push(check);
     });
   }
 
   private settle(st: PeerState, protocol: PeerProtocol): void {
     st.protocol = protocol;
-    const waiters = st.waiters.splice(0);
-    for (const w of waiters) w();
+    st.waiters = st.waiters.filter((w) => !w());
+  }
+
+  /**
+   * 6.12 review P03: may a message for this peer fall back to the ROOM key?
+   * Never for a device that speaks protocol 4 — a session (4), its valid hello
+   * v4 in hand ("p4-pending"), its device key marked as having spoken protocol
+   * 4 before (§ 1), even on an earlier channel of this page — nor for a refused
+   * one. Only a genuinely unknown peer (no hello yet) or a protocol-3 one.
+   */
+  mayUseRoomKey(peerId: string): boolean {
+    const st = this.peers.get(peerId);
+    if (!st) return true;
+    if (st.protocol === 4 || st.protocol === "p4-pending" || st.protocol === "refused") return false;
+    if (st.knownPk && this.o.book.p4Seen(st.knownPk)) return false;
+    return true;
+  }
+
+  /** Is the peer's protocol still being found out (no hello yet, or a protocol-4 handshake under way)? */
+  negotiating(peerId: string): boolean {
+    const p = this.protocolOf(peerId);
+    return p === "pending" || p === "p4-pending";
   }
 
   /* ------------------------------------------------------------- hello */
@@ -182,9 +217,9 @@ export class P4Room {
   open(peerId: string): Promise<void> {
     const st = this.state(peerId);
     st.closed = false;
-    if (st.hs && !st.session && st.protocol === "pending") return st.hs.then(() => undefined);
+    if (st.hs && !st.session && (st.protocol === "pending" || st.protocol === "p4-pending")) return st.hs.then(() => undefined);
     this.wipe(st);
-    st.protocol = "pending";
+    st.protocol = this.restartProtocol(st);
     st.info = null;
     st.hs = this.startHello(peerId);
     return st.hs.then(() => undefined);
@@ -252,7 +287,7 @@ export class P4Room {
     else if (st.session || (st.accepted !== null && st.accepted !== tag)) {
       if (st.accepted === tag) return; // the same hello again
       this.wipe(st);
-      st.protocol = "pending";
+      st.protocol = this.restartProtocol(st);
       st.hs = this.startHello(peerId);
     } else if (st.accepted === tag) {
       return; // a repeat of the hello we answered
@@ -264,11 +299,18 @@ export class P4Room {
       if (verdict.ok && kem) {
         st.accepted = tag;
         const hello = verdict.hello as HelloV4;
+        // P02: the caps and the username claim of a v4 hello are the SIGNED ones (sig4 covers them).
+        const signedUser = typeof hello.user === "string" && hello.user ? hello.user : undefined;
         st.info = {
           peerId, protocol: 4, pk: hello.pk, acc: hello.acc, account: await verifyAccount(hello.acc, hello.pk, this.now()),
-          caps, ...(user ? { user } : {}), mb: verdict.mailbox, ...(verdict.mailboxProblem ? { mailboxProblem: verdict.mailboxProblem } : {}),
+          caps: hello.caps.slice(0, 32), ...(signedUser ? { user: signedUser } : {}), mb: verdict.mailbox, ...(verdict.mailboxProblem ? { mailboxProblem: verdict.mailboxProblem } : {}),
           sth: hello.sth,
         };
+        st.knownPk = hello.pk;
+        // § 1 / review P03: the downgrade marker as soon as a valid hello v4 is accepted (not only once the
+        // session is up), and the peer is protocol 4 from now on — nothing for it ever under the room key.
+        this.o.book.markP4(hello.pk);
+        if (!st.session && st.protocol !== 4) this.settle(st, "p4-pending");
         this.o.send(peerId, JSON.stringify(kem));
         await this.tryEstablish(st, hs);
         return;
@@ -277,6 +319,7 @@ export class P4Room {
       hs.wipe();
     }
     // Protocol 3 (an older peer, or a hello whose v4 part does not hold).
+    if (pk) st.knownPk = pk;
     if (pk && this.o.book.p4Seen(pk)) {
       this.v3.forgetPeer(peerId);
       st.info = null;
@@ -366,9 +409,14 @@ export class P4Room {
     // the peer's): the fresh hello we sent answers it; another one would only chase the peer's.
     if (!sent && !st.session && st.hs) return;
     this.wipe(st);
-    st.protocol = "pending";
+    st.protocol = this.restartProtocol(st);
     st.hs = this.startHello(peerId);
     await st.hs;
+  }
+
+  /** A handshake starts over: a peer known to speak protocol 4 stays "p4-pending" (review P03), else "pending". */
+  private restartProtocol(st: PeerState): PeerProtocol {
+    return st.knownPk && this.o.book.p4Seen(st.knownPk) ? "p4-pending" : "pending";
   }
 
   /* ------------------------------------------------------------ sending */

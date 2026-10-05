@@ -11,6 +11,7 @@ import {
   type DirectoryDevice, type Hash, type KtEntry, type KtLookup, type MailboxItem, type SignedTreeHead,
 } from "../client/src/lib/p4";
 import { sealForAway } from "../client/src/lib/p4-away";
+import { createOutbox, perPeerSender } from "../client/src/lib/outbox";
 import { KtClient, KtHttpError } from "../client/src/lib/p4-kt";
 import { LocalKtStore, LocalVault, memoryBackend, VaultBundleStore, VaultReplayStore, VaultUnavailable, type KvBackend } from "../client/src/lib/p4-store";
 import { P4Room, type P4Events } from "../client/src/lib/p4-session";
@@ -480,5 +481,98 @@ describe("REVIEW-612 P01 — away members: only devices this client authenticate
     book.pinAccount(roomKeys.roomId, "ref-keep", b64(new Uint8Array(32).fill(3)), 1);
     for (let i = 0; i < 520; i++) book.rememberRef(roomKeys.roomId, `ref-${i}`, `pk-${i}`, 10 + i);
     expect(book.accountOf(roomKeys.roomId, "ref-keep")).toBe(b64(new Uint8Array(32).fill(3)));
+  });
+});
+
+/* ------------------------------------------------------------ P03: no room key for a protocol-4 device */
+
+describe("REVIEW-612 P03 — the room-key fallback", () => {
+  const kind = (f: Frame) => (JSON.parse(f.text) as { kind?: string }).kind;
+
+  it("the downgrade marker is set when a valid hello v4 is accepted, before the session; the peer is 'p4-pending', never room-key eligible", async () => {
+    const net = new Net();
+    const book = new TrustBook(null);
+    const a = p4room(net, "p-a", await device(), book);
+    const bId = await device();
+    p4room(net, "p-b", bId);
+    net.drop = (f) => f.from === "p-b" && kind(f) === "p4-kem"; // the KEM answer is withheld
+    expect(a.mayUseRoomKey("p-b")).toBe(true); // nothing known yet
+    await Promise.all([a.open("p-b"), net.rooms.get("p-b")!.open("p-a")]);
+    await net.drain();
+    expect(book.p4Seen(bId.publicKey)).toBe(true);
+    expect(a.protocolOf("p-b")).toBe("p4-pending");
+    expect(a.mayUseRoomKey("p-b")).toBe(false);
+    expect(a.negotiating("p-b")).toBe(true);
+    // `session: true` waits it out (bounded): still p4-pending, so the app holds the message.
+    expect(await a.settled("p-b", 30, { session: true })).toBe("p4-pending");
+    // The channel closes and a new one opens: still known as a protocol-4 device (this page saw its key).
+    a.channelClosed("p-b");
+    expect(a.protocolOf("p-b")).toBe("pending");
+    expect(a.mayUseRoomKey("p-b")).toBe(false);
+  });
+
+  it("settled({session}) resolves at once when the session comes up", async () => {
+    const net = new Net();
+    const a = p4room(net, "p-a", await device());
+    const b = p4room(net, "p-b", await device());
+    const waiting = a.settled("p-b", 5_000, { session: true });
+    await Promise.all([a.open("p-b"), b.open("p-a")]);
+    await net.drain();
+    expect(await waiting).toBe(4);
+    expect(a.mayUseRoomKey("p-b")).toBe(false);
+  });
+
+  it("a protocol-3 peer (6.11) stays room-key eligible; a refused downgrade is not", async () => {
+    const net = new Net();
+    const book = new TrustBook(null);
+    const a = p4room(net, "p-a", await device(), book);
+    const old = new P4Room({
+      keys: roomKeys, identity: await device(), selfId: () => "p-old", send: (peerId, text) => net.send("p-old", peerId, text),
+      helloExtra: () => ({ caps: [] }), local: () => ({ mb: null, acc: null, sth: null }), book: new TrustBook(null), disableP4: true,
+    });
+    net.rooms.set("p-old", old);
+    await Promise.all([a.open("p-old"), old.open("p-a")]);
+    await net.drain();
+    expect(a.protocolOf("p-old")).toBe(3);
+    expect(a.mayUseRoomKey("p-old")).toBe(true);
+    // The same device key once spoke protocol 4 (another room, another day): a protocol-3 hello is a downgrade.
+    const dev = await device();
+    book.markP4(dev.publicKey);
+    const down = new P4Room({
+      keys: roomKeys, identity: dev, selfId: () => "p-down", send: (peerId, text) => net.send("p-down", peerId, text),
+      helloExtra: () => ({ caps: [] }), local: () => ({ mb: null, acc: null, sth: null }), book: new TrustBook(null), disableP4: true,
+    });
+    net.rooms.set("p-down", down);
+    await Promise.all([a.open("p-down"), down.open("p-a")]);
+    await net.drain();
+    expect(a.protocolOf("p-down")).toBe("refused");
+    expect(a.mayUseRoomKey("p-down")).toBe(false);
+  });
+
+  it("the outbox waits per peer: a held peer gets it once its session is up, the others are not sent it twice", async () => {
+    const ready = new Set<string>(["p-b"]);
+    const got: Record<string, number> = {};
+    const outbox = createOutbox<string>(perPeerSender(async (_entry, targets, only) => {
+      const peers = targets ? [...targets] : ["p-b", "p-c"];
+      const to = peers.filter((p) => ready.has(p));
+      for (const p of to) got[p] = (got[p] ?? 0) + 1;
+      expect(only).toBe(Boolean(targets) && _entry.only === true);
+      return { to, held: peers.filter((p) => !ready.has(p)) };
+    }));
+    outbox.add({ messageId: "m1", room: "r", envelope: "x", targets: [], toNames: [], createdAt: Date.now(), expiresAt: 0 });
+    await outbox.flush();
+    expect(outbox.list()[0]).toMatchObject({ targets: ["p-c"], only: true });
+    await outbox.flush(); // p-c still not ready: nothing new, nobody twice
+    expect(got).toEqual({ "p-b": 1 });
+    ready.add("p-c");
+    const done = await outbox.flush();
+    expect(done.delivered).toBe(1);
+    expect(outbox.size()).toBe(0);
+    expect(got).toEqual({ "p-b": 1, "p-c": 1 });
+    // A private message for two: whoever is ready gets it; it waits for the other.
+    ready.delete("p-c");
+    outbox.add({ messageId: "m2", room: "r", envelope: "x", targets: ["p-b", "p-c"], toNames: [], createdAt: Date.now(), expiresAt: 0 });
+    await outbox.flush();
+    expect(outbox.list()[0].targets).toEqual(["p-c"]);
   });
 });

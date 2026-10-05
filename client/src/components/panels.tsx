@@ -271,14 +271,15 @@ type TrustPanelProps = PanelBaseProps & {
 export type P4TrustInfo = {
   kt: { state: "off" | "ok" | "alert" | "unknown"; size?: number; alert?: { kind: string; at: number; detail: string } | null };
   onKtDismiss: () => void;
-  peers: Array<{ id: string; name: string; protocol: "pending" | 3 | 4 | "refused"; proven?: boolean }>;
+  /** "p4-pending": protocol 4, the session is being set up (6.12 review P03: nothing goes to it under the room key). */
+  peers: Array<{ id: string; name: string; protocol: "pending" | "p4-pending" | 3 | 4 | "refused"; proven?: boolean }>;
 };
 
 /** 6.12: key transparency — a persistent red alert on a rewritten history or a split view — and each member's protocol. */
 export function P4TrustSection({ info, lang }: { info: P4TrustInfo; lang: Lang }) {
   const kt = info.kt;
   const alert = kt.state === "alert" && kt.alert ? kt.alert : null;
-  const label = (p: P4TrustInfo["peers"][number]) => t(lang, p.protocol === 4 ? "p4.peers.p4" : p.protocol === 3 ? "p4.peers.p3" : p.protocol === "refused" ? "p4.peers.refused" : "p4.peers.pending");
+  const label = (p: P4TrustInfo["peers"][number]) => t(lang, p.protocol === 4 ? "p4.peers.p4" : p.protocol === 3 ? "p4.peers.p3" : p.protocol === "refused" ? "p4.peers.refused" : p.protocol === "p4-pending" ? "p4.peers.p4pending" : "p4.peers.pending");
   return (
     <section className="mb-4 space-y-3" data-testid="p4-trust">
       <div>

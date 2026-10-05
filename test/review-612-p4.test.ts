@@ -201,8 +201,9 @@ describe("REVIEW-612 P03 — the room-key fallback for a peer that is still 'pen
   // REVIEW-612 P03: App.tsx deliverToPeers waits 2.5 s for a "pending" peer (line 2575) and then seals for it with
   // the ROOM key (lines 2608-2612) — also a private message, and also for a device key once seen with protocol 4:
   // the downgrade marker is consulted only for a protocol-3 hello (p4-session.ts:274). Withholding the peer's
-  // p4-kem (or its hello) keeps it pending, so everything it gets is under the room key. Fails today: "pending".
-  it.skip("a device once seen with protocol 4 whose handshake does not complete is never left 'pending' (room-key eligible)", async () => {
+  // p4-kem (or its hello) keeps it pending, so everything it gets is under the room key. Fixed: "p4-pending" once
+  // its valid hello v4 is accepted (the marker is set then, too); mayUseRoomKey is false; the app holds it.
+  it("a device once seen with protocol 4 whose handshake does not complete is never left 'pending' (room-key eligible)", async () => {
     const aId = await identity();
     const bId = await identity();
     const book = new TrustBook(null);

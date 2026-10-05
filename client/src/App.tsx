@@ -189,7 +189,7 @@ import type { MapPreviewPolicy } from "./lib/client-config";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
 import { appInForeground, useRoomPresence } from "./lib/use-room-presence";
 import { createFlashQueue, kindForText, type FlashMessage } from "./lib/flash";
-import { createOutbox, queueTargets } from "./lib/outbox";
+import { createOutbox, perPeerSender, queueTargets } from "./lib/outbox";
 import { FlashMessages } from "./components/FlashMessages";
 import {
   attachStorageSocket, forgetServerData, putMessages as putServerMessages,
@@ -862,12 +862,10 @@ function ChatApp() {
    *  (p4-store.ts › PayloadSealer) — sealed for each recipient when it goes,
    *  with the best they speak (protocol 4, else 3), never kept as room-key
    *  ciphertext for peers that will speak protocol 4. */
-  const outboxRef = useRef(createOutbox<SealedPayload>(async (entry) => {
-    const targets = entry.targets.length > 0 ? new Set(entry.targets) : undefined;
-    return deliverQueuedRef.current(entry.messageId, entry.envelope, targets);
-  }));
-  /** Set once deliverToPeers exists (it is declared further down). */
-  const deliverQueuedRef = useRef<(id: string, sealed: SealedPayload, targets?: Set<string>) => Promise<number>>(async () => 0);
+  // 6.12 review P03: per peer — whoever was ready got it; a peer whose secure session is not up yet still waits for it.
+  const outboxRef = useRef(createOutbox<SealedPayload>(perPeerSender((entry, targets, only) => deliverQueuedRef.current(entry.messageId, entry.envelope, targets, only))));
+  /** Set once deliverToPeers exists (it is declared further down). Returns the peers it went to, and those it waits for. */
+  const deliverQueuedRef = useRef<(id: string, sealed: SealedPayload, targets?: Set<string>, only?: boolean) => Promise<{ to: string[]; held: string[] }>>(async () => ({ to: [], held: [] }));
   /** Same for the flush, which a freshly opened channel wants to trigger. */
   const flushOutboxRef = useRef<(reason: string) => Promise<void>>(async () => undefined);
   const [queuedIds, setQueuedIds] = useState<Set<string>>(new Set());
@@ -2588,7 +2586,7 @@ function ChatApp() {
    * pair key for a private one, the room key for a peer without a pair yet.
    * Returns how many took it and the ciphertext to show in the info view.
    */
-  async function deliverToPeers(payload: { id: string }, roomEnvelope: () => Promise<DataChannelEnvelope | null>, targets?: Set<string>): Promise<{ sent: number; cipher: string; kinds: Set<SealedWith> }> {
+  async function deliverToPeers(payload: { id: string }, roomEnvelope: () => Promise<DataChannelEnvelope | null>, targets?: Set<string>, opts: { only?: Set<string> } = {}): Promise<{ sent: number; to: string[]; cipher: string; kinds: Set<SealedWith>; held: string[]; roomKeyTo: string[] }> {
     const keys = keyRef.current;
     const store = senderKeysRef.current;
     const me = myIdRef.current;
@@ -2597,12 +2595,17 @@ function ChatApp() {
     const privateSend = Boolean(targets);
     let live: DataChannelEnvelope | null = null;
     let sent = 0;
+    const to: string[] = [];
     let cipher = "";
     const kinds = new Set<SealedWith>();
-    const open = [...peersRef.current.values()].filter((peer) => (!targets || targets.has(peer.id)) && peer.channel?.readyState === "open");
-    // 6.12: a channel that has just opened is still saying hello — wait a moment
-    // for the protocol it speaks rather than fall back to the room key.
-    if (p4) await Promise.all(open.map((peer) => (p4.protocolOf(peer.id) === "pending" ? p4.settled(peer.id, 2500) : null)));
+    /** 6.12 review P03: peers this could not go to safely yet — it waits for them in the outbox. */
+    const held: string[] = [];
+    /** Peers that got the room key (genuinely unknown: no hello yet; or protocol 3 without a pair) — the info view says so. */
+    const roomKeyTo: string[] = [];
+    const open = [...peersRef.current.values()].filter((peer) => (!targets || targets.has(peer.id)) && (!opts.only || opts.only.has(peer.id)) && peer.channel?.readyState === "open");
+    // 6.12: a channel that has just opened is still saying hello — wait a moment (bounded) for the
+    // protocol it speaks, and for a protocol-4 peer for its session, rather than fall back to the room key.
+    if (p4) await Promise.all(open.map((peer) => (p4.negotiating(peer.id) ? p4.settled(peer.id, 2500, { session: true }) : null)));
     // Protocol 4 (§ 6): one sender-key message for every protocol-4 peer; each got our chain first.
     const room4 = !privateSend && p4 ? await p4.sealRoom(payload.id, payload, open.map((peer) => peer.id)).catch(() => null) : null;
     for (const peer of open) {
@@ -2619,7 +2622,7 @@ function ChatApp() {
         } else if (room4?.to.includes(peer.id)) {
           text = JSON.stringify(room4.envelope); kind = "p4-sk"; c = room4.envelope.c;
         }
-        if (!text) continue; // never the room key to a protocol-4 peer
+        if (!text) { held.push(peer.id); continue; } // never the room key to a protocol-4 peer: it waits
       } else if (keys && proto === 3 && store.hasPair(peer.id)) {
         if (privateSend) {
           const envelope = await store.sealPrivate(keys, payload.id, payload, me, peer.id, identity);
@@ -2636,30 +2639,51 @@ function ChatApp() {
         }
       }
       if (!text) {
-        // No session of either protocol (yet): the room key, as before.
+        // 6.12 review P03: no session of either protocol (yet). The room key only for a room message to a
+        // peer that is genuinely unknown (no hello) or speaks protocol 3 — never to a device that spoke
+        // protocol 4 (its hello in hand, its key marked, its member's account pinned), never a private message.
+        if (privateSend || !p4?.mayUseRoomKey(peer.id) || memberSpokeP4(peer.id)) { held.push(peer.id); continue; }
         const envelope = await roomEnvelope();
         if (!envelope) continue;
         text = JSON.stringify(envelope); kind = "room"; c = envelope.ciphertext;
+        roomKeyTo.push(peer.id);
       }
       try {
         channel.send(text);
         sent += 1;
+        to.push(peer.id);
         kinds.add(kind);
         if (!cipher || kind !== "room") cipher = c;
         const st = peerStatsRef.current.get(peer.id);
         if (st) st.sent += text.length;
-      } catch { /* the next channel */ }
+      } catch { held.push(peer.id); /* the channel is closing: it waits */ }
     }
-    return { sent, cipher, kinds };
+    return { sent, to, cipher, kinds, held, roomKeyTo };
+  }
+
+  /** Review P03: has the member behind this peer ever spoken protocol 4 here (a device behind its reference, its account pinned)? */
+  function memberSpokeP4(peerId: string): boolean {
+    const keys = keyRef.current;
+    const ref = peerRefsRef.current.get(peerId);
+    if (!keys || !ref) return false;
+    const book = trustRef.current;
+    return Boolean(book.accountOf(keys.roomId, ref)) || book.devicesOfRef(keys.roomId, ref, 0).some((d) => book.p4Seen(d.pk));
   }
 
   /** 6.12: the outbox's flush — a waiting payload, opened from its page-only seal, sealed now for whoever can take it. */
-  deliverQueuedRef.current = async (id, sealed, targets) => {
+  deliverQueuedRef.current = async (id, sealed, targets, only) => {
     let payload: { id: string };
-    try { payload = await payloadSealerRef.current.open<{ id: string }>(id, sealed); } catch { return 0; }
+    try { payload = await payloadSealerRef.current.open<{ id: string }>(id, sealed); } catch { return { to: [], held: [] }; }
     let room: DataChannelEnvelope | null | undefined;
-    const delivered = await deliverToPeers(payload, async () => (room === undefined ? (room = await sealForRoom(payload)) : room), targets);
-    return delivered.sent;
+    // `only`: a room message held for these peers (review P03) — sealed as a room message, not a private one.
+    const delivered = only && targets
+      ? await deliverToPeers(payload, async () => (room === undefined ? (room = await sealForRoom(payload)) : room), undefined, { only: targets })
+      : await deliverToPeers(payload, async () => (room === undefined ? (room = await sealForRoom(payload)) : room), targets);
+    if (delivered.to.length) {
+      const how = bestSealing(delivered.kinds);
+      setMessages((cur) => cur.map((m) => (m.id === id && m.mine ? { ...m, sealedHow: [...new Set([...(m.sealedHow ?? []), ...delivered.kinds])], ...(m.sealedWith ? {} : how ? { sealedWith: how } : {}) } : m)));
+    }
+    return { to: delivered.to, held: delivered.held };
   };
 
   async function broadcastAudioStatus(next: AudioStatus) {
@@ -2895,6 +2919,8 @@ function ChatApp() {
     }
     // 6.7: a session exists now — they learn my profile's version.
     void profileExchange().hello(peerId, info.caps);
+    // Review P03: what waited for this peer's secure session goes now.
+    if (outboxRef.current.size() > 0) void flushOutboxRef.current(t(lang, "p4.held.sessionReady"));
   }
 
   /** § 14.4: an account-attested peer, first seen this session — is its device in the server's key log, not revoked? */
@@ -4177,6 +4203,12 @@ function ChatApp() {
     // 6.12: what waits is the payload under a key of this page only; it is
     // sealed for each peer when it goes (deliverQueuedRef).
     const queueFor = queueTargets(opts.targets);
+    const peerName = (id: string) => peersRef.current.get(id)?.name || `peer-${id.slice(-4)}`;
+    // 6.12 review P03: a peer whose secure session is not up yet (a protocol-4 device, or any peer of a private
+    // message) gets it when the session is ready — never under the room key meanwhile.
+    if (delivered.roomKeyTo.length) {
+      audit.push({ state: "encrypted", at: Date.now(), meta: tf(lang, "sec.sealedHow.roomFallback", { names: delivered.roomKeyTo.map(peerName).join(", ") }) });
+    }
     const queued = sent === 0 && relayed === 0 && queueFor !== null
       && outboxRef.current.add({
         messageId: payload.id,
@@ -4187,9 +4219,24 @@ function ChatApp() {
         createdAt: createdAt,
         expiresAt: computeExpiry(ttlMinutes, createdAt) ?? 0,
       }) !== null;
+    const heldFor = !queued && (sent > 0 || relayed > 0) && delivered.held.length > 0
+      && outboxRef.current.add({
+        messageId: payload.id,
+        room: roomRef.current ?? "",
+        envelope: await payloadSealerRef.current.seal(payload.id, payload),
+        targets: delivered.held,
+        ...(opts.targets ? {} : { only: true }),
+        toNames: delivered.held.map(peerName),
+        createdAt: createdAt,
+        expiresAt: computeExpiry(ttlMinutes, createdAt) ?? 0,
+      }) !== null;
     audit.push(queued
       ? { state: "queued", at: Date.now(), meta: opts.toNames?.join(", ") }
       : { state: "sent", at: Date.now(), meta: tf(lang, sent + relayed === 1 ? "app.recipients.one" : "app.recipients.many", { n: sent + relayed }) });
+    if (heldFor) {
+      audit.push({ state: "queued", at: Date.now(), meta: tf(lang, "p4.held.waiting", { names: delivered.held.map(peerName).join(", ") }) });
+      systemMessage(tf(lang, "p4.held.waiting", { names: delivered.held.map(peerName).join(", ") }));
+    }
     if (queued) setQueuedIds((cur) => new Set(cur).add(payload.id));
 
     if (sent > 0 || relayed > 0 || queued) {

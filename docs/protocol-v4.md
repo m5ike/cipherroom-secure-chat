@@ -50,8 +50,16 @@ message kind, file, call, function and plug-in keeps working over protocol 4.
 * When both hellos are v4 with a valid `sig4`, the pair runs protocol 4. Otherwise protocol 3
   (`sender-keys.ts`), and the UI marks the peer “older protocol (no PCS / PQ)”.
 * **No downgrade.** A device key (`pk`) once seen with a valid v4 hello is remembered
-  (persistently, per device key). A later hello from the same `pk` without valid v4 fields is
-  refused with a visible warning (“protocol downgrade”).
+  (persistently, per device key) — as soon as that hello is accepted, not only once the session is
+  up. A later hello from the same `pk` without valid v4 fields is refused with a visible warning
+  (“protocol downgrade”).
+* **Never the room key to a protocol-4 device** (6.12 review P03). While a peer's protocol-4
+  session is not up — its valid hello v4 is in hand, its device key (or its member's account) is
+  known to speak protocol 4 — nothing for it is sealed with the room key: a client waits a moment
+  (2.5 s) and then keeps the message (light mode: in its outbox, per peer) until the session is
+  ready, and says so. A private message is never sealed with the room key. Only a peer that is
+  genuinely unknown (no hello at all after the wait) or speaks protocol 3 may get a room message
+  under the room key, and the sender's info view names it.
 * **Envelope versions 1 and 2 are no longer opened** (F-20): they come only from clients older
   than 3.1. Protocol-3 envelopes (`v: 3`) still are.
 * The KEM, ratchet and reset messages travel only on the peer's data channel (reliable,

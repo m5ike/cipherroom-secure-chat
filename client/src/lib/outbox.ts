@@ -18,6 +18,12 @@ export type QueuedMessage<Envelope = unknown> = {
   envelope: Envelope;
   /** Peer ids this was meant for; empty = everyone in the room. */
   targets: string[];
+  /**
+   * 6.12 review P03: a ROOM message that already went to the others and waits
+   * only for these `targets` (their protocol-4 session is not up yet) — sealed
+   * for them as a room message, not as a private one, when it goes.
+   */
+  only?: boolean;
   /** Display names, for the "waiting for …" line. */
   toNames: string[];
   createdAt: number;
@@ -38,6 +44,30 @@ export type QueuedMessage<Envelope = unknown> = {
 export function queueTargets(targets: ReadonlySet<string> | undefined): string[] | null {
   if (targets === undefined) return [];
   return targets.size > 0 ? Array.from(targets) : null;
+}
+
+/** One delivery attempt of a queued message: the peers it went to, and the peers it still waits for (no secure session yet). */
+export type QueuedDelivery = { to: string[]; held: string[] };
+
+/**
+ * 6.12 review P03: the outbox sender for messages that may wait per peer.
+ * `deliver(entry, targets, only)` makes one attempt. A whole-room entry that
+ * reached some peers but still waits for others (their protocol-4 session is
+ * not up) becomes an `only` entry for those; an entry with targets keeps the
+ * peers that did not get it yet. Returns what the outbox counts as delivered
+ * (0 = keep waiting).
+ */
+export function perPeerSender<Envelope>(deliver: (entry: QueuedMessage<Envelope>, targets: Set<string> | undefined, only: boolean) => Promise<QueuedDelivery>): OutboxSender<Envelope> {
+  return async (entry) => {
+    const targets = entry.targets.length > 0 ? new Set(entry.targets) : undefined;
+    const got = await deliver(entry, targets, Boolean(entry.only));
+    if (!targets) {
+      if (got.to.length > 0 && got.held.length > 0) { entry.targets = [...got.held]; entry.only = true; return 0; }
+      return got.to.length;
+    }
+    entry.targets = entry.targets.filter((id) => !got.to.includes(id));
+    return entry.targets.length === 0 ? Math.max(1, got.to.length) : 0;
+  };
 }
 
 export type OutboxLimits = {
