@@ -77,12 +77,21 @@ message kind, file, call, function and plug-in keeps working over protocol 4.
 * `sig4` — ECDSA with the device key over
 
 ```
-join(LABEL.hello, roomId, from, to, check, pk, dh, e, b64(H(k)), n, mbDigest, accDigest)
-mbDigest  = mb  ? b64(H(join(mb.id, mb.dh, b64(H(kem bytes)), mb.exp, mb.sig))) : "-"
-accDigest = acc ? b64(H(join(acc.apk, acc.ac, acc.cv ?? 1, acc.exp ?? 0)))     : "-"
+join(LABEL.hello, roomId, from, to, check, pk, dh, e, b64(H(k)), n, mbDigest, accDigest,
+     capsDigest, userDigest, sthDigest)
+mbDigest   = mb  ? b64(H(join(mb.id, mb.dh, b64(H(kem bytes)), mb.exp, mb.sig))) : "-"
+accDigest  = acc ? b64(H(join(acc.apk, acc.ac, acc.cv ?? 1, acc.exp ?? 0)))     : "-"
+capsDigest = b64(H(join(…caps sorted by ordinal order, duplicates removed)))     (never "-":
+             a hello without caps hashes the empty join, i.e. H(""))
+userDigest = user ? b64(H(UTF-8(user))) : "-"
+sthDigest  = sth ? b64(H(join(sth.size, sth.root, sth.ts, sth.sig))) : "-"
 ```
 
-  `from` is the sender's peer id, `to` the recipient's (as in protocol 3).
+  `from` is the sender's peer id, `to` the recipient's (as in protocol 3). Every capability
+  string must be printable ASCII without `|` (else the hello is malformed). 6.12 review P02: the
+  first 6.12 drafts left `caps`, `user` and `sth` unsigned, so a man in the middle who knew the
+  room key could strip `"media"` (calls unsealed) or `sth` (no gossip) — they are signed now; a
+  receiver uses only the signed values.
 
 The receiver checks `check` (else “key mismatch”), the protocol-3 `sig`, `sig4`, and — when `mb`
 is present — `mb.sig` with `pk` and `mb.exp > now`. A failed `sig4` with a valid `sig` is
@@ -286,7 +295,9 @@ eph       = a new P-256 key pair
 ss1       = ECDH(eph.private, Rb.dh)
 ss2       = ECDH(Sb.dh.private, Rb.dh)          (both S and R can compute it: deniable)
 (kct, ss3)= ML-KEM.Encaps(Rb.kem)
-AAD       = join(LABEL.mailbox, roomId, id, S.pk, Sb.id, Rb.id, b64(eph.public SPKI), b64(H(kct)))
+AAD       = join(LABEL.mailbox, roomId, id, S.pk, Sb.id, Rb.id, b64(eph.public SPKI), b64(H(kct)), saccDigest)
+saccDigest = sacc ? b64(H(join(sacc.apk, sacc.ac, sacc.cv ?? 1, sacc.exp ?? 0))) : "-"   (as § 2 accDigest;
+             6.12 review P13: `sacc` is bound to the item, a relay cannot swap or strip it)
 (key, iv) = HKDF(salt = H(AAD), ikm = ss1 || ss2 || ss3, info = LABEL.mailbox, L = 44)
 c         = AES-GCM(key, iv, AAD, pad(UTF-8(JSON(payload))))
 → { v:4, kind:"mb", id, to: Rb.id, sb: Sb, spk: S.pk, sacc?, e: b64(eph SPKI), kct: b64, c: b64 }
