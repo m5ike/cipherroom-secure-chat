@@ -2850,9 +2850,9 @@
   "de": "Staatsangehörigkeit"
  },
  "nfc.eid.needKey": {
-  "en": "Enter the document number, date of birth and expiry, paste the MRZ, or enter the CAN.",
-  "cs": "Zadejte číslo dokladu, datum narození a platnost, vložte MRZ, nebo zadejte CAN.",
-  "de": "Dokumentennummer, Geburtsdatum und Ablauf eingeben, die MRZ einfügen oder die CAN eingeben."
+  "en": "Give the MRZ (document number, date of birth, expiry) or the CAN printed on the document to open the chip.",
+  "cs": "K otevření čipu zadejte MRZ (číslo dokladu, datum narození, platnost) nebo CAN vytištěný na dokladu.",
+  "de": "Geben Sie die MRZ (Dokumentnummer, Geburtsdatum, Ablaufdatum) oder die auf dem Dokument aufgedruckte CAN ein, um den Chip zu öffnen."
  },
  "nfc.eid.notUsed": {
   "en": "not used",
