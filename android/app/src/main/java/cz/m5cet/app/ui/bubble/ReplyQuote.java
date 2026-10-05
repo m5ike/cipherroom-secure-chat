@@ -36,8 +36,24 @@ public final class ReplyQuote {
     public static final int CHARS = 140;
 
     /** $msg.replyTo for a reply (null when `reply` answers nothing); `original` null when it is not in the history here. */
-    public static JSONObject of(ChatMessage reply, ChatMessage original, Tr tr) {
+    public static JSONObject of(ChatMessage reply, ChatMessage original, Tr tr) { return of(reply, original, false, tr); }
+
+    /**
+     * `held`: the original is held behind a changed identity (6.12 review
+     * P14) — the quote says so instead of any text (neither the held one nor
+     * what the reply claims it said) until the person accepts the new key.
+     */
+    public static JSONObject of(ChatMessage reply, ChatMessage original, boolean held, Tr tr) {
         if (reply == null || reply.replyToId == null || reply.replyToId.isEmpty()) return null;
+        if (original != null && original.changed && !original.mine) { original = null; held = true; }
+        if (held) {
+            String name = reply.replyToSender == null || reply.replyToSender.isEmpty() ? "?" : reply.replyToSender;
+            int c = Avatars.hsl(Avatars.hue(name), 0.70f, 0.42f, 1f);
+            try {
+                return new JSONObject().put("id", reply.replyToId).put("sender", name).put("text", tr.t("quote.held")).put("kind", "held").put("icon", "shield-alert")
+                    .put("color", Avatars.hex(c)).put("tint", Avatars.hex((0x24 << 24) | (c & 0xFFFFFF))).put("found", false).put("mine", false);
+            } catch (JSONException e) { return null; }
+        }
         String kind = kind(original, reply.replyToText);
         boolean mine = original != null && original.mine;
         String name = original != null && !original.senderName.isEmpty() ? original.senderName : reply.replyToSender == null ? "" : reply.replyToSender;

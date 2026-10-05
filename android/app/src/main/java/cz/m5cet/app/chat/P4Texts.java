@@ -19,7 +19,18 @@ public final class P4Texts {
         EN.put("p4.identityChanged", "identity changed — compare the safety number before you trust it");
         EN.put("p4.held", "identity changed — their messages are held until you verify them (People › Verify)");
         EN.put("p4.heldDropped", "{n} held messages were not shown (identity changed, not verified)");
-        EN.put("p4.roomProof", "The server refused this device's proof that it holds the room key: another key is registered for this room on the server (someone may have claimed it first). Check the room name and passphrase with the others.");
+        EN.put("p4.roomProof", "The server refused this device's proof that it holds the room key: another key is registered for this room on the server (someone may have claimed it first). Check the room name and passphrase with the others; the server's owner can reset the room's registration.");
+        // 6.12 security review (S14, P04, P05, P08, P14, P01)
+        EN.put("p4.roomProofLegacy", "Another key is registered for this room on the server (someone who knew only its blind id may have claimed it first), so this device joined without proving it holds the room key — the others see it as unproven. Check the room name and passphrase with the others; the server's owner can reset the room's registration.");
+        EN.put("p4.trust.otherName", "verified as {name} — now under another name");
+        EN.put("p4.kt.checking", "being checked in the key-transparency log");
+        EN.put("p4.kt.alert.unknown-device", "A device this phone does not know was added to your account (key transparency). If it was not you, sign out everywhere and tell the server's operator.");
+        EN.put("p4.kt.alert.account-key", "Another account key was registered for your account (key transparency).");
+        EN.put("p4.kt.alert.unproven", "For a day the server has not proved that its key history continues the one this device saw (key transparency).");
+        EN.put("p4.kt.dismiss", "Dismiss");
+        EN.put("quote.held", "Held message — the sender's identity changed");
+        EN.put("msginfo.state.relay-p4", "away — sealed for their devices (protocol 4)");
+        EN.put("msginfo.state.relay-room", "away — under the room key (protocol 3)");
         EN.put("p4.roomProofRequired", "This server admits only members who prove they hold the room key; this room cannot prove it (it is joined by its plain name).");
         EN.put("p4.trust.new", "new key — not verified");
         EN.put("p4.trust.verified", "verified");

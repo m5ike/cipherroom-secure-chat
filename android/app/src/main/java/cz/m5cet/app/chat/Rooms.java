@@ -173,6 +173,13 @@ public final class Rooms {
         return kind.isEmpty() ? "" : P4Texts.t(app, "p4.kt.alert." + kind);
     }
 
+    /** 6.12 (review P04): Settings › the key-transparency alert, dismissed by the person (an unknown device of this account was theirs). */
+    public void dismissKtAlert() {
+        if (!app.vault.unlocked()) return;
+        p4().dismissKtAlert();
+        emit();
+    }
+
     /** Trust on first use: room + name → key id. "new", "match" or "changed". */
     synchronized String pin(String room, String name, String kid) {
         String slot = pinSlot(room, name);
@@ -537,6 +544,7 @@ public final class Rooms {
 
     /** What a notification may say: nothing of a sealed or held message (web: 🔒). */
     static String notifyText(ChatMessage m) {
+        if (m.changed) return "⚠"; // review P14: a changed identity's text is never shown before it is accepted
         if (m.sealed != null) return "🔒";
         if (m.tap) return "👁";
         if (m.fn != null) return "/" + m.fn.optString("keyword") + (m.text.isEmpty() ? "" : " · " + m.text);

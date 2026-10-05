@@ -590,7 +590,10 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
             Map<String, Object> s = new HashMap<>();
             JSONObject ms = m.scope();
             boolean hidden = m.hiddenUntil != 0 && Hides.hidden(m, System.currentTimeMillis());
-            JSONObject quote = ReplyQuote.of(m, m.replyToId == null ? null : byId.get(m.replyToId), a.app()::t);
+            // 6.12 review P14: a quote of a held message (changed identity, not accepted) shows no text.
+            RoomSession quoteRoom = m.replyToId == null ? null : a.app().rooms.session(m.roomKey);
+            JSONObject quote = ReplyQuote.of(m, m.replyToId == null ? null : byId.get(m.replyToId), quoteRoom != null && quoteRoom.isHeld(m.replyToId),
+                k -> cz.m5cet.app.chat.P4Texts.t(a.app(), k));
             try {
                 boolean position = Kinds.isPositionMessage(m);
                 ms.put("position", position).put("mapPreview", position && MapBubble.policyFor(a.app(), m) != null).put("hidden", hidden);

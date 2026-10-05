@@ -27,9 +27,13 @@ import cz.m5cet.app.security.Vault;
  *
  *   p4.mailbox    this device's mailbox bundles with their private keys (§ 7.1)
  *   p4.seen       device key id → when it was first seen with a valid v4 hello (the downgrade rule, § 1)
- *   p4.bundles    device key id → the newest valid bundle a peer showed {pk, bundle, ref} (§ 7.1, § 12.2)
- *   p4.accounts   account pins (§ 12.2): apk → {kids, user, at, verified}; users: username → apk
- *   p4.kt         key transparency per server (§ 14.4): the pinned key, the newest head, the alert
+ *   p4.bundles    device key id → a peer device seen in a valid hello v4 (the device pin, § 7.4):
+ *                 {pk, bundle (its newest valid one), acc (its hello's account attestation), refs: {room hash: ref}, at}
+ *   p4.refs       member reference → the account key pinned for it {apk, at} (§ 7.4, review P01) — kept
+ *                 independently of bundle expiry
+ *   p4.accounts   account pins (§ 12.2): apk → {kids, user, at, verified, verifiedName}; users: username → apk
+ *   p4.kt         key transparency per server (§ 14.4): the pinned key, the newest head, the alert, a pending proof
+ *   p4.own        this account's own key-transparency entries (§ 14.4, review P04): {u, apk, known: {dpk: at}, pending: [dpk]}
  *   p4.cert       this device's v2 certificate by the account key {apk, pk, exp, sig} and what was uploaded
  *   p4.replay.*   accepted message ids per room (§ 11), as replay keys — never a readable id
  *
@@ -42,6 +46,12 @@ public final class P4Store {
         JSONObject get(String name);
         /** False while it cannot be written (the vault is locked). */
         boolean put(String name, JSONObject value);
+        /**
+         * Like get, but null also when the record is there and cannot be read
+         * (an error, not "absent"): the replay windows fail closed on it
+         * (review P10) instead of starting empty.
+         */
+        default JSONObject getStrict(String name) { return get(name); }
     }
 
     /** The vault's user tier — only while it is open (6.12: a lock forgets the data key; the rooms keep receiving). */
@@ -53,17 +63,31 @@ public final class P4Store {
                 app.vault.putJson(Vault.Tier.USER, name, value);
                 return true;
             }
+            @Override public JSONObject getStrict(String name) {
+                if (!app.vault.unlocked()) return null;
+                try {
+                    byte[] b = app.vault.get(Vault.Tier.USER, name);
+                    return b == null ? new JSONObject() : new JSONObject(new String(b, java.nio.charset.StandardCharsets.UTF_8));
+                } catch (java.security.GeneralSecurityException | JSONException e) {
+                    Log.w("p4", "record " + name + " unreadable: " + e.getMessage());
+                    return null;
+                }
+            }
         };
     }
 
     public static final class MemoryBackend implements Backend {
         private final Map<String, String> rows = new HashMap<>();
         boolean locked;
+        /** Tests: reads fail (an I/O or decryption error) — getStrict answers null, get an empty record (as the vault's json does). */
+        boolean failing;
         @Override public synchronized JSONObject get(String name) {
             if (locked) return null;
+            if (failing) return new JSONObject();
             String v = rows.get(name);
             try { return v == null ? new JSONObject() : new JSONObject(v); } catch (JSONException e) { return new JSONObject(); }
         }
+        @Override public synchronized JSONObject getStrict(String name) { return failing ? null : get(name); }
         @Override public synchronized boolean put(String name, JSONObject value) {
             if (locked) return false;
             rows.put(name, value.toString());
@@ -72,7 +96,7 @@ public final class P4Store {
     }
 
     /** Every record but the replay windows (those are per room, read when a room starts). */
-    static final String[] RECORDS = {"p4.seen", "p4.bundles", "p4.mailbox", "p4.accounts", "p4.kt", "p4.cert"};
+    static final String[] RECORDS = {"p4.seen", "p4.bundles", "p4.refs", "p4.mailbox", "p4.accounts", "p4.kt", "p4.own", "p4.cert"};
 
     private final Backend backend;
     private final Map<String, JSONObject> cache = new HashMap<>();
@@ -127,18 +151,44 @@ public final class P4Store {
         write("p4.seen");
     }
 
-    /* ------------------------------------------------- peers' bundles (§ 7) */
+    /* ------------------------------------------------- peers' devices (§ 7) */
 
-    /** Remembers a peer device's valid bundle (the newest by expiry), with the room-scoped account reference it came with. */
-    public synchronized void rememberBundle(String pk, Mailbox.Bundle bundle, String ref) {
+    /** A peer device seen in a valid hello v4 (the device pin): its newest bundle and its hello's account attestation. */
+    public static final class Remembered {
+        public final String pk;
+        public final Mailbox.Bundle bundle;
+        /** The hello's `acc` (checked again when a message is sealed), or null. */
+        public final JSONObject acc;
+        Remembered(String pk, Mailbox.Bundle bundle, JSONObject acc) { this.pk = pk; this.bundle = bundle; this.acc = acc; }
+    }
+
+    /**
+     * A peer device's valid hello v4 in room `roomId` (review P01): its bundle
+     * (the newest by expiry), its account attestation `acc` (verified: account
+     * key `accApk`, null when none or invalid) and the room-scoped member
+     * reference the hub gave it. A device is filed under ONE reference per
+     * room — the first it was seen with; a server-given reference never moves
+     * it, and never files it under a reference pinned to another account.
+     */
+    public synchronized void rememberDevice(String roomId, String pk, Mailbox.Bundle bundle, JSONObject acc, String accApk, String ref) {
         String k = kid(pk);
-        if (k.isEmpty() || bundle == null) return;
+        if (k.isEmpty()) return;
         JSONObject all = read("p4.bundles");
-        JSONObject old = all.optJSONObject(k);
-        Mailbox.Bundle prev = old == null ? null : Mailbox.Bundle.parse(old.optJSONObject("bundle"));
-        if (prev != null && prev.exp > bundle.exp) return;
+        JSONObject row = all.optJSONObject(k);
         try {
-            all.put(k, new JSONObject().put("pk", pk).put("bundle", bundle.json()).put("ref", ref == null ? (old == null ? "" : old.optString("ref")) : ref).put("at", System.currentTimeMillis()));
+            if (row == null) all.put(k, row = new JSONObject().put("pk", pk));
+            Mailbox.Bundle prev = Mailbox.Bundle.parse(row.optJSONObject("bundle"));
+            if (bundle != null && (prev == null || prev.exp <= bundle.exp)) row.put("bundle", bundle.json());
+            if (acc != null) row.put("acc", acc); else row.remove("acc");
+            if (roomId != null && ref != null && !ref.isEmpty()) {
+                JSONObject refs = row.optJSONObject("refs");
+                if (refs == null) row.put("refs", refs = new JSONObject());
+                String slot = Rooms.hashKey(roomId);
+                String pinned = refAccount(ref);
+                if (!refs.has(slot) && (pinned.isEmpty() || pinned.equals(accApk))) refs.put(slot, ref);
+                else if (!refs.optString(slot).equals(ref)) Log.w("p4", "a device stays under the member reference it was first seen with");
+            }
+            row.put("at", System.currentTimeMillis());
         } catch (JSONException ignored) { }
         // Bounded: the oldest go first.
         while (all.length() > 2000) {
@@ -150,18 +200,73 @@ public final class P4Store {
         write("p4.bundles");
     }
 
-    /** Device keys and bundles learned from hellos for a room-scoped account reference (not expired at `now`). */
-    public synchronized List<String[]> bundlesOfRef(String ref, long now) {
-        List<String[]> out = new ArrayList<>();
+    /**
+     * A newer bundle of a device already pinned (its relayed mailbox item
+     * carried it, signed by the device key). A device never seen in a hello
+     * is not remembered: the relay's word is no device pin.
+     */
+    public synchronized void updateBundle(String pk, Mailbox.Bundle bundle) {
+        String k = kid(pk);
+        if (k.isEmpty() || bundle == null) return;
+        JSONObject row = read("p4.bundles").optJSONObject(k);
+        if (row == null) return;
+        Mailbox.Bundle prev = Mailbox.Bundle.parse(row.optJSONObject("bundle"));
+        if (prev != null && prev.exp >= bundle.exp) return;
+        try { row.put("bundle", bundle.json()); } catch (JSONException ignored) { }
+        write("p4.bundles");
+    }
+
+    /** The pinned devices filed under a member reference (any room), with whatever bundle they last showed (expired ones too). */
+    public synchronized List<Remembered> devicesOfRef(String ref) {
+        List<Remembered> out = new ArrayList<>();
         if (ref == null || ref.isEmpty()) return out;
         JSONObject all = read("p4.bundles");
         for (Iterator<String> it = all.keys(); it.hasNext(); ) {
             JSONObject row = all.optJSONObject(it.next());
-            if (row == null || !ref.equals(row.optString("ref"))) continue;
-            Mailbox.Bundle b = Mailbox.Bundle.parse(row.optJSONObject("bundle"));
-            if (b != null && b.exp > now) out.add(new String[]{row.optString("pk"), b.json().toString()});
+            JSONObject refs = row == null ? null : row.optJSONObject("refs");
+            if (refs == null) continue;
+            boolean hit = false;
+            for (Iterator<String> r = refs.keys(); r.hasNext(); ) if (ref.equals(refs.optString(r.next()))) hit = true;
+            if (!hit) continue;
+            out.add(new Remembered(row.optString("pk"), Mailbox.Bundle.parse(row.optJSONObject("bundle")), row.optJSONObject("acc")));
         }
         return out;
+    }
+
+    /* --------------------------------------- member references (§ 7.4, P01) */
+
+    /** The account key pinned for a member reference ("" when none). */
+    public synchronized String refAccount(String ref) {
+        JSONObject row = ref == null ? null : read("p4.refs").optJSONObject(ref);
+        return row == null ? "" : row.optString("apk");
+    }
+
+    /**
+     * A live member under reference `ref` showed a valid attestation by `apk`:
+     * "new" (pinned now), "match", or "changed" (the reference keeps its
+     * account until the person accepts the new one — {@link #repinRef}).
+     */
+    public synchronized String pinRef(String ref, String apk) {
+        if (ref == null || ref.isEmpty() || apk == null || apk.isEmpty()) return "new";
+        String old = refAccount(ref);
+        if (old.equals(apk)) return "match";
+        if (!old.isEmpty()) return "changed";
+        repinRef(ref, apk);
+        return "new";
+    }
+
+    /** The person accepted (or verified) this member's account: the reference now pins `apk`. */
+    public synchronized void repinRef(String ref, String apk) {
+        if (ref == null || ref.isEmpty() || apk == null || apk.isEmpty()) return;
+        JSONObject all = read("p4.refs");
+        try { all.put(ref, new JSONObject().put("apk", apk).put("at", System.currentTimeMillis())); } catch (JSONException ignored) { }
+        while (all.length() > 5000) {
+            String oldest = null;
+            long at = Long.MAX_VALUE;
+            for (Iterator<String> it = all.keys(); it.hasNext(); ) { String key = it.next(); long t = all.optJSONObject(key).optLong("at"); if (t < at) { at = t; oldest = key; } }
+            all.remove(oldest);
+        }
+        write("p4.refs");
     }
 
     /* --------------------------------------------------- own mailbox (§ 7.1) */
@@ -256,18 +361,50 @@ public final class P4Store {
         pinAccount(apk, devicePk, username);
     }
 
+    /** Is this account key pinned (seen attested before)? "match", else "new" — nothing is pinned (a relayed message's sender). */
+    public synchronized String accountKnown(String apk) {
+        JSONObject accounts = read("p4.accounts").optJSONObject("apk");
+        return accounts != null && apk != null && accounts.has(apk) ? "match" : "new";
+    }
+
     public synchronized boolean accountVerified(String apk) {
         JSONObject accounts = read("p4.accounts").optJSONObject("apk");
         JSONObject row = accounts == null || apk == null ? null : accounts.optJSONObject(apk);
         return row != null && row.optBoolean("verified");
     }
 
-    public synchronized void setAccountVerified(String apk, boolean on) {
+    /** Review P08: the display name the person verified the account under ("" when unknown — verified before 6.12's fix). */
+    public synchronized String accountVerifiedName(String apk) {
+        JSONObject accounts = read("p4.accounts").optJSONObject("apk");
+        JSONObject row = accounts == null || apk == null ? null : accounts.optJSONObject(apk);
+        return row == null ? "" : row.optString("verifiedName");
+    }
+
+    public synchronized void setAccountVerified(String apk, boolean on) { setAccountVerified(apk, on, null); }
+
+    /** `name`: the display name it was verified under (review P08: "verified" goes with that name only). */
+    public synchronized void setAccountVerified(String apk, boolean on, String name) {
         JSONObject accounts = read("p4.accounts").optJSONObject("apk");
         JSONObject row = accounts == null || apk == null ? null : accounts.optJSONObject(apk);
         if (row == null) return;
-        try { row.put("verified", on); } catch (JSONException ignored) { }
+        try {
+            row.put("verified", on);
+            if (on && name != null && !name.trim().isEmpty()) row.put("verifiedName", name.trim());
+            if (!on) row.remove("verifiedName");
+        } catch (JSONException ignored) { }
         write("p4.accounts");
+    }
+
+    /* ------------------------------------- own KT entries (§ 14.4, P04) */
+
+    /** This account's key-transparency monitor (a copy): {u, apk, known: {dpk: at}, pending: [dpk], account} — {} before the first check. */
+    public synchronized JSONObject own() {
+        try { return new JSONObject(read("p4.own").toString()); } catch (JSONException e) { return new JSONObject(); }
+    }
+
+    public synchronized void putOwn(JSONObject own) {
+        cache.put("p4.own", own);
+        write("p4.own");
     }
 
     /* ------------------------------------------------ key transparency (§ 14) */
@@ -299,17 +436,44 @@ public final class P4Store {
 
     /* ------------------------------------------------------- replay (§ 11) */
 
-    /** The replay window of one room, kept as {replay key: createdAt}; saved by {@link #saveReplay}. */
+    /**
+     * The replay window of one room, kept as {replay key: createdAt}; saved by
+     * {@link #saveReplay}. While the stored window cannot be read (locked, or
+     * a read error — review P10) it is a stand-in: in memory only, never
+     * saved over the stored one, and {@link #persistent} says false — the room
+     * then accepts only what cannot be replayed (live chains) until
+     * {@link #reloadReplay} reads it.
+     */
     public synchronized Replay.MemoryStore replay(String roomId) {
         Store store = new Store();
-        JSONObject saved = backend.get(replayName(roomId));
-        // Read while locked: a window of its own, never saved over the stored one.
+        JSONObject saved = backend.getStrict(replayName(roomId));
         if (saved == null) { store.standIn = true; saved = new JSONObject(); }
+        store.load(roomId, rowsOf(saved));
+        return store;
+    }
+
+    private static LinkedHashMap<String, Long> rowsOf(JSONObject saved) {
         LinkedHashMap<String, Long> rows = new LinkedHashMap<>();
         JSONObject ids = saved.optJSONObject("ids");
         if (ids != null) for (Iterator<String> it = ids.keys(); it.hasNext(); ) { String key = it.next(); rows.put(key, ids.optLong(key)); }
-        store.load(roomId, rows);
-        return store;
+        return rows;
+    }
+
+    /** Is this window the stored one (not a stand-in for a window that could not be read)? */
+    public static boolean persistent(Replay.MemoryStore store) { return !(store instanceof Store) || !((Store) store).standIn; }
+
+    /**
+     * A stand-in window tries to read the stored one again: when it can, the
+     * stored ids join the ones accepted meanwhile and the window is the
+     * stored one from now on (true). True also for a window that already is.
+     */
+    public synchronized boolean reloadReplay(String roomId, Replay.MemoryStore store) {
+        if (persistent(store)) return true;
+        JSONObject saved = backend.getStrict(replayName(roomId));
+        if (saved == null) return false;
+        ((Store) store).merge(roomId, rowsOf(saved));
+        ((Store) store).standIn = false;
+        return true;
     }
 
     /** Saves a room's window (while locked: kept, written at the unlock). */
@@ -324,8 +488,14 @@ public final class P4Store {
     static String replayName(String roomId) { return "p4.replay." + Rooms.hashKey(roomId == null ? "" : roomId); }
 
     static final class Store extends Replay.MemoryStore {
-        boolean standIn;
+        volatile boolean standIn;
         synchronized void load(String roomId, LinkedHashMap<String, Long> rows) { rooms.put(roomId, rows); }
+        /** The stored ids first (older), then those accepted while it could not be read. */
+        synchronized void merge(String roomId, LinkedHashMap<String, Long> stored) {
+            LinkedHashMap<String, Long> now = rooms.get(roomId);
+            if (now != null) for (Map.Entry<String, Long> e : now.entrySet()) stored.put(e.getKey(), e.getValue());
+            rooms.put(roomId, stored);
+        }
         synchronized JSONObject snapshot(String roomId) {
             JSONObject out = new JSONObject();
             Map<String, Long> r = rooms.get(roomId);

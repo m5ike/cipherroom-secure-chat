@@ -30,6 +30,13 @@ public final class ChatMessage {
     public String status = "received";
     public boolean verified;
     public boolean changed;
+    /**
+     * 6.12 review P09: the key id of the device the message came from (its
+     * channel's hello key, or a relayed item's sender key); "" when unknown —
+     * mine, older ones, the history (not stored). A "forwarded from" is
+     * checked against it, never against a claimed name alone.
+     */
+    public String senderKid = "";
     public String replyToId, replyToSender, replyToText;
     public String fileName, fileMime, fileDataUrl;
     public long fileSize;

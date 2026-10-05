@@ -65,6 +65,15 @@ final class PeerFacts {
 
     String userOf(String account) { String u = users.get(account); return u == null ? "" : u; }
 
+    /** 6.12 review P04: key transparency does not show this username for the peer's account — the claim is not shown. */
+    void dropUsername(String peerId) {
+        Facts f = peers.get(peerId);
+        if (f == null || f.username.isEmpty()) return;
+        String r = account(peerId);
+        if (!r.isEmpty() && f.username.equals(users.get(r))) users.remove(r);
+        f.username = "";
+    }
+
     List<Away> away() { return new ArrayList<>(away.values()); }
 
     void stats(String peerId, RtcStats.Summary s) { if (peers.containsKey(peerId)) of(peerId).stats = s; }

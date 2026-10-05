@@ -81,8 +81,19 @@ public final class RoomSession {
     private boolean joinSent = false;
     private ScheduledFuture<?> joinFallback;
     private volatile boolean proven = false;
+    /**
+     * 6.12 review S14: the server refused our proof (another key is registered
+     * for the room — squatted) and let us in without one; joins go without a
+     * proof until then (a refused proof counts against this address), and try
+     * it again afterwards (the owner may have reset the room's registration).
+     */
+    private long proofSkipUntil = 0;
+    private boolean legacyRetried = false;
+    static final long PROOF_RETRY_MS = 3600_000L;
     /** 6.12: messages held from a peer whose identity changed, until the user accepts it (§ 12.1). */
     private final Map<String, List<ChatMessage>> held = new HashMap<>();
+    /** Review P14: the ids of every held message (on a channel or relayed) — a quote of one shows no text (read by the UI). */
+    private final java.util.Set<String> heldIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Changed on the room's thread only; other threads (file transfers) read it under its lock. */
     final Map<String, Peer> peers = Collections.synchronizedMap(new LinkedHashMap<>());
     /** 6.1: file transfer v2. */
@@ -193,6 +204,7 @@ public final class RoomSession {
         // A server that sends no hello in time gets the join without a proof.
         hubNonce = "";
         joinSent = false;
+        legacyRetried = false;
         if (joinFallback != null) joinFallback.cancel(false);
         joinFallback = Io.TIMER.schedule(() -> post(() -> { if (w == ws && !joinSent) sendJoin(w); }), 4, TimeUnit.SECONDS);
         if (heartbeat != null) heartbeat.cancel(false);
@@ -212,11 +224,25 @@ public final class RoomSession {
                 .put("name", userName).put("peerId", myId.isEmpty() ? "peer-" + Crypto.hex(Crypto.random(12)) : myId).put("away", false)
                 .put("features", new JSONArray().put("bin")).put("foreground", foreground);
             if (!resumeSecret.isEmpty()) join.put("resume", resumeSecret);
-            JSONObject proof = hubProof(keys, hubNonce);
+            JSONObject proof = System.currentTimeMillis() < proofSkipUntil ? null : hubProof(keys, hubNonce);
             if (proof != null) join.put("proof", proof);
             w.send(join.toString());
             sentForeground = foreground;
         } catch (JSONException ignored) { }
+    }
+
+    /**
+     * Review S14: what to do with an `error` frame of code `code`: "legacy"
+     * (join again without the proof — `room-proof` when the server allows
+     * legacy joins: `legacyAllowed` true, or not said by an older server;
+     * once per socket), "refuse" (disconnect: proofs are required, or the
+     * legacy join was refused too) or "" (not about the proof).
+     */
+    static String proofRefusal(String code, Object legacyAllowed, boolean retried) {
+        if ("room-proof-required".equals(code)) return "refuse";
+        if (!"room-proof".equals(code)) return "";
+        if (retried || Boolean.FALSE.equals(legacyAllowed)) return "refuse";
+        return "legacy";
     }
 
     /** § 13: {pub, sig} = Ed25519 from hubSeed = RoomKeys.derive("m5cet/hub-auth/4", 32) over join(…, roomId, nonce); null without a nonce or for a plain-name room. */
@@ -239,7 +265,7 @@ public final class RoomSession {
             @Override public boolean send(String peerId, String text) { Peer p = peers.get(peerId); return p != null && p.send(text); }
             @Override public void delivered(String peerId, JSONObject payload, Envelopes.Signer signer, boolean pairSealed) {
                 Peer p = peers.get(peerId);
-                if (p != null) handleOpened(p, new Envelopes.Opened(payload, P4.VERSION, signer), pairSealed);
+                if (p != null) handleOpened(p, new Envelopes.Opened(payload, P4.VERSION, signer), pairSealed, true);
             }
             @Override public void established(String peerId) { onP4Established(peerId); }
             @Override public void rehello(String peerId) { Peer p = peers.get(peerId); if (p != null && p.open()) sendHello(p); }
@@ -252,8 +278,42 @@ public final class RoomSession {
         }, null);
         replayStore = dev.store.replay(keys.roomId);
         replay = new Replay.Guard(replayStore, 64);
-        dev.refreshKt(null);
+        if (!P4Store.persistent(replayStore)) Log.w("room", "the replay window cannot be read — only live chains are accepted until it can");
+        dev.refreshKt(() -> post(this::ktCheckPeers), identity);
         dev.upload(identity);
+    }
+
+    /** Key transparency is known now (its key pinned): attested peers that came before it are looked up (review P04). */
+    private void ktCheckPeers() {
+        if (p4 == null || !rooms.p4().ktOn()) return;
+        for (Peer p : new ArrayList<>(peers.values())) {
+            if (!p.attested || !p.kt.isEmpty()) continue;
+            p.kt = "checking";
+            p.ktKey = p.publicKey;
+            updateTrust(p);
+            ktLookup(p);
+        }
+        changed();
+    }
+
+    /**
+     * Review P10: the replay window fails closed. While the stored window
+     * cannot be read (a stand-in — locked when the room started, or a read
+     * error) a message is accepted only when it came on a live chain (the
+     * pair ratchet, a sender-key chain: they cannot be replayed); relayed and
+     * room-key envelopes wait (relayed items are not acknowledged, so the
+     * server delivers them again). Reads the stored window again when it can.
+     */
+    private boolean replayReady() {
+        if (replayStore == null || P4Store.persistent(replayStore)) return true;
+        if (rooms.p4().store.reloadReplay(keys.roomId, replayStore)) { Log.i("room", "the replay window is readable again"); return true; }
+        return false;
+    }
+
+    /** § 11: as {@link #freshMessage(ChatMessage, Object, boolean)}; `liveChain`: it came on a ratchet / sender-key chain (review P10). */
+    private boolean freshMessage(ChatMessage m, Object createdAt, boolean p4Message, boolean liveChain) {
+        if (!liveChain && !replayReady()) { Log.w("room", "message refused: the replay window cannot be read"); return false; }
+        return freshMessage(m, createdAt, p4Message);
     }
 
     /**
@@ -426,11 +486,24 @@ public final class RoomSession {
                     system(("room-blocked".equals(code) ? "⛔ " : "👥 ") + notice);
                     disconnect();
                 }
-                // 6.12 (§ 13): the server refused our proof of the room key — not a network problem to retry.
-                if ("room-proof".equals(code) || "room-proof-required".equals(code)) {
-                    notice = tr("room-proof".equals(code) ? "p4.roomProof" : "p4.roomProofRequired");
-                    system("⛔ " + notice);
-                    disconnect();
+                // 6.12 (§ 13): the server refused our proof of the room key. Review S14: a squatted room (another
+                // key registered first) does not lock us out — we join without the proof (legacy: the others see us
+                // unproven) unless the server says proofs are required; the server's owner can reset the room.
+                switch (proofRefusal(code, f.opt("legacyAllowed"), legacyRetried)) {
+                    case "legacy":
+                        legacyRetried = true;
+                        proofSkipUntil = System.currentTimeMillis() + PROOF_RETRY_MS;
+                        notice = tr("p4.roomProofLegacy");
+                        system("⚠ " + notice);
+                        joinSent = false;
+                        sendJoin(ws);
+                        break;
+                    case "refuse":
+                        notice = tr("room-proof".equals(code) ? "p4.roomProof" : "p4.roomProofRequired");
+                        system("⛔ " + notice);
+                        disconnect();
+                        break;
+                    default: break;
                 }
                 changed();
                 break;
@@ -455,6 +528,7 @@ public final class RoomSession {
         if (p4 != null) p4.peerGone(peerId);
         // Messages held behind a changed identity wait while the member is only away (6.7 held), and go when it left.
         List<ChatMessage> wasHeld = held ? null : this.held.remove(peerId);
+        if (wasHeld != null) for (ChatMessage m : wasHeld) heldIds.remove(m.id);
         if (wasHeld != null && p != null) system("⚠ " + p.name + ": " + tr("p4.heldDropped").replace("{n}", Integer.toString(wasHeld.size())));
         if (profiles != null) profiles.forget(peerId);
         if (p != null) {
@@ -564,7 +638,7 @@ public final class RoomSession {
         if (P4Room.isRoomEnvelope(raw)) {
             if (p4 == null || !p4.v4(p.id)) return;
             try {
-                handleOpened(p, new Envelopes.Opened(p4.openRoom(p.id, raw), P4.VERSION, p4.signer(p.id)), false);
+                handleOpened(p, new Envelopes.Opened(p4.openRoom(p.id, raw), P4.VERSION, p4.signer(p.id)), false, true);
             } catch (P4Error e) {
                 Log.w("room", "a protocol-4 room message did not open: " + e.code);
                 if (!"replay".equals(e.code)) system("⚠ " + p.name + ": undecryptable message");
@@ -583,7 +657,8 @@ public final class RoomSession {
             system("⚠ " + p.name + ": undecryptable message");
             return;
         }
-        handleOpened(p, opened, "pair".equals(SenderKeys.kind(raw)));
+        // A protocol-3 sender-key message came on a live chain (a replayed one finds no chain); pair and room envelopes did not.
+        handleOpened(p, opened, "pair".equals(SenderKeys.kind(raw)), "sender-key".equals(SenderKeys.kind(raw)));
     }
 
     /** The peer's current hello is protocol 4: it gets (and is heard in) protocol 4 only. */
@@ -602,6 +677,13 @@ public final class RoomSession {
         if (refused != null) { Log.w("room", "bad hello from " + p.id); return; }
         p.publicKey = raw.optString("pk");
         String proto = p4 == null ? "legacy" : p4.onHello(p.id, raw, people.account(p.id), System.currentTimeMillis());
+        if ("pending".equals(proto)) {
+            // Review P03: our hello v4 could not be made, and this peer speaks protocol 4 — once more; it is never
+            // spoken to in protocol 3 or under the room key meanwhile (what is for it waits for its protocol).
+            sendHello(p);
+            proto = p4.onHello(p.id, raw, people.account(p.id), System.currentTimeMillis());
+            if ("pending".equals(proto)) { Log.w("room", "no hello v4 for a protocol-4 peer — its messages wait"); p.protocol = ""; changed(); return; }
+        }
         p.downgrade = "downgrade".equals(proto);
         p.protocol = proto;
         if (p.downgrade) {
@@ -634,22 +716,43 @@ public final class RoomSession {
         changed();
     }
 
+    /**
+     * How a payload goes to one open peer whose hello came (review P03): "p4"
+     * (protocol 4 — the ratchet or our sender key, behind its session),
+     * "pair" (protocol 3, private), "sender-key" (protocol 3, room), "room"
+     * (the room-key envelope — an older peer without a pair key, room
+     * messages only, never to a device that spoke protocol 4) or "none" (a
+     * private message without a pair key, or such a device: nothing — the
+     * room key never carries what protocol 4 or a pair key should).
+     */
+    static String envelopeFor(boolean v4, boolean priv, boolean hasPair, boolean p4Seen) {
+        if (v4) return "p4";
+        if (hasPair) return priv ? "pair" : "sender-key";
+        return priv || p4Seen ? "none" : "room";
+    }
+
+    /** Did this peer's device key speak protocol 4 before (the downgrade mark, § 1)? */
+    private boolean p4Seen(Peer p) { return p4 != null && p.publicKey != null && !p.publicKey.isEmpty() && rooms.p4().store.p4Seen(p.publicKey); }
+
     /** One payload to one peer whose protocol is known — deliver's choice for that peer. */
     private void deliverTo(Peer p, JSONObject payload, boolean priv) {
         if (p.downgrade || !p.open()) return;
         String id = payload.optString("id");
-        if (isV4(p)) {
-            if (priv) { p4.sendPrivate(p.id, payload); return; }
-            try { p4.sendRoom(java.util.Collections.singletonList(p.id), id, payload.toString(), System.currentTimeMillis()); }
-            catch (P4Error e) { Log.w("room", "cannot seal a protocol-4 room message: " + e.getMessage()); }
-            return;
-        }
         JSONObject envelope;
-        if (priv && senderKeys.hasPair(p.id)) envelope = senderKeys.sealPrivate(keys, id, payload, myId, p.id, identity);
-        else if (senderKeys.hasPair(p.id)) {
-            if (!senderKeys.hasOurKey(p.id)) { JSONObject sk = senderKeys.senderKeyFor(keys, myId, p.id); if (sk != null) p.send(sk.toString()); }
-            envelope = senderKeys.sealLive(keys, id, payload, identity);
-        } else envelope = Envelopes.sealMessage(keys, id, payload, identity);
+        switch (envelopeFor(isV4(p), priv, senderKeys.hasPair(p.id), p4Seen(p))) {
+            case "p4":
+                if (priv) { p4.sendPrivate(p.id, payload); return; }
+                try { p4.sendRoom(java.util.Collections.singletonList(p.id), id, payload.toString(), System.currentTimeMillis()); }
+                catch (P4Error e) { Log.w("room", "cannot seal a protocol-4 room message: " + e.getMessage()); }
+                return;
+            case "pair": envelope = senderKeys.sealPrivate(keys, id, payload, myId, p.id, identity); break;
+            case "sender-key":
+                if (!senderKeys.hasOurKey(p.id)) { JSONObject sk = senderKeys.senderKeyFor(keys, myId, p.id); if (sk != null) p.send(sk.toString()); }
+                envelope = senderKeys.sealLive(keys, id, payload, identity);
+                break;
+            case "room": envelope = Envelopes.sealMessage(keys, id, payload, identity); break;
+            default: Log.w("room", "nothing sent to a peer without a key for it (no room-key fallback)"); return;
+        }
         if (envelope != null) p.send(envelope.toString());
     }
 
@@ -667,7 +770,7 @@ public final class RoomSession {
      * receipt, a chat message — checked for freshness and replay (§ 11),
      * held while the sender's identity is "changed" (§ 12.1).
      */
-    private void handleOpened(Peer p, Envelopes.Opened opened, boolean pairSealed) {
+    private void handleOpened(Peer p, Envelopes.Opened opened, boolean pairSealed, boolean liveChain) {
         // 6.7: a member's profile — only sealed for us alone (a pair envelope, or the ratchet).
         JSONObject profileFrame = profileFrame(opened.payload, p.id);
         if (profileFrame != null) { if (pairSealed) profiles().receive(p.id, profileFrame); return; }
@@ -679,8 +782,9 @@ public final class RoomSession {
         if (!seen.add(m.id)) return;
         while (seen.size() > 20_000) seen.remove(seen.iterator().next());
         if ("audio-status".equals(m.kind)) { p.audio = m.text; calls.onPeerAudio(p, m.text); changed(); return; }
-        if (!freshMessage(m, opened.payload.opt("createdAt"), opened.version == P4.VERSION)) return;
+        if (!freshMessage(m, opened.payload.opt("createdAt"), opened.version == P4.VERSION, liveChain)) return;
         m.roomKey = key;
+        m.senderKid = p.publicKey == null || p.publicKey.isEmpty() ? "" : Ec.kid(p.publicKey);
         // 6.7 S15: the pinned key, under its name — 6.12 § 12.1: and "verified" only when the person verified it.
         m.verified = Verified.p2p(opened.signer, p.publicKey, p.changed, m.senderName, p.name) && Trust.VERIFIED.equals(p.trust);
         m.changed = p.changed;
@@ -705,33 +809,86 @@ public final class RoomSession {
         boolean attested = acc != null && acc.valid;
         PeerFacts.Facts facts = people.get(p.id);
         String user = facts == null ? "" : facts.username;
+        P4Store store = rooms.p4().store;
         String namePin = attested ? rooms.pinVerdict(room, p.name, kid) : rooms.pin(room, p.name, kid);
-        String accountPin = attested ? rooms.p4().store.pinAccount(acc.publicKey, p.publicKey, user) : null;
+        String accountPin = attested ? store.pinAccount(acc.publicKey, p.publicKey, user) : null;
         if (attested && "new".equals(namePin)) rooms.pin(room, p.name, kid);
-        updateTrust(p, attested, accountPin, namePin);
+        // § 7.4 (review P01): the member's reference pins its account, independently of bundle expiry (first use;
+        // another account under the same reference later is not taken over — the person accepts it, People › verify).
+        String ref = people.account(p.id);
+        if (attested && !ref.isEmpty() && "changed".equals(store.pinRef(ref, acc.publicKey))) Log.w("room", "a member reference shows another account than the one pinned for it");
+        boolean accepted = "accepted".equals(p.kt) && p.publicKey.equals(p.ktKey); // the person accepted this device key's KT state
+        p.attested = attested;
+        p.accountPin = accountPin;
+        p.namePin = namePin;
+        // § 14.4 (review P04): an attested device is "account" / "verified" by its account only once key transparency confirms it.
+        p.kt = !attested || !rooms.p4().ktOn() ? "" : accepted ? "accepted" : "checking";
+        p.ktKey = p.publicKey;
+        updateTrust(p);
     }
 
-    private void updateTrust(Peer p, boolean attested, String accountPin, String namePin) {
-        Handshake.AccountCheck acc = p4 == null ? null : p4.account(p.id);
+    /** Review P04: key transparency confirms this attested peer's account and device — or this server runs none. */
+    private boolean ktConfirmed(Peer p) { return "ok".equals(p.kt) || p.kt.isEmpty() && !rooms.p4().ktOn(); }
+
+    /** The peer's identity state (§ 12.1) from its pins, the person's verifications and key transparency. */
+    private void updateTrust(Peer p) {
+        Handshake.AccountCheck acc = p4 == null || !p.attested ? null : p4.account(p.id);
+        P4Store store = rooms.p4().store;
         boolean devVerified = cz.m5cet.app.contacts.Store.verified(app, Ec.kid(p.publicKey));
-        boolean accVerified = attested && acc != null && rooms.p4().store.accountVerified(acc.publicKey);
-        boolean was = p.changed;
-        p.trust = Trust.of(attested, accountPin, namePin, devVerified, accVerified, "revoked".equals(p.kt));
+        boolean accVerified = acc != null && store.accountVerified(acc.publicKey);
+        // Review P08: a verified account is "verified" under the name it was verified under — under another, a warning.
+        String verifiedName = acc == null ? "" : store.accountVerifiedName(acc.publicKey);
+        boolean nameOk = Trust.verifiedUnder(verifiedName, p.name);
+        boolean wasChanged = p.changed, wasOther = !p.verifiedAs.isEmpty();
+        p.verifiedAs = accVerified && !nameOk && !devVerified ? verifiedName : "";
+        p.trust = Trust.of(p.attested && acc != null, p.accountPin, p.namePin, devVerified, accVerified && nameOk, "revoked".equals(p.kt), ktConfirmed(p));
         p.changed = Trust.CHANGED.equals(p.trust);
-        if (p.changed && !was) system("⚠ " + p.name + ": " + tr("p4.identityChanged"));
+        if (p.changed && !wasChanged) system("⚠ " + p.name + ": " + tr("p4.identityChanged"));
+        if (!p.verifiedAs.isEmpty() && !wasOther) system("⚠ " + p.name + ": " + tr("p4.trust.otherName").replace("{name}", p.verifiedAs));
     }
 
     /** A message from a peer whose identity changed: kept out of the conversation until the person accepts (§ 12.1). */
     private void hold(Peer p, ChatMessage m) {
         List<ChatMessage> list = held.computeIfAbsent(p.id, k -> new ArrayList<>());
         list.add(m);
-        while (list.size() > 200) list.remove(0);
+        heldIds.add(m.id);
+        while (list.size() > 200) heldIds.remove(list.remove(0).id);
         if (list.size() == 1) system("⚠ " + p.name + ": " + tr("p4.held"));
         changed();
     }
 
-    /** How many messages of this peer are held (§ 12.1). */
-    public int heldCount(String peerId) { List<ChatMessage> l = held.get(peerId); return l == null ? 0 : l.size(); }
+    /** Review P14: is this message held (its sender's identity changed, not accepted yet)? A quote of it shows no text. */
+    public boolean isHeld(String messageId) { return messageId != null && heldIds.contains(messageId); }
+
+    /**
+     * Review P14: relayed messages from a changed identity (§ 12.1) are held
+     * too — not shown, quoted, previewed or notified — by the sender's device
+     * key, until the person accepts that key (People › verify, when the member
+     * is here) or the room is left.
+     */
+    private final Map<String, List<ChatMessage>> relayHeld = Collections.synchronizedMap(new LinkedHashMap<>());
+
+    private void holdRelayed(String kid, ChatMessage m) {
+        int n;
+        synchronized (relayHeld) {
+            List<ChatMessage> list = relayHeld.computeIfAbsent(kid, k -> new ArrayList<>());
+            list.add(m);
+            heldIds.add(m.id);
+            while (list.size() > 200) heldIds.remove(list.remove(0).id);
+            while (relayHeld.size() > 50) for (ChatMessage x : relayHeld.remove(relayHeld.keySet().iterator().next())) heldIds.remove(x.id);
+            n = list.size();
+        }
+        if (n == 1) system("⚠ " + m.senderName + ": " + tr("p4.held"));
+        changed();
+    }
+
+    /** How many messages of this peer are held (§ 12.1) — on its channel, and relayed ones of its device key. */
+    public int heldCount(String peerId) {
+        List<ChatMessage> l = held.get(peerId);
+        Peer p = peers.get(peerId);
+        List<ChatMessage> r = p == null || p.publicKey == null || p.publicKey.isEmpty() ? null : relayHeld.get(Ec.kid(p.publicKey));
+        return (l == null ? 0 : l.size()) + (r == null ? 0 : r.size());
+    }
 
     /**
      * People › verify: the person compared the safety number (on) or took the
@@ -748,58 +905,111 @@ public final class RoomSession {
             PeerFacts.Facts facts = people.get(p.id);
             String user = facts == null ? "" : facts.username;
             if (on) {
-                rooms.repin(room, p.name, Ec.kid(p.publicKey));
-                if (attested) { rooms.p4().store.acceptAccount(acc.publicKey, p.publicKey, user); rooms.p4().store.setAccountVerified(acc.publicKey, true); }
-                p.kt = "revoked".equals(p.kt) ? "accepted" : p.kt;
-                updateTrust(p, attested, attested ? "match" : null, "match");
+                String kid = Ec.kid(p.publicKey);
+                rooms.repin(room, p.name, kid);
+                if (attested) {
+                    P4Store store = rooms.p4().store;
+                    store.acceptAccount(acc.publicKey, p.publicKey, user);
+                    store.setAccountVerified(acc.publicKey, true, p.name); // review P08: under this name
+                    String ref = people.account(p.id);
+                    if (!ref.isEmpty()) store.repinRef(ref, acc.publicKey); // § 7.4: the member's away messages follow
+                }
+                if ("revoked".equals(p.kt)) { p.kt = "accepted"; p.ktKey = p.publicKey; }
+                p.accountPin = attested ? "match" : null;
+                p.namePin = "match";
+                updateTrust(p);
                 List<ChatMessage> list = held.remove(peerId);
-                if (list != null) for (ChatMessage m : list) { m.changed = false; add(m, true); }
+                List<ChatMessage> relayed = relayHeld.remove(kid);
+                if (list != null) for (ChatMessage m : list) { heldIds.remove(m.id); m.changed = false; add(m, true); }
+                if (relayed != null) for (ChatMessage m : relayed) { heldIds.remove(m.id); m.changed = false; add(m, true); }
             } else {
                 if (attested) rooms.p4().store.setAccountVerified(acc.publicKey, false);
-                updateTrust(p, attested, attested ? "match" : null, "match");
+                updateTrust(p);
             }
             changed();
         });
     }
 
-    /** § 14.4: an attested peer's device against key transparency (the hub's kt-lookup by its room reference). */
+    /**
+     * § 14.4 (review P04): an attested peer's account and device against key
+     * transparency — by the hub's kt-lookup of its room reference, or by the
+     * username its (signed) hello names. Without either it stays unconfirmed.
+     */
     private void ktLookup(Peer p) {
-        Handshake.AccountCheck acc = p4 == null ? null : p4.account(p.id);
-        String ref = people.account(p.id);
+        Handshake.AccountCheck acc = p4 == null || !p.attested ? null : p4.account(p.id);
         P4Device dev = rooms.p4();
-        if (acc == null || !acc.valid || ref.isEmpty() || dev.kt.key(dev.origin()) == null) return;
-        try { sendServer(new JSONObject().put("type", "kt-lookup").put("ref", ref)); } catch (JSONException ignored) { }
+        if (acc == null || !acc.valid || !dev.ktOn()) return;
+        String ref = people.account(p.id);
+        if (!ref.isEmpty()) {
+            try { sendServer(new JSONObject().put("type", "kt-lookup").put("ref", ref)); } catch (JSONException ignored) { }
+            return;
+        }
+        PeerFacts.Facts facts = people.get(p.id);
+        String user = facts == null ? "" : facts.username;
+        String pk = p.publicKey, apk = acc.publicKey;
+        if (user.isEmpty()) { applyKt(p, pk, apk, null, ""); return; }
+        Io.bg(() -> {
+            Kt.Checked c = dev.lookupUser(user);
+            post(() -> applyKt(p, pk, apk, c, user));
+        });
     }
 
+    /**
+     * The hub's kt-lookup answer for a member reference: checked once (its
+     * head against ours), then it serves the peers of that reference and the
+     * relay (§ 7.4: directory devices need it).
+     */
     private void onKtLookup(JSONObject f) {
         String ref = f.optString("ref");
-        JSONObject lookup = f.optJSONObject("lookup");
-        if (ref.isEmpty() || lookup == null) return; // key transparency is not running there
+        if (ref.isEmpty()) return;
+        JSONObject lookup = f.optJSONObject("lookup"); // null: key transparency is not running there
         P4Device dev = rooms.p4();
-        for (Peer p : new ArrayList<>(peers.values())) {
-            Handshake.AccountCheck acc = p4 == null ? null : p4.account(p.id);
-            if (!ref.equals(people.account(p.id)) || acc == null || !acc.valid) continue;
-            PeerFacts.Facts facts = people.get(p.id);
-            String user = facts == null ? "" : facts.username;
-            String pk = p.publicKey, apk = acc.publicKey;
-            Io.bg(() -> {
-                Kt.Checked c = dev.kt.lookup(dev.origin(), lookup, user.isEmpty() ? null : Kt.user(user), dev.fetcher());
-                String state;
-                if (!c.ok) state = "unverifiable";
-                else {
-                    Kt.Status st = Kt.deviceStatus(c.entries, apk, pk, System.currentTimeMillis());
-                    boolean logged = false;
-                    for (Kt.Entry e : c.entries) if ("acct".equals(e.entry.optString("t"))) logged = true;
-                    state = st.ok ? "ok" : st.revoked || (logged && !st.account) ? "revoked" : "missing";
+        Io.bg(() -> {
+            Kt.Checked c = lookup == null ? null : dev.kt.lookup(dev.origin(), lookup, null, dev.fetcher());
+            post(() -> {
+                relay.onKt(ref, c, System.currentTimeMillis());
+                sendWaitingRelays();
+                for (Peer p : new ArrayList<>(peers.values())) {
+                    Handshake.AccountCheck acc = p4 == null || !p.attested ? null : p4.account(p.id);
+                    if (!ref.equals(people.account(p.id)) || acc == null || !acc.valid) continue;
+                    PeerFacts.Facts facts = people.get(p.id);
+                    applyKt(p, p.publicKey, acc.publicKey, lookup == null ? null : c, facts == null ? "" : facts.username);
                 }
-                post(() -> {
-                    if (peers.get(p.id) != p || "accepted".equals(p.kt)) return;
-                    p.kt = state;
-                    if ("revoked".equals(state)) updateTrust(p, true, "match", "match");
-                    changed();
-                });
             });
+        });
+    }
+
+    /**
+     * What a checked lookup says of a peer's device: ok, missing, revoked
+     * (or its account key replaced) or unverifiable; a username its hello
+     * claims that the log does not show for the account is not shown.
+     */
+    private void applyKt(Peer p, String pk, String apk, Kt.Checked c, String user) {
+        if (peers.get(p.id) != p || pk == null || !pk.equals(p.publicKey) || "accepted".equals(p.kt)) return;
+        p.kt = ktState(c, apk, pk, System.currentTimeMillis());
+        p.ktKey = pk;
+        if (c != null && c.ok && !user.isEmpty() && !userShown(c.entries, user)) {
+            Log.w("room", "key transparency does not show the username a hello claims — not shown");
+            people.dropUsername(p.id);
         }
+        updateTrust(p);
+        changed();
+    }
+
+    /** Pure: a peer device's key-transparency word from a checked lookup (null or not ok: unverifiable). */
+    static String ktState(Kt.Checked c, String apk, String pk, long now) {
+        if (c == null || !c.ok) return "unverifiable";
+        Kt.Status st = Kt.deviceStatus(c.entries, apk, pk, now);
+        boolean logged = false;
+        for (Kt.Entry e : c.entries) if ("acct".equals(e.entry.optString("t"))) logged = true;
+        return st.ok ? "ok" : st.revoked || (logged && !st.account) ? "revoked" : "missing";
+    }
+
+    /** Do the entries name this username's user (u)? True when there are none to tell. */
+    static boolean userShown(List<Kt.Entry> entries, String username) {
+        String u = Kt.user(username);
+        for (Kt.Entry e : entries) if (!u.equals(e.entry.optString("u"))) return false;
+        return true;
     }
 
     /** "@name" mentions in a text (a relayed message to an away member named so wakes them as a mention). */
@@ -980,7 +1190,7 @@ public final class RoomSession {
             }
         }
         // 6.12: a room message also goes to the members who are away (the relay, sealed per device — § 7.4).
-        if (targets == null) relayToAway(payload, mentionNames(m.text));
+        if (targets == null) relayToAway(payload, mentionNames(m.text), m);
         rooms.messageChanged(this, m);
         scheduleExpiry();
     }
@@ -1027,26 +1237,28 @@ public final class RoomSession {
                 if (p.beforeHello.size() < 200) { p.beforeHello.add(new Object[]{payload, targets != null}); sent++; }
                 continue;
             }
-            if (isV4(p)) {
-                if (targets != null) { if (p4.sendPrivate(p.id, payload)) sent++; }
-                else v4Room.add(p.id);
-                continue;
-            }
             JSONObject envelope;
-            if (targets != null && senderKeys.hasPair(p.id)) {
-                envelope = senderKeys.sealPrivate(keys, id, payload, myId, p.id, identity);
-            } else if (senderKeys.hasPair(p.id)) {
-                if (!senderKeys.hasOurKey(p.id)) {
-                    JSONObject sk = senderKeys.senderKeyFor(keys, myId, p.id);
-                    if (sk != null) p.send(sk.toString());
-                }
-                if (live == null) live = senderKeys.sealLive(keys, id, payload, identity);
-                envelope = live;
-            } else {
-                if (roomEnvelope == null) roomEnvelope = Envelopes.sealMessage(keys, id, payload, identity);
-                envelope = roomEnvelope;
+            switch (envelopeFor(isV4(p), targets != null, senderKeys.hasPair(p.id), p4Seen(p))) {
+                case "p4":
+                    if (targets != null) { if (p4.sendPrivate(p.id, payload)) sent++; }
+                    else v4Room.add(p.id);
+                    continue;
+                case "pair": envelope = senderKeys.sealPrivate(keys, id, payload, myId, p.id, identity); break;
+                case "sender-key":
+                    if (!senderKeys.hasOurKey(p.id)) {
+                        JSONObject sk = senderKeys.senderKeyFor(keys, myId, p.id);
+                        if (sk != null) p.send(sk.toString());
+                    }
+                    if (live == null) live = senderKeys.sealLive(keys, id, payload, identity);
+                    envelope = live;
+                    break;
+                case "room":
+                    if (roomEnvelope == null) roomEnvelope = Envelopes.sealMessage(keys, id, payload, identity);
+                    envelope = roomEnvelope;
+                    break;
+                default: continue; // review P03: no room-key fallback (a private message, or a device that spoke protocol 4)
             }
-            if (p.send(envelope.toString())) sent++;
+            if (envelope != null && p.send(envelope.toString())) sent++;
         }
         if (!v4Room.isEmpty()) {
             try { sent += p4.sendRoom(v4Room, id, payload.toString(), System.currentTimeMillis()); }
@@ -1094,11 +1306,14 @@ public final class RoomSession {
 
     /**
      * 6.12 (§ 7.4): a room message for the signed-in members who are away —
-     * each sealed for every known device of theirs (the key directory over the
-     * hub, the bundles their hellos showed), the protocol-3 room envelope only
-     * for those without any. Waits up to 3 s for the directory.
+     * each sealed for every TRUSTED device of theirs (review P01: the devices
+     * pinned from their hellos; the key directory's only for an account this
+     * device pinned for the member, confirmed by key transparency), the
+     * protocol-3 room envelope for the others. Waits up to 3 s for the
+     * directory and the lookups. `m`: the message, whose info names who got
+     * which form (null: none).
      */
-    private void relayToAway(JSONObject payload, List<String> mentionNames) {
+    private void relayToAway(JSONObject payload, List<String> mentionNames, ChatMessage message) {
         if (keys == null || !connected()) return;
         java.util.Set<String> here = new java.util.HashSet<>();
         for (Peer p : new ArrayList<>(peers.values())) if (p.open()) { String a = people.account(p.id); if (!a.isEmpty()) here.add(a); }
@@ -1112,13 +1327,19 @@ public final class RoomSession {
         if (refs.isEmpty()) return;
         String id = payload.optString("id");
         long now = System.currentTimeMillis();
-        boolean waiting = false;
+        P4Device dev = rooms.p4();
+        boolean ktOn = dev.ktOn(), waiting = false;
         for (String ref : refs) {
             if (relay.shouldAsk(ref, now)) { sendServer(P4Relay.askFrame(ref)); waiting = true; }
             else if (!relay.known(ref, now)) waiting = true;
+            // Review P01: a directory device of the member's pinned account needs key transparency's word too.
+            if (ktOn && !dev.store.refAccount(ref).isEmpty()) {
+                if (relay.shouldAskKt(ref, now)) { sendServer(P4Relay.ktFrame(ref)); waiting = true; }
+                else if (!relay.ktKnown(ref, now)) waiting = true;
+            }
         }
-        if (!waiting) { sendRelay(id, payload, refs, mention); return; }
-        relayWaiting.put(id, new Object[]{payload, refs, mention});
+        if (!waiting) { sendRelay(id, payload, refs, mention, message); return; }
+        relayWaiting.put(id, new Object[]{payload, refs, mention, message});
         while (relayWaiting.size() > 100) relayWaiting.remove(relayWaiting.keySet().iterator().next());
         Io.TIMER.schedule(() -> post(() -> {
             Object[] w = relayWaiting.remove(id);
@@ -1127,40 +1348,72 @@ public final class RoomSession {
     }
 
     @SuppressWarnings("unchecked")
-    private void sendRelayParked(String id, Object[] w) { sendRelay(id, (JSONObject) w[0], (List<String>) w[1], (List<String>) w[2]); }
+    private void sendRelayParked(String id, Object[] w) { sendRelay(id, (JSONObject) w[0], (List<String>) w[1], (List<String>) w[2], (ChatMessage) w[3]); }
 
-    /** The hub's key-bundles answer: cached, and the relayed messages that waited for it go. */
-    private void onKeyBundles(JSONObject f) {
-        String ref = relay.onKeyBundles(f, System.currentTimeMillis(), apk -> rooms.p4().store.accountAllowed(apk, people.userOf(f.optString("ref"))));
-        // (an account key that is not the one pinned for the user's name is not sealed to — § 12.1 "changed")
-        if (ref.isEmpty()) return;
+    /** Every reference of a waiting message has its directory answer (and its lookup, where one is needed)? */
+    private boolean relayReady(List<String> refs, long now) {
+        P4Device dev = rooms.p4();
+        boolean ktOn = dev.ktOn();
+        for (String r : refs) {
+            if (!relay.known(r, now)) return false;
+            if (ktOn && !dev.store.refAccount(r).isEmpty() && !relay.ktKnown(r, now)) return false;
+        }
+        return true;
+    }
+
+    /** The relayed messages whose answers are all in go now. */
+    private void sendWaitingRelays() {
         long now = System.currentTimeMillis();
         for (String id : new ArrayList<>(relayWaiting.keySet())) {
             Object[] w = relayWaiting.get(id);
             @SuppressWarnings("unchecked") List<String> refs = (List<String>) w[1];
-            boolean all = true;
-            for (String r : refs) if (!relay.known(r, now)) all = false;
-            if (all) { relayWaiting.remove(id); sendRelayParked(id, w); }
+            if (relayReady(refs, now)) { relayWaiting.remove(id); sendRelayParked(id, w); }
         }
     }
 
-    private void sendRelay(String id, JSONObject payload, List<String> refs, List<String> mention) {
+    /** The hub's key-bundles answer: cached (checked when sealing — § 7.4), and the relayed messages that waited for it go. */
+    private void onKeyBundles(JSONObject f) {
+        String ref = relay.onKeyBundles(f, System.currentTimeMillis());
+        if (!ref.isEmpty()) sendWaitingRelays();
+    }
+
+    private void sendRelay(String id, JSONObject payload, List<String> refs, List<String> mention, ChatMessage message) {
         if (keys == null) return;
         long now = System.currentTimeMillis();
-        Map<String, List<P4Relay.Device>> devices = new HashMap<>();
-        for (String ref : refs) devices.put(ref, relay.devices(ref, rooms.p4().store.bundlesOfRef(ref, now), now));
         P4Device dev = rooms.p4();
+        boolean ktOn = dev.ktOn();
+        Map<String, List<P4Relay.Device>> devices = new HashMap<>();
+        for (String ref : refs) devices.put(ref, relay.devices(ref, dev.store.refAccount(ref), dev.store.devicesOfRef(ref), ktOn, now));
         Mailbox box = dev.mailbox(identity);
         JSONObject sacc = dev.account(identity);
         String json = payload.toString();
         try {
+            List<String> sealed = new ArrayList<>();
             JSONObject frame = P4Relay.frame(id, refs, devices,
                 d -> box.seal(keys.roomId, id, json, d.pk, d.bundle, sacc, now),
-                () -> Envelopes.sealMessage(keys, id, payload, identity), mention);
-            if (frame != null) sendServer(frame);
+                () -> Envelopes.sealMessage(keys, id, payload, identity), mention, sealed);
+            if (frame == null) return;
+            sendServer(frame);
+            if (message != null) markRelayed(message, frame.optJSONArray("to"), sealed);
         } catch (JSONException e) {
             Log.w("room", "relay frame: " + e.getMessage());
         }
+    }
+
+    /** § 7.4: the message's info names who got which form — sealed for their devices (protocol 4), or under the room key (protocol 3). */
+    private void markRelayed(ChatMessage m, JSONArray to, List<String> sealed) {
+        if (to == null) return;
+        Map<String, String> names = new HashMap<>();
+        for (PeerFacts.Away a : people.away()) names.put(a.account, a.name);
+        List<String> p4Names = new ArrayList<>(), roomNames = new ArrayList<>();
+        for (int i = 0; i < to.length(); i++) {
+            String ref = to.optString(i);
+            String name = names.containsKey(ref) ? names.get(ref) : "?";
+            (sealed.contains(ref) ? p4Names : roomNames).add(name);
+        }
+        if (!p4Names.isEmpty()) m.mark("relay-p4", String.join(", ", p4Names));
+        if (!roomNames.isEmpty()) m.mark("relay-room", String.join(", ", roomNames));
+        rooms.messageChanged(this, m);
     }
 
     /**
@@ -1172,6 +1425,7 @@ public final class RoomSession {
         if (items == null || keys == null) return;
         JSONArray ack = new JSONArray();
         long now = System.currentTimeMillis();
+        boolean waitForReplay = false;
         for (int i = 0; i < items.length() && i < 500; i++) {
             JSONObject it = items.optJSONObject(i);
             if (it == null) continue;
@@ -1182,27 +1436,21 @@ public final class RoomSession {
                 ack.put(itemId);
                 continue;
             }
+            // Review P10: a relayed message can be replayed — not while the replay window cannot be read. Not
+            // acknowledged: the server delivers it again (the next connection).
+            if (waitForReplay || !replayReady()) { waitForReplay = true; continue; }
             JSONObject env = it.optJSONObject("envelope");
             JSONObject from = it.optJSONObject("from");
             if (env == null || from == null) { ack.put(itemId); continue; }
             Envelopes.Opened opened;
-            String pinnedKid = "";
-            boolean changedKey = false;
             if (P4Relay.isP4(env)) {
                 Mailbox.Opened o;
                 try { o = rooms.p4().mailbox(identity).open(env, keys.roomId, now); }
                 catch (P4Error e) { Log.w("room", "a relayed protocol-4 message did not open: " + e.code); ack.put(itemId); continue; }
                 if (o == null) continue; // not for this device: another device of the account may open it
                 Handshake.AccountCheck acc = Handshake.verifyAccount(o.sacc, o.spk, now);
-                rooms.p4().store.rememberBundle(o.spk, o.senderBundle, null);
+                rooms.p4().store.updateBundle(o.spk, o.senderBundle); // a pinned device's newer bundle; never a new pin
                 opened = new Envelopes.Opened(o.payload, P4.VERSION, new Envelopes.Signer(o.spk, true, acc == null ? null : acc.publicKey, acc != null && acc.valid));
-                // § 7.3: the sender's key against the pins — an attested device is its account's (pinned across
-                // rooms by account key); an unattested one is the name's pin in this room.
-                if (acc == null || !acc.valid) {
-                    String name = Payloads.clean(o.payload.opt("senderName"), Payloads.NAME, from.optString("name"));
-                    pinnedKid = rooms.pinned(room, name);
-                    changedKey = !pinnedKid.isEmpty() && !pinnedKid.equals(Ec.kid(o.spk));
-                }
             } else {
                 try { opened = Envelopes.openMessage(keys, env); }
                 catch (GeneralSecurityException e) { continue; } // not acknowledged: another key may open it later
@@ -1210,28 +1458,42 @@ public final class RoomSession {
             ack.put(itemId);
             ChatMessage m = Payloads.validate(opened.payload, from.optString("peerId"), myId);
             if (m == null || !seen.add(m.id) || "audio-status".equals(m.kind)) continue;
-            if (!freshMessage(m, opened.payload.opt("createdAt"), opened.version == P4.VERSION)) continue;
+            if (!freshMessage(m, opened.payload.opt("createdAt"), opened.version == P4.VERSION, false)) continue;
             m.roomKey = key;
             m.relayed = true;
-            if (opened.version == P4.VERSION) {
-                m.changed = changedKey;
-                m.verified = !changedKey && trustOfRelayed(opened.signer);
-            } else {
-                m.verified = Verified.relay(opened.signer, rooms.pinned(room, m.senderName)) && cz.m5cet.app.contacts.Store.verified(app, Ec.kid(opened.signer.publicKey)); // 6.7 S15 + 6.12 § 12.1
-            }
+            // § 7.3 / § 12.1: the sender's key against the pins (an attested device is its account's, across rooms;
+            // an unattested one the name's pin in this room) — nothing is pinned from a relayed message.
+            Envelopes.Signer s = opened.signer;
+            boolean signed = s != null && s.valid && s.publicKey != null && !s.publicKey.isEmpty();
+            String state = signed ? relayedTrust(s.publicKey, s.accountValid ? s.accountKey : null, m.senderName) : Trust.NEW;
+            m.senderKid = signed ? Ec.kid(s.publicKey) : "";
+            m.changed = Trust.CHANGED.equals(state);
+            m.verified = Trust.VERIFIED.equals(state) && (opened.version == P4.VERSION || Verified.relay(s, rooms.pinned(room, m.senderName))); // 6.7 S15 + 6.12 § 12.1
             if (m.expired(System.currentTimeMillis())) continue;
             arrived(m, "relay");
+            // Review P14: a changed identity's message is held — not shown, quoted, previewed or notified — until accepted.
+            if (m.changed) { holdRelayed(m.senderKid, m); continue; }
             add(m, true);
         }
+        if (waitForReplay) Log.w("room", "relayed messages wait: the replay window cannot be read");
         if (ack.length() > 0) try { sendServer(new JSONObject().put("type", "relay-ack").put("ids", ack)); } catch (JSONException ignored) { }
         scheduleExpiry();
     }
 
-    /** A relayed protocol-4 sender the person verified (its device key, or its account). */
-    private boolean trustOfRelayed(Envelopes.Signer s) {
-        if (s == null) return false;
-        if (cz.m5cet.app.contacts.Store.verified(app, Ec.kid(s.publicKey))) return true;
-        return s.accountValid && rooms.p4().store.accountVerified(s.accountKey);
+    /**
+     * A relayed sender's identity state (§ 12.1) — `apk` its valid account
+     * attestation (or null): as a peer's, from the pins as they are (none is
+     * made), the person's verifications (review P08: an account's under the
+     * name it was verified under).
+     */
+    private String relayedTrust(String spk, String apk, String name) {
+        String kid = Ec.kid(spk);
+        P4Store store = rooms.p4().store;
+        boolean attested = apk != null && !apk.isEmpty();
+        String verifiedName = attested ? store.accountVerifiedName(apk) : "";
+        boolean accVerified = attested && store.accountVerified(apk) && Trust.verifiedUnder(verifiedName, name);
+        return Trust.of(attested, attested ? store.accountKnown(apk) : null, rooms.pinVerdict(room, name, kid),
+            cz.m5cet.app.contacts.Store.verified(app, kid), accVerified, false);
     }
 
     /** relay-status: stored / forwarded / delivered / read for a message of mine (rejected: a notice). */
@@ -1570,6 +1832,16 @@ public final class RoomSession {
         return m;
     }
 
+    /**
+     * Review P09: is this message's "forwarded from X" backed by the original
+     * here — the same text from the key pinned for X in this room (or mine)?
+     * Checked by key, never by the claimed name alone (Verified.forward).
+     */
+    public boolean forwardVerified(ChatMessage m) {
+        if (m == null || m.forwardedFrom == null || m.forwardedFrom.isEmpty()) return false;
+        return Verified.forward(m, messagesCopy(), rooms.pinned(room, m.forwardedFrom), userName);
+    }
+
     /** A message of this room by id (null: not here). */
     public ChatMessage message(String id) {
         if (id == null) return null;
@@ -1797,7 +2069,9 @@ public final class RoomSession {
         }
         boolean legacy = "legacy".equals(p.protocol);
         Boolean pr = people.proven(p.id);
-        u.put("trust", p.trust).put("trustLabel", tr("p4.trust." + p.trust)).put("protocol", "v4".equals(p.protocol) ? "p4" : p.protocol)
+        // Review P08: a verified account under another name than it was verified under says so.
+        String trustLabel = p.verifiedAs.isEmpty() ? tr("p4.trust." + p.trust) : tr("p4.trust.otherName").replace("{name}", p.verifiedAs);
+        u.put("trust", p.trust).put("trustLabel", trustLabel).put("verifiedAs", p.verifiedAs).put("protocol", "v4".equals(p.protocol) ? "p4" : p.protocol)
             .put("legacy", legacy).put("protocolLabel", legacy ? tr("p4.legacy") : "v4".equals(p.protocol) ? tr("p4.protocol4") : "")
             .put("downgrade", p.downgrade).put("proven", pr == null ? JSONObject.NULL : pr).put("unproven", Boolean.FALSE.equals(pr))
             .put("held", heldCount(p.id)).put("kt", p.kt)

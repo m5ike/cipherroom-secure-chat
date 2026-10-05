@@ -48,8 +48,19 @@ final class Peer {
     boolean downgrade;
     /** 6.12 § 12.1: new, verified, account or changed (Trust). */
     String trust = Trust.NEW;
-    /** 6.12 § 14.4: what key transparency says of its attested device: "" (not checked), ok, missing, revoked. */
+    /**
+     * 6.12 § 14.4: what key transparency says of its attested device: "" (not
+     * checked: not attested, or the server runs none), checking, ok, missing,
+     * unverifiable, revoked (accepted: the person accepted it anyway).
+     */
     String kt = "";
+    /** The device key `kt` is about. */
+    String ktKey = "";
+    /** 6.12: its hello v4 carried a valid account certificate; the pins' verdicts for it (Trust.of). */
+    boolean attested;
+    String accountPin, namePin = "new";
+    /** Review P08: the name its account was verified under, when it shows another one now ("" otherwise). */
+    String verifiedAs = "";
     /** The caps its hello listed. */
     org.json.JSONArray caps;
     /** 6.12: payloads for it before its hello said which protocol it speaks ({payload, private?}); sent then. */

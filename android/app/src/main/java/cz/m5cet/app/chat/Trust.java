@@ -18,21 +18,39 @@ final class Trust {
     static final String NEW = "new", VERIFIED = "verified", ACCOUNT = "account", CHANGED = "changed";
 
     /**
+     * Review P08: an account the person verified under `verifiedName` counts
+     * as verified under display name `name` only when it is that name ("" —
+     * verified before the fix, the name unknown — any name).
+     */
+    static boolean verifiedUnder(String verifiedName, String name) {
+        return verifiedName == null || verifiedName.isEmpty() || Verified.sameName(verifiedName, name);
+    }
+
+    /** Without the key-transparency gate (a server without key transparency, a relayed message). */
+    static String of(boolean attested, String accountPin, String namePin, boolean deviceVerified, boolean accountVerified, boolean ktRevoked) {
+        return of(attested, accountPin, namePin, deviceVerified, accountVerified, ktRevoked, true);
+    }
+
+    /**
      * @param attested     the hello's account certificate is valid for this device key
      * @param accountPin   the account pin's verdict for an attested device: new, match, changed (null when not attested)
      * @param namePin      the (room, name) pin's verdict: new, match, changed
      * @param deviceVerified the person verified this device key (safety number)
-     * @param accountVerified the person verified the account
+     * @param accountVerified the person verified the account — under the name it shows now (review P08)
      * @param ktRevoked    key transparency shows this device revoked, or the account key replaced
+     * @param ktConfirmed  key transparency confirms the account and the device (a verified lookup includes both),
+     *                     or this server runs no key transparency — § 14.4 / review P04: without it an attested
+     *                     device is never "account" or "verified" by its account, only "new" (its device key on first use)
      */
-    static String of(boolean attested, String accountPin, String namePin, boolean deviceVerified, boolean accountVerified, boolean ktRevoked) {
+    static String of(boolean attested, String accountPin, String namePin, boolean deviceVerified, boolean accountVerified, boolean ktRevoked, boolean ktConfirmed) {
         if (ktRevoked) return CHANGED;
         if (attested) {
             if ("changed".equals(accountPin)) return CHANGED;
             // A first-seen account under a name pinned to another, unattested key: as a changed key.
             if ("new".equals(accountPin) && "changed".equals(namePin)) return CHANGED;
-            if (accountVerified || deviceVerified) return VERIFIED;
-            return ACCOUNT;
+            if (deviceVerified) return VERIFIED;
+            if (!ktConfirmed) return NEW;
+            return accountVerified ? VERIFIED : ACCOUNT;
         }
         if ("changed".equals(namePin)) return CHANGED;
         return deviceVerified ? VERIFIED : NEW;
