@@ -94,25 +94,141 @@ Operace: `send()` (`message.send` — `SendPlan.step`, příkaz přes `FnEngine.
 * `MessageFiles` (jádro nad `Platform/Files/FileVault`): `store(_:)`, `store(contentsOf:)`, `read(_:)`,
   `temporaryCopy(_:name:)` + `discard(_:)` (share sheet, Quick Look).
 * `PositionSource` (jádro nad `Platform/Location`): `permitted`, `recent()`, `current() async` (`{lat, lon, acc, at}`).
-* `ScreenVariables`: `register(screen, name) { DesignValue }` — proměnné obrazovek, které patří částem.
+* `ScreenVariables`: `register(screen, name) { DesignValue }`, nebo `register(screen, name, window: { host in … })` pro hodnotu
+  okna, ve kterém se obrazovka kreslí (`$profile` nad `$form` toho okna). Proměnné částí **přebíjejí** hodnoty jádra
+  (`AppScreenState` je skládá přes své), `$users` (`room`, `call`) dělá jen People. Když se `CoreModels.shared` vymění
+  (náhled → skutečné jádro), registrace částí se převezmou (`ScreenVariables.adopt`).
 * `ToolsModel`: `nfcAvailable`, `voiceAvailable`, `aiAvailable`, `voice` (`$voice`), `toolsScope` (`$tools`).
+* `RoomModel.peopleSettling` (RoomSession.peopleSettling): místnost se teprve připojuje, je připojená < 8 s nebo kanál
+  peeru ještě není otevřený / bez hello — „napsat přes M5cet“ z kontaktu chvíli počká.
 
 ### Co registrují části samy (UI part handles it)
 
-Akce, jejichž stav drží pohled, si části registrují v `AppActionRouter` (`model.design.actions.register([...]) { action, ctx in … }`)
-jedním řádkem v `App/Bootstrap.swift` (`XxxParts.install(into: model)`):
+Akce, jejichž stav drží pohled, si části registrují v `AppActionRouter` jedním řádkem v `App/Bootstrap.swift`
+(`XxxParts.install(into: model)`) — **za** `CoreInstall.install`, takže jejich registrace nahradí zálohu jádra
+(router: pozdější vyhrává).
 
-| Agent | Akce | Proměnné (`core.variables`) |
-|---|---|---|
-| chat | `msg.quote`, `msg.showHidden`, `msg.mapPreview`, `msg.map`, `msg.source`, `msg.open`, `msg.save`, `msg.share` | — |
-| people | `people.*` (11), `users.toggle`, `users.dock`, `users.autoHide`, `msg.info` (MsgDetails), `msg.sender` (ProfileUi.sender), `profile.open/pick/clear/field/sync/save/public/audience`; `router.shownUsername` | `settings.profile`/`profile`, `settings`/`myProfile`, `users.person` přes `$form.person` |
-| tools | `ai.send/stop/clear`, `nfc.read/write/emulate/stop`, `voice.dictate`, `calllog.*` (6), `voiceFx.test/reset` | `ai`/`ai`, `nfc`/`nfc`, `log`/`log`, `settings.voiceFx`/`voiceFx` |
-
-Jádro je registruje taky — jako zálohu, která udělá jen to, co jde bez části (nebo zaloguje), a pozdější registrace části ji
-nahradí (router: pozdější vyhrává). Seznam s pokrytím všech 122 akcí je v § Akce.
+| Agent | Stav | Akce | Proměnné (`core.variables`) |
+|---|---|---|---|
+| people | sloučeno (`PeopleParts`) | `people.*` (11), `users.toggle/dock/autoHide`, `msg.info`, `msg.sender`, `profile.*` (8); `router.shownUsername` | `settings.profile`/`profile`, `settings`/`myProfile`, `room`+`call`/`users` |
+| nfc | sloučeno (`NfcParts`) | `nfc.read/write/emulate/stop` (`nfc.workbench`, `nfc.builder` kreslí renderer, `nfc.reader` runner) | `nfc`/`nfc` |
+| chat | čeká | `msg.quote`, `msg.showHidden`, `msg.mapPreview`, `msg.source` | — |
+| tools | čeká | `ai.send/stop/clear`, `voice.dictate`, `calllog.*` (6), `voiceFx.test/reset` | `ai`/`ai`, `log`/`log`, `settings.voiceFx`/`voiceFx` |
 
 ### Sloty
 
-Jádro registruje: `lockPad`, `enrollForm`, `joinForm`, `roomList`, `roomTabs`, `callControls`, `callVideo`.
-Části: `messages`, `msgBody`, `msgHold`, `composer` (chat), `userPanel`, `userList` (people), `voicePad`, `nfcPanel`,
-`nfcWork`, `nfcBuilder`, `aiChat` (tools).
+Jádro registruje: `lockPad`, `enrollForm`, `joinForm`, `roomList`, `roomTabs`, `callControls`, `callVideo`; do doby,
+než je zaregistruje chat, zálohy `messages`, `msgBody`, `composer` (šablony designu `message.in/out/sys` nad
+`RoomModel.messages`, prosté pole nad `ComposerModel`) a prázdný `userPanel` (`FallbackChatSlots`, jen když slot nikdo nemá).
+Části: `messages`, `msgBody`, `msgHold`, `composer` (chat), `userPanel`, `userList` (people), `voicePad`, `aiChat` (tools),
+`nfcPanel`, `nfcWork`, `nfcBuilder` (nfc).
+
+**Zámek**: obrazovka zámku je jen designová (route `lock` + slot `lockPad`) — `CoreInstall` vypne vlastní okna
+Security (`SecurityCenter.showsWindows = false`, `LockPresenter` to respektuje); zamčená jsou všechna okna (každé okno
+iPadu routuje podle `AppRouteState.locked`). Krytí pro přepínač aplikací / nahrávání obrazovky zůstává (`ScreenPrivacy`).
+
+## Akce — pokrytí všech 122 akcí `ActionCatalog`
+
+Test `CoreStateTests.testEveryCatalogueActionHasAnOwner` hlídá, že žádná akce nezůstane bez vlastníka.
+
+| Vlastník | Akce | Co se děje |
+|---|---|---|
+| **renderer** (`DesignHost.perform`) — 9 | `screen.open`, `back`, `menu.open`, `sheet.open`, `sheet.close`, `flash`, `nfc.workbench`, `nfc.builder`, `update.later` | navigace, překryvy, flash; `update.later` zavře překryv |
+| **renderer** (`ActionRunner`) — 12 | `lib.run`, `set`, `setting.set`, `setting.toggle`, `look.set`, `look.reset`, `appearance.reset`, `theme.toggle`, `nfc.reader`, `url.open`, `copy`, `share` | `$form`, nastavení (vedlejší účinky → `onSettingChanged` jádra), vzhled, potvrzení adresy / vypočteného textu |
+| **jádro** — místnosti (9) | `room.join`, `room.switch`, `room.toggle`, `rooms.connect`, `room.leave`, `room.forget`, `room.delete`, `room.clone`, `room.edit` | formulář připojení, přepnutí / připojení, výběr, odpojení, zapomenutí (+ historie), kopie, úprava přes `$form.roomEdit` |
+| **jádro** — skladač (7) | `message.send`, `message.reply`, `message.copy`, `message.kind`, `message.recipients`, `compose`, `send.option` | `ComposerModel` okna (druhy, příjemci, příkazy, `ComposerRequest` pro foto / soubor / hlas) |
+| **jádro** — zprávy (7) | `msg.forward`, `msg.forwardRoom`, `msg.forwardTo`, `msg.map`, `msg.open`, `msg.save`, `msg.share` | přeposlání (list `message.forward`, nebo dialogy u staršího designu), mapa (Apple Maps, `Where`), soubor z trezoru do sdílení |
+| **jádro** — hovory (8) | `call.audio`, `call.video`, `call.audioText`, `call.end`, `call.mute`, `call.camera`, `call.switchCamera`, `call.speaker` | `CallSystem` (CallKit, oprávnění), obrazovka `call` |
+| **jádro** — zámek a bezpečnost (6) | `lock.now`, `lock.biometric`, `pin.change`, `biometric.toggle`, `wipe.ask`, `kt.dismiss` | `SecurityCenter` (PIN, Face ID / Touch ID, smazání po potvrzení), upozornění KT |
+| **jádro** — účet (6) | `account.signin`, `account.signup`, `account.signout`, `account.recovery`, `account.addPasskey`, `account.register` | passkeys s PRF (`SystemPasskeys`), obnovovací kód, registrace (formulář serveru) |
+| **jádro** — ostatní (8) | `update.check`, `update.install`, `fn.run`, `voice.speak`, `voice.stop`, `system.settings`, `conversations.settings`, `lang.set` | check-in, `PushUpdates` (odkaz na App Store / TestFlight nebo designový balíček), `/příkaz` do místnosti (jako Android `r.send`), předčítání, Nastavení systému, texty po změně jazyka |
+| **People** (zálohu má jádro) — 24 | `people.open/select/all/none/message/call/video/verify/link/unlink/unlinkAll`, `users.toggle/dock/autoHide`, `profile.open/pick/clear/field/sync/save/public/audience`, `msg.info`, `msg.sender` | záloha jádra: příjemci skladače, hovor, ověření bezpečnostního čísla; ostatní jen log |
+| **NFC** (zálohu má jádro) — 4 | `nfc.read`, `nfc.write`, `nfc.emulate`, `nfc.stop` | záloha: „NFC tu není“ / zastavení `NfcService` |
+| **chat** (čeká; záloha jádra) — 4 | `msg.quote`, `msg.showHidden`, `msg.mapPreview`, `msg.source` | záloha: skok na citovanou zprávu (`revealRequest`), mapa; `msg.showHidden`, `msg.source` jen log |
+| **tools** (čeká; záloha jádra) — 12 | `ai.send/stop/clear`, `voice.dictate`, `voiceFx.test/reset`, `calllog.open/refresh/item/call/clear/system` | záloha: obrazovka `log`, smazání historie hovorů po potvrzení; ostatní log |
+| **Platform/Notifications** — 6 | `notify.up/down/use/drop/test/sync` | `DesignNotifyWiring` (jádro je neregistruje) |
+
+Součet: 21 renderer + 51 jádro + 24 People + 4 NFC + 4 chat + 12 tools + 6 Notifications = **122**. Na iOS není
+nic, co by nešlo vůbec — rozdíly proti Androidu: `update.install` instaluje aplikaci obchod (otevře se ověřený
+odkaz), `system.settings` otevře Nastavení aplikace (iOS nedovolí otevřít konkrétní obrazovku systému).
+
+**Router dál**: `onLink` (m5cet://enroll — předvyplnění a hlášení z `DeviceService`, odkaz na zařízení bere
+`ContactsService.install`), `onEnterApp` (načtení místností, účtu, KT, klíčů, audit, check-in, čekající místnost),
+`onSettingChanged` (potvrzení, hovory, zámek, duress PIN; zbytek `settingObservers`: poloha, kontakty, hlas),
+`shownUsername` — People.
+
+## Buzení při hovoru (6.14, Android `chat/CallWake`)
+
+* **Čistá logika** v M5Proto `Chat/CallWake.swift` (`Sender`, `Inbox`, `parse`, `pushed`, `payload`, `relayFields`,
+  `messageId`, `newCallId`) — testy = Android `CallWakeTest` (+ místnost).
+* **Odesílatel**: `RoomCore` si z `hello` pamatuje `features ∋ "call-wake"`; `RoomController.broadcastAudio`: přechod
+  `off → live` = začínám hovor → `RoomSession.ringAway(video:othersInCall:)` (nikdo jiný v hovoru, away bez otevřeného
+  kanálu, max. 50 → jedna položka přes relay, payload `{kind:"call", id:"<callId>:r", …}`, rámec `call:true, callId, video?`);
+  `live/muted → off` = zavěsil jsem → `endRing()` (nikdo nepřijal → `:e`, `callEnd:true` těm, kdo jsou pořád away).
+  Peer s `audio-status` live/muted = přijato. Video podle hovoru CallKitu (`RoomWire.callWantsVideo`).
+* **Příjemce**: položka z fronty (`onRelayDeliver`, před `Payloads.validate`, `seen` + okno proti přehrání) →
+  `RoomEvents.callWake` → `RoomController` drží `CallWake.Inbox`: zvonění čeká 30 s, jestli místnost hovor ukáže
+  (peer live/muted → `roomInCall`), jinak / konec → zmeškaný hovor do Záznamu a `CallCenter.onMissed`
+  (`RoomsController.onCallWakeStep`). Hovor, který už vyzvonil VoIP push, je `CallCenter`ův
+  (`CallCenter.pushOwnsCall`) — jeden záznam na hovor.
+* **M5Net**: `HubRelay` nesl jen `call` — doplněno `callEnd`, `callId`, `video` s kontrolou jako `frames.ts` (test).
+
+## Profily (Android `profile/Profiles` + `RoomSession.profiles`)
+
+`Core/Account/CoreProfiles.swift` je `PeopleParts.profiles` i výměna profilů v místnostech: karta se otevře jednou
+pro účet z části trezoru „card“ (`AccountService.loadCard`, slot v2 + revize), uloží se zapečetěná
+(`Profiles.planSave` → PUT / DELETE `/api/profile` → `finishSave` → `saveCard`), veřejné dotazy (`fetchPublic`),
+při zamčení se zapomene karta, dotazy i to, co sdíleli ostatní (`ProfileRoom.Cache`). Každá místnost má svůj
+`ProfileRoom.Exchange` (oznámení verze, žádost, plný pohled zapečetěný jen pro toho peeru — ratchet / párový klíč,
+bez obalu, když je moc velký). `accountKey(of:)` = klíč účtu z attestace hello peeru (Android ho bere z podpisu zpráv
+— tentýž klíč).
+
+## Android → Swift
+
+| Android (`A/`) | Swift |
+|---|---|
+| `M5.java` (singleton, lock/unlock, lifecycle) | `Core/Engine/AppCore.swift` (+ `Core/CoreInstall.swift` = zapojení z `M5.onCreate` / `MainActivity`) |
+| `chat/Rooms.java` | `Core/Engine/RoomsController.swift` (uložené místnosti `rooms`, připojení, zámek → schránka, sloučení, resume, KT) |
+| `chat/RoomSession.java` (lepidlo; protokol je M5Proto `RoomCore`) | `Core/Engine/RoomController.swift`, `RoomBridge.swift`, `HubFrameBridge.swift`, `RoomSnapshot.swift` (`peopleScope`, `usersScope`) |
+| `chat/Peer`, `chat/Calls` (WebRTC) | `Core/Engine/RoomWire.swift` → `Platform/Calls` `RoomRtc` / `CallSystem` |
+| `chat/Files.java` | `Core/Engine/RoomFiles.swift`, `CoreFiles.swift` (trezor `FileVault`, schránka zámku) |
+| `chat/History`, `Resume`, `LockedRooms`, `Outgoing` | M5Proto (`History`, `LockedRooms`, `SendPlan`) + `RoomsController` / `RoomController` (záznamy `hist-<hash>`, `resume`, `pins`) |
+| `chat/CallWake.java` | M5Proto `Chat/CallWake.swift` + `RoomController` (odesílatel, schránka) |
+| `chat/P4Device`, KT, `KeyDirectory` | M5Proto `P4Device` + `AppCore.uploadKeys` / `refreshKt`, záznamy `p4.*` |
+| `account/Account.java`, `AccountKeys`, `RecoveryCode` | `Core/Account/AccountService.swift` (`account`, `account-roots`, karta, `/api/profile`, `cardRoot`) |
+| `account/Passkeys` (Credential Manager) | `Core/Account/Passkeys.swift` (`ASAuthorization` + PRF), `AccountDialogs.swift` |
+| `profile/Profiles.java` | `Core/Account/CoreProfiles.swift` |
+| `ui/bubble/MessageAudit.java` | `Core/Engine/MessageAudit.swift` (záznam `msg-audit`) |
+| `MainActivity.scopeFor` / `route` | `Core/State/AppScreenState.swift` |
+| `ui/Actions.java` + akční polovina `ui/parts/Parts` | `Core/Actions/CoreActions.swift`, `CoreDialogs.swift` |
+| `ui/parts/LockPad`, `Forms.enroll`, join, `RoomList`, `RoomTabs`, `CallControls`, `CallVideo` | `Core/Slots/LockPadPart.swift`, `CoreSlots.swift` |
+| `push/DeviceStatus`, `$define` | `Core/Engine/DeviceStatus.swift` (`PushDeviceAdapter`, `CoreDeviceService`) |
+| lepidlo Security / Telecom / Notify / Location / Voice / Updates | `Core/Engine/SecurityBridge.swift`, `Integrations.swift` |
+
+## Zapojeno / čeká
+
+**Zapojeno**: Security (zámek, schránka zámku, záznamy trezoru, identita v Secure Enclave, design jako jediný zámek),
+Push (`DeviceService`: zápis, check-in, `$define`, audit zpráv, aktualizace), Calls (dráty, adresář, prostředí, Záznam,
+TURN, zdroj pro historii, buzení při hovoru), Notifications, Location, Contacts (`install`, `continueUserActivity`,
+`verifiedDevice`, `wipe`), Voice, NFC (`accountRoot`, `forward`, dostupnost), People (profily, `PeopleRoomExtras`,
+`peopleSettling`, audit skrytí, proměnné per okno), Watch (čte `CoreModels.shared` — nic dalšího).
+
+**Čeká**: chat a tools (zálohy výše), `FnEngine` (bez něj odejde „/příkaz“ jako text), zkouška na zařízení (passkeys
+s PRF, VoIP push, NFC na kartě), testy toků účtu proti serveru (WebAuthn bez skutečného autentizátoru nejde — jednotkové
+testy jdou přes `FakePasskeys`).
+
+## Změny mimo Core (malé, nutné)
+
+* `Platform/Security/LockPresenter.swift`: s `showsWindows = false` zůstanou okna zámku dole (design je jediný zámek).
+* `Platform/Calls/CallCenter.swift`: `pushOwnsCall(roomKey:)` (jeden záznam na hovor s VoIP pushem).
+* `Renderer/Contracts/ScreenStateProvider.swift` + `Renderer/Shell/DesignHost.swift`: `variables(for:context:host:)`
+  s výchozí implementací (proměnné okna).
+* `Parts/People`: `Millis.now` → `EpochMs.now` (přejmenované hodiny), `PeopleReach` bere `RoomModel.peopleSettling`.
+* M5Kit (s testy): M5Proto `RoomCore+Local` (místní zprávy), `CallWake`, relay s poli navíc; M5Net `HubRelay` (pole buzení).
+
+## Testy
+
+`M5cetTests/Core`: `CoreChatTests` (dva lidé přes hub v paměti: důkaz, protokol 4, potvrzení, odpověď, relay
+nepřítomnému, schránka zámku, historie po restartu, hovory, buzení při hovoru), `CoreStateTests` (vlastníci akcí,
+route, proměnné, skladač, kódy), `CoreIntegrationTests` (profil v místnosti, přeposlání ověřené klíčem, audit, proměnné
+okna, háčky), `CoreServerIntegrationTests` a `CoreScreenshotTests` (jen s `M5_TEST_SERVER`).
