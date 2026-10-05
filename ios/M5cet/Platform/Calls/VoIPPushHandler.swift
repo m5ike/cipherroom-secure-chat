@@ -7,6 +7,12 @@
 // same checks as Android's push/Control) or not: a push that cannot be opened
 // still gets a neutral call ("M5cet"), ended at once.
 //
+// 6.14 (call wake, server/ios/commands.ts voipCallContent): the sealed content is
+// {id, kind: "call" | "call-end", at, exp (at + 60 s), payload: {call, room, who,
+// video, at}} — `call` the call's id (VoIPCallInvite.id), `room` the hub's room id
+// (the opener maps it to the saved room), `who` the caller ("" below the user's
+// privacy level "sender"). See README › VoIP push a buzení při hovoru.
+//
 // The token: AppModel keeps it (voipToken, hex) and so does this handler; the
 // network code sends it to the server at enroll / check-in (/api/ios, field
 // "voipToken" next to the APNs token) and again when it changes (onToken).

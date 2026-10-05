@@ -25,10 +25,15 @@
 		<string>$(M5_APP_GROUP)</string>
 	</array>
 
-	<!-- The keychain group shared with the notification extension (its first group is its default). -->
+	<!-- Keychain groups (Platform/Security/README.md "Keychain groups"):
+	     cz.m5cet.app    the app only — first, so it is the app's default group: the PIN, biometric,
+	                     duress and counter keys, the signing key, the attempt counter, the app's secrets;
+	     cz.m5cet.shared the app and the notification extension — only what the extension must use:
+	                     the SYS tier's key and the device's encryption key (service cz.m5cet.shared.security). -->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)cz.m5cet.app</string>
+		<string>$(AppIdentifierPrefix)cz.m5cet.shared</string>
 	</array>
 
 	<!-- Passkeys of the server this build is for (M5_WEBCREDENTIALS_DOMAIN, ios/README.md). -->

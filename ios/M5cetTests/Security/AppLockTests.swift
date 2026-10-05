@@ -7,6 +7,7 @@
 // never shortens a wait.
 
 import LocalAuthentication
+import M5Core
 import XCTest
 @testable import M5cet
 
@@ -74,7 +75,7 @@ final class AppLockTests: XCTestCase {
         eq(await f.lock.unlock(pin: "000003"), .wiped)
         XCTAssertFalse(f.lock.isSetUp)
         XCTAssertEqual(f.dir.files().filter { !$0.hasPrefix("group/m5/lock-state.json") }, [])
-        XCTAssertEqual(try f.store.names(), [], "every Keychain item and key is gone")
+        XCTAssertEqual(try f.keychainNames(), [], "every Keychain item and key is gone")
         XCTAssertTrue(f.center.wipedNotice, "a wipe of the attempts says so")
         XCTAssertTrue(f.eventTypes().contains("lockout"))
     }
@@ -137,7 +138,7 @@ final class AppLockTests: XCTestCase {
         eq(await f.lock.unlock(pin: "999111"), .duress)
         XCTAssertFalse(f.lock.isSetUp)
         XCTAssertFalse(f.center.wipedNotice, "quiet: no \"data erased\" notice")
-        XCTAssertEqual(try f.store.names(), [])
+        XCTAssertEqual(try f.keychainNames(), [])
     }
 
     func testChangingThePinCountsTheCurrentOne() async throws {
@@ -250,8 +251,8 @@ final class AppLockTests: XCTestCase {
         XCTAssertTrue(inbox.isActive)
         XCTAssertFalse(f.vault.unlocked)
         // Messages keep arriving while locked.
-        XCTAssertTrue(inbox.message(room: "family", ["id": "m1", "text": "hi"]))
-        XCTAssertTrue(inbox.message(room: "family", ["id": "m2", "text": "there"]))
+        XCTAssertTrue(inbox.seal(TestItems.message(room: "family", id: "m1", text: "hi")))
+        XCTAssertTrue(inbox.seal(TestItems.message(room: "family", id: "m2", text: "there")))
         eq(await f.lock.unlock(pin: pin), .ok)
         XCTAssertEqual(rooms.calls.last, "didUnlock")
         for _ in 0..<100 where consumer.restored == 0 { try await Task.sleep(for: .milliseconds(20)) }
@@ -267,7 +268,7 @@ final class AppLockTests: XCTestCase {
         f.center.inboxConsumer = consumer
         try await setUp(f)
         f.lock.lockNow(remote: false)
-        XCTAssertTrue(f.center.inbox.message(room: "r", ["id": "m1"]))
+        XCTAssertTrue(f.center.inbox.seal(TestItems.message(room: "r", id: "m1")))
         eq(await f.lock.unlock(pin: pin), .ok)
         // Locked again at once, before the merge ran: the key stays until it is done, then goes.
         f.lock.lockNow(remote: false)
@@ -278,7 +279,7 @@ final class AppLockTests: XCTestCase {
         XCTAssertFalse(f.vault.unlocked, "forgotten right after the merge")
         XCTAssertEqual(consumer.parsed.first?.rooms["r"], ["m1"])
         XCTAssertTrue(f.center.inbox.isActive, "the new lock's generation is open — not closed by the merge")
-        XCTAssertTrue(f.center.inbox.message(room: "r", ["id": "m2"]))
+        XCTAssertTrue(f.center.inbox.seal(TestItems.message(room: "r", id: "m2")))
     }
 
     func testTheStrictModeDisconnects() async throws {
@@ -297,13 +298,13 @@ final class AppLockTests: XCTestCase {
         let f = try Fixture()
         try await setUp(f)
         f.lock.onBackground()
-        let m = try XCTUnwrap(SecJSON.parse(Data(contentsOf: f.center.paths.lockState)))
-        XCTAssertEqual(m.jBool("locked"), false)
-        XCTAssertGreaterThan(m.jInt64("bg"), 0)
-        XCTAssertEqual(m.jInt("autolock"), 60)
-        XCTAssertEqual(m.jString("boot"), "boot-A")
+        let m = try XCTUnwrap(SecData.json(Data(contentsOf: f.center.paths.lockState)))
+        XCTAssertEqual(m.bool("locked"), false)
+        XCTAssertGreaterThan(m.optInt64("bg"), 0)
+        XCTAssertEqual(m.optInt("autolock"), 60)
+        XCTAssertEqual(m.optString("boot"), "boot-A")
         f.lock.lockNow(remote: false)
-        XCTAssertEqual(try XCTUnwrap(SecJSON.parse(Data(contentsOf: f.center.paths.lockState))).jBool("locked"), true)
+        XCTAssertEqual(try XCTUnwrap(SecData.json(Data(contentsOf: f.center.paths.lockState))).bool("locked"), true)
         // Nothing of the user tier on the extension's side.
         XCTAssertTrue(f.dir.files().filter { $0.hasPrefix("group/") }.allSatisfy { !$0.contains("user") && !$0.contains("lockbox") })
     }
