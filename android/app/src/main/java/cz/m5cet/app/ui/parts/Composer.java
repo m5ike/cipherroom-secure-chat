@@ -86,7 +86,7 @@ final class Composer extends LinearLayout implements Renderer.Slot {
     private final TextView reply;
     private final LinearLayout kinds, row, recBar;
     private final HorizontalScrollView kindsScroll;
-    private final LinearLayout suggestions;
+    private final ComposerSuggest suggestions;
     private final ImageView dictate, mic;
     private final SendButton send;
     private final TextView recTime;
@@ -116,10 +116,9 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         line.setBackgroundColor(Ui.alpha(Ui.color(a, "@border", Color.LTGRAY), 0.8f));
         addView(line, new LayoutParams(LayoutParams.MATCH_PARENT, Math.max(1, Ui.dp(a, 0.7f))));
 
-        suggestions = new LinearLayout(a);
-        suggestions.setOrientation(VERTICAL);
-        suggestions.setVisibility(GONE);
-        addView(suggestions);
+        // 6.11: the suggester (sections, the model's icon, matches highlighted) and the arguments' hint bar.
+        suggestions = new ComposerSuggest(a, parts, this::putText);
+        addView(suggestions.list(), new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
 
         reply = new TextView(a);
         reply.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
@@ -135,6 +134,7 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         kinds.setPadding(Ui.dp(a, 10), Ui.dp(a, 6), Ui.dp(a, 10), 0);
         kindsScroll.addView(kinds);
         addView(kindsScroll);
+        addView(suggestions.hint(), new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
 
         row = new LinearLayout(a);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -371,6 +371,12 @@ final class Composer extends LinearLayout implements Renderer.Slot {
     EditText field() { return input; }
     boolean recording() { return recorder != null; }
     void setText(String t) { input.setText(t); input.setSelection(input.getText().length()); }
+
+    /** 6.11: a picked suggestion or value — the text, the cursor where the pick ends. */
+    private void putText(String t, int at) {
+        input.setText(t);
+        input.setSelection(Math.max(0, Math.min(at, input.getText().length())));
+    }
 
     /* ------------------------------------------------------ kinds */
 
@@ -744,36 +750,8 @@ final class Composer extends LinearLayout implements Renderer.Slot {
 
     /* ----------------------------------------------------- suggestions */
 
-    /** / commands, @ people, # tags — up to 8 under the caret's word (Parts.suggest). */
-    private void suggest() {
-        suggestions.removeAllViews();
-        List<String[]> items = parts.suggest(input.getText().toString(), input.getSelectionStart());
-        if (items.isEmpty()) { suggestions.setVisibility(GONE); return; }
-        int fg = Ui.color(getContext(), "@onSurface", Color.BLACK);
-        for (String[] it : items) {
-            LinearLayout line = new LinearLayout(getContext());
-            line.setOrientation(VERTICAL);
-            line.setPadding(Ui.dp(getContext(), 16), Ui.dp(getContext(), 8), Ui.dp(getContext(), 16), Ui.dp(getContext(), 8));
-            line.setBackground(Ui.ripple(null, Ui.alpha(fg, 0.12f)));
-            TextView t = new TextView(getContext());
-            t.setText(it[0]);
-            t.setTextColor(fg);
-            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f);
-            t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-            line.addView(t);
-            if (it.length > 1 && it[1] != null && !it[1].isEmpty()) {
-                TextView d = new TextView(getContext());
-                d.setText(it[1]);
-                d.setTextColor(Ui.color(getContext(), "@muted", Color.GRAY));
-                d.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-                line.addView(d);
-            }
-            String replacement = it.length > 2 ? it[2] : it[0];
-            line.setOnClickListener(v -> { setText(replacement); suggestions.setVisibility(GONE); });
-            suggestions.addView(line);
-        }
-        suggestions.setVisibility(VISIBLE);
-    }
+    /** / commands, @ people, # tags — up to 8 under the caret's word; 6.11: and the hint while a command's arguments are typed (ComposerSuggest). */
+    private void suggest() { suggestions.update(input.getText().toString(), input.getSelectionStart()); }
 
     @Override public void bindSlot(Expr.Scope scope) { refreshKinds(); }
 }

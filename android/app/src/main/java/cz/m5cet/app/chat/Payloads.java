@@ -88,6 +88,8 @@ public final class Payloads {
         String senderId = str(p.opt("senderId"), ID);
         if (id == null || id.isEmpty() || senderId == null || senderId.isEmpty()) return null;
         if (senderId.equals("system") || senderId.equals("self") || senderId.equals("server") || senderId.equals("admin")) return null;
+        // 6.11: the app's own sender of model answers and the older caller-only answers (validate.ts isReservedSender).
+        if (cz.m5cet.app.fn.ModelIdentity.reservedSender(senderId)) return null;
         if (senderId.equals(myId) || (transportSender != null && !senderId.equals(transportSender))) return null;
         Object c = p.opt("createdAt");
         long createdAt = c instanceof Number && Double.isFinite(((Number) c).doubleValue()) ? Math.min(((Number) c).longValue(), now + FUTURE_SKEW) : now;
@@ -189,6 +191,9 @@ public final class Payloads {
             o.put("keyword", keyword).put("name", clean(f.opt("name"), 120, keyword));
             String model = f.optString("model", "");
             if (MODEL.matcher(model).matches()) o.put("model", model);
+            // 6.11: the model's icon (its avatar under "via <sender>"): a lucide name or one emoji, else none.
+            String icon = cz.m5cet.app.fn.ModelIdentity.safeIcon(f.opt("icon"));
+            if (icon != null) o.put("icon", icon);
             String chain = f.optString("chain", "");
             if (CHAIN.matcher(chain).matches()) o.put("chain", chain);
             Object call = f.opt("call");

@@ -334,7 +334,7 @@ public final class ProfileUi {
      */
     public static JSONObject sender(M5 app, RoomSession r, cz.m5cet.app.chat.ChatMessage m) {
         boolean me = m.mine;
-        boolean function = m.senderId != null && m.senderId.startsWith("function:");
+        boolean function = cz.m5cet.app.fn.ModelIdentity.reservedSender(m.senderId); // 6.11: system-messenger too
         JSONObject person = null;
         if (!me && !function) {
             JSONArray all = r.peopleScope();

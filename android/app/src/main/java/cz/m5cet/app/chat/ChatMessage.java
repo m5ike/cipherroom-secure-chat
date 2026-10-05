@@ -52,10 +52,16 @@ public final class ChatMessage {
     public JSONObject sealed;
     /** The plain text once opened (never stored), and — for my own — the code. */
     public String sealPlain, sealCode;
-    /** flags.fn: a command's result (keyword, name, model, chain, call, events, outputs). */
+    /** flags.fn: a command's result (keyword, name, model, chain, call, events, outputs; 6.11 icon). */
     public JSONObject fn;
     /** The result as this device keeps it — every output, even those too large to share; drawn instead of {@link #fn} when set. */
     public JSONObject fnLocal;
+    /**
+     * 6.11: a model's answer from system-messenger (an incoming message here,
+     * never sent): the model's identity {keyword, name, icon} — kept in the
+     * history, so the answer keeps its name and avatar.
+     */
+    public JSONObject model;
     /** to: the names of the recipients of a private message (informational). */
     public final List<String> to = new ArrayList<>();
     public String forwardedFrom;
@@ -118,6 +124,35 @@ public final class ChatMessage {
 
     /** flags.fn to draw: the full local copy when this device has it, else what came on the wire. */
     public JSONObject fnDraw() { return fnLocal != null ? fnLocal : fn; }
+
+    /** 6.5 / 6.11: a command's own bubble (the call: its query, loading, then a status) — fnLocal with a query. */
+    public boolean fnCall() { return fnLocal != null && fnLocal.has("query"); }
+
+    /** What the history keeps of a command's own bubble: keyword, name, icon, query and its status (no outputs, no progress). */
+    JSONObject callState() {
+        if (!fnCall()) return null;
+        JSONObject c = new JSONObject();
+        try {
+            for (String k : new String[]{"keyword", "name", "icon", "query", "status"}) if (fnLocal.has(k)) c.put(k, fnLocal.opt(k));
+            if (fnLocal.optBoolean("pending")) c.put("pending", true);
+        } catch (JSONException e) { return null; }
+        return c;
+    }
+
+    /**
+     * A command's bubble from the history. One still loading when the app
+     * stopped has no run any more: it says it was interrupted (an error).
+     */
+    static JSONObject callFrom(JSONObject c) {
+        if (c == null || !c.has("query")) return null;
+        JSONObject out = new JSONObject();
+        try {
+            for (String k : new String[]{"keyword", "name", "icon", "query", "status"}) if (c.has(k)) out.put(k, c.opt(k));
+            out.put("pending", false);
+            if (c.optBoolean("pending")) out.put("status", new JSONObject().put("kind", "error").put("code", "interrupted").put("label", ""));
+        } catch (JSONException e) { return null; }
+        return out;
+    }
 
     static final String[] ORDER = {"sending", "queued", "sent", "stored", "forwarded", "delivered", "read"};
 
@@ -225,6 +260,9 @@ public final class ChatMessage {
             if (sealed != null) o.put("sealedMeta", sealed);
             if (sealCode != null && mine) o.put("sealCode", sealCode);
             if (fn != null) o.put("fnMeta", fn);
+            if (model != null) o.put("fnModel", model);
+            JSONObject call = callState();
+            if (call != null) o.put("fnCall", call);
             if (!to.isEmpty()) o.put("toList", new JSONArray(to));
             if (ttlMinutes > 0) o.put("ttlMinutes", ttlMinutes);
             if (vanishedMs > 0) o.put("vanishedMs", vanishedMs);
@@ -264,6 +302,8 @@ public final class ChatMessage {
         m.sealCode = o.optString("sealCode", null);
         if (m.sealCode != null && m.sealCode.isEmpty()) m.sealCode = null;
         m.fn = o.optJSONObject("fnMeta");
+        m.model = o.optJSONObject("fnModel");
+        m.fnLocal = callFrom(o.optJSONObject("fnCall"));
         JSONArray to = o.optJSONArray("toList");
         if (to != null) for (int i = 0; i < to.length(); i++) m.to.add(to.optString(i));
         String fwd = o.optString("forwarded", "");

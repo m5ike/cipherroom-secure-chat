@@ -92,7 +92,7 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
         current = m;
         MapPolicy map = MapBubble.policyFor(app(), m);
         String key = m.id + "|" + m.vanished + "|" + (m.sealPlain != null) + "|" + holding + "|" + Math.round(m.fileProgress * 50) + "|" + (m.filePath != null) + "|" + m.visibleText().length()
-            + "|" + (map == null ? "" : map.hashCode()) + "|" + m.hiddenUntil;
+            + "|" + (map == null ? "" : map.hashCode()) + "|" + m.hiddenUntil + "|" + fnState(m);
         if (key.equals(boundKey)) return;
         boundKey = key;
         build(m);
@@ -100,12 +100,31 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
 
     private void rebuild(ChatMessage m) { if (current == m) { boundKey = ""; build(m); } }
 
+    /**
+     * 6.11: what of a command's state the body draws — its loading, progress,
+     * status and outputs (they change in place: the row must draw again; the
+     * text alone did not say so, and a status chip waited for a scroll).
+     */
+    private static String fnState(ChatMessage m) {
+        org.json.JSONObject fd = m.fnDraw();
+        if (fd == null) return "";
+        org.json.JSONObject st = fd.optJSONObject("status"), pr = fd.optJSONObject("progress");
+        org.json.JSONArray outs = fd.optJSONArray("outputs");
+        return fd.optBoolean("pending") + "/" + (st == null ? "" : st.optString("kind") + st.optString("code") + st.optString("label"))
+            + "/" + (pr == null ? "" : Math.round(pr.optDouble("p", -1) * 100) + pr.optString("text")) + "/" + (outs == null ? -1 : outs.length());
+    }
+
     private void build(ChatMessage m) {
         removeAllViews();
         stopPulse(); // 6.5: a previous call's pulse, if any
+        setMinimumWidth(0);
+        setPadding(0, 0, 0, 0);
         boolean plain = "minimal".equals(cz.m5cet.app.design.Appearance.bubbles());
-        int fg = Ui.color(getContext(), plain ? "@onSurface" : m.mine ? "@onBubbleOut" : "@onBubbleIn", Color.BLACK);
-        int accent = m.mine ? fg : Ui.color(getContext(), "@primary", Color.BLUE);
+        // 6.11: a model's answer is drawn as an incoming message even when this device sent it to the room.
+        boolean model = cz.m5cet.app.ui.bubble.ModelFace.of(m) != null;
+        boolean out = m.mine && !model;
+        int fg = Ui.color(getContext(), plain ? "@onSurface" : out ? "@onBubbleOut" : "@onBubbleIn", Color.BLACK);
+        int accent = out ? fg : Ui.color(getContext(), "@primary", Color.BLUE);
         if (m.vanished) { addView(note(app().t("msg.vanished"), fg, true)); return; }
         if (m.hiddenUntil != 0 && Hides.hidden(m, System.currentTimeMillis())) addView(note(hiddenNote(m), fg, true)); // shown only with "show hidden"
         boolean hidden = false;
@@ -118,6 +137,8 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
             org.json.JSONObject fd = m.fnDraw();
             boolean fnCall = fd != null && (fd.has("query") || fd.optBoolean("pending") || fd.optJSONObject("status") != null);
             boolean fnOut = fd != null && fd.optJSONArray("outputs") != null && fd.optJSONArray("outputs").length() > 0;
+            if (model && !fnCall) fitAnswer(fd);                            // 6.11: the answer's bubble fits what it shows
+            if (model && !fnCall && fd != null && fd.optBoolean("problem")) addView(problemHead(fd));
             if (fnCall) fnCall(m, fd, fg, accent);                          // 6.5: query + loading / result / status
             else if (fnOut) parts.fnOutputs(this, m, fg);
             else if (positionMap) addView(MapBubble.build(a, parts, m, map, fg, maxW(), () -> rebuild(m)));
@@ -177,7 +198,12 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
 
     /* ----------------------------------------------- 6.5 a command call */
 
-    /** The call's own bubble: the query, then the loading indicator / result / status. */
+    /**
+     * The call's own bubble: the query, then the loading indicator (6.11: with
+     * what the model says it is doing, and how far) / result / status. The
+     * run's clock (Fn, 30 s) settles it; a bubble from before a restart that
+     * still loads is over after 5 minutes.
+     */
     private void fnCall(ChatMessage m, org.json.JSONObject fd, int fg, int accent) {
         String query = fd.optString("query", "");
         if (!query.isEmpty()) addView(text(query, fg, accent));
@@ -189,33 +215,103 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
             col.setGravity(Gravity.CENTER_HORIZONTAL);
             col.setPadding(0, dp(6), 0, dp(2));
             col.addView(new DotsView(getContext(), fg));
+            org.json.JSONObject progress = fd.optJSONObject("progress");
+            String said = progress == null ? "" : progress.optString("text", "").trim();
+            double p = progress == null ? -1 : progress.optDouble("p", -1);
+            if (p > 0 && p <= 1) {
+                ProgressBar bar = new ProgressBar(getContext(), null, android.R.attr.progressBarStyleHorizontal);
+                bar.setMax(1000);
+                bar.setProgress((int) Math.round(p * 1000));
+                bar.setProgressTintList(android.content.res.ColorStateList.valueOf(fg));
+                bar.setContentDescription(Math.round(p * 100) + " %");
+                LayoutParams bl = new LayoutParams(dp(160), dp(4));
+                bl.topMargin = dp(4);
+                col.addView(bar, bl);
+            }
             TextView lbl = new TextView(getContext());
-            lbl.setText(app().t("functions.running").replace("{name}", fd.optString("name", "")));
+            lbl.setText(!said.isEmpty() ? said : app().t("functions.running").replace("{name}", fd.optString("name", "")));
             lbl.setTextColor(Ui.alpha(fg, 0.7f));
             lbl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+            lbl.setGravity(Gravity.CENTER_HORIZONTAL);
             lbl.setPadding(0, dp(3), 0, 0);
+            lbl.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
             col.addView(lbl);
             addView(col);
             startPulse();
         } else if (status != null) {
             addView(statusChip(status, fg, accent));
         } else {
-            parts.fnOutputs(this, m, fg); // settled with the caller-only result
+            parts.fnOutputs(this, m, fg); // settled with the caller-only result (a bubble from before 6.11)
         }
     }
 
+    /** 6.11: the command's end — an icon and a word: answered below, sent to the room, an error (the timeout, a wrong call…), cancelled. */
     private View statusChip(org.json.JSONObject status, int fg, int accent) {
         String kind = status.optString("kind", "info");
-        int col = "error".equals(kind) ? Ui.color(getContext(), "@destructive", 0xFFCC3333) : "ok".equals(kind) ? accent : Ui.alpha(fg, 0.7f);
+        String code = status.optString("code", "");
+        int col = "error".equals(kind) ? Ui.color(getContext(), "@danger", 0xFFCC3333) : "ok".equals(kind) ? accent : Ui.alpha(fg, 0.75f);
+        String icon = "error".equals(kind) ? ("timeout".equals(code) ? "clock" : "circle-alert") : "ok".equals(kind) ? ("sent".equals(code) ? "users" : "circle-check")
+            : "cancelled".equals(code) ? "circle-x" : "info";
+        String label = status.optString("label", "");
+        if (label.isEmpty() && !code.isEmpty()) label = app().t("fnm." + code);
         LinearLayout row = new LinearLayout(getContext());
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(3), 0, dp(1));
+        row.setPadding(dp(8), dp(4), dp(10), dp(4));
+        row.setBackground(Ui.shape(Ui.alpha(col, 0.12f), dp(999), 0, 0));
+        ImageView ic = new ImageView(getContext());
+        ic.setImageDrawable(Icons.drawable(getContext(), icon, dp(16), col));
+        ic.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        row.addView(ic, new LayoutParams(dp(16), dp(16)));
         TextView t = new TextView(getContext());
-        t.setText(("error".equals(kind) ? "⚠ " : "ok".equals(kind) ? "✓ " : "• ") + status.optString("label", ""));
+        t.setText(label);
         t.setTextColor(col);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        t.setPadding(dp(6), 0, 0, 0);
         row.addView(t);
+        row.setContentDescription(label);
+        LinearLayout wrap = new LinearLayout(getContext());
+        wrap.setPadding(0, dp(4), 0, dp(1));
+        wrap.addView(row, new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return wrap;
+    }
+
+    /**
+     * 6.11: a model's answer fits what it shows — at least a comfortable
+     * width, and the whole row's width (less a margin) for what needs room:
+     * a table, code, JSON, a form, a page, a picture, a video.
+     */
+    private void fitAnswer(org.json.JSONObject fd) {
+        org.json.JSONArray outs = fd == null ? null : fd.optJSONArray("outputs");
+        boolean wide = false;
+        for (int i = 0; outs != null && i < outs.length(); i++) {
+            org.json.JSONObject o = outs.optJSONObject(i);
+            String t = o == null ? "" : o.optString("type");
+            if (t.equals("table") || t.equals("code") || t.equals("json") || t.equals("form") || t.equals("html") || t.equals("image") || t.equals("video")) { wide = true; break; }
+        }
+        // The row: 12 dp each side, the 36 dp avatar and 8 dp gap, the bubble's 12 dp padding each side; a 16 dp margin keeps it an incoming bubble.
+        int avail = getResources().getDisplayMetrics().widthPixels - dp(12 + 12 + 36 + 8 + 24 + 16);
+        setMinimumWidth(Math.max(0, Math.min(wide ? dp(560) : dp(220), avail)));
+        setPadding(0, dp(2), 0, dp(2));
+    }
+
+    /** 6.11: a wrong call's answer starts with what it is about, in the danger colour. */
+    private View problemHead(org.json.JSONObject fd) {
+        int danger = Ui.color(getContext(), "@danger", 0xFFCC3333);
+        LinearLayout row = new LinearLayout(getContext());
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(2), 0, dp(6));
+        ImageView ic = new ImageView(getContext());
+        ic.setImageDrawable(Icons.drawable(getContext(), "circle-alert", dp(18), danger));
+        ic.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        row.addView(ic, new LayoutParams(dp(18), dp(18)));
+        TextView t = new TextView(getContext());
+        t.setText(fd.optString("title", ""));
+        t.setTextColor(danger);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f);
+        t.setPadding(dp(8), 0, 0, 0);
+        row.addView(t, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         return row;
     }
 

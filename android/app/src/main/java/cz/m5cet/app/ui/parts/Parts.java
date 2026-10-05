@@ -374,6 +374,8 @@ public final class Parts {
         ChatMessage m = find(messageId);
         RoomSession r = m == null ? null : app().rooms.session(m.roomKey);
         if (m == null || r == null || "sys".equals(m.kind)) return;
+        // 6.11: a model's answer — the model behind it (message.model), and who it came through.
+        if (cz.m5cet.app.ui.bubble.ModelFace.of(m) != null) { showModel(m); return; }
         if (app().design().screen("message.sender") == null) {
             // A bundle from before 6.10: the person's detail (it has their room profile), when they are here.
             if (r.peerName(m.senderId) != null) people().run("people.open", m.senderId);
@@ -381,6 +383,46 @@ public final class Parts {
         }
         a.form().put("sender", ProfileUi.sender(app(), r, m));
         showSheet("message.sender");
+    }
+
+    /**
+     * 6.11: the model behind an answer — the message.model sheet (icon, name,
+     * keyword, summary, usage, parameters, guide, who it came through); a
+     * design without it gets the same in a dialog.
+     */
+    private void showModel(ChatMessage m) {
+        JSONObject card = fn.modelCard(m);
+        if (card == null) return;
+        if (app().design().screen("message.model") != null) {
+            a.form().put("model", card);
+            showSheet("message.model");
+            return;
+        }
+        StringBuilder sb = new StringBuilder("/" + card.optString("keyword"));
+        if (!card.optString("line").isEmpty()) sb.append("\n").append(card.optString("line"));
+        if (!card.optString("summary").isEmpty()) sb.append("\n\n").append(card.optString("summary"));
+        if (!card.optString("usage").isEmpty()) sb.append("\n\n").append(app().t("fnm.usage")).append(": ").append(card.optString("usage"));
+        if (!card.optString("guide").isEmpty()) sb.append("\n\n").append(card.optString("guide"));
+        android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(a).setTitle(card.optString("name")).setMessage(sb.toString())
+            .setNegativeButton(app().t("nav.close"), null);
+        if (card.optBoolean("known")) b.setPositiveButton(app().t("fnm.card.write"), (d, w) -> composerWrite(card.optString("write")));
+        secureDialog(b);
+    }
+
+    /**
+     * compose "write:…": a command into the message box (the model's sheet), the
+     * keyboard up — only a command's start ("/keyword "), never other text
+     * (the argument may be computed: the person sends it, the design cannot
+     * fill the box with anything else).
+     */
+    public void composerWrite(String text) {
+        closeOverlay();
+        if (composer == null || text == null) return;
+        String t = text.trim();
+        String first = t.isEmpty() ? "" : t.substring(0, Character.charCount(t.codePointAt(0)));
+        if (!fn.commandChars().contains(first) || !t.substring(first.length()).matches("[A-Za-z0-9_-]{1,40}")) return;
+        composer.setText(t + " ");
+        focusComposer();
     }
 
     /** A dialog of the app keeps screenshots out like the app does (its own window). */
@@ -479,7 +521,10 @@ public final class Parts {
             case "voiceText": composer.record("text"); break;
             case "asVoice": composer.sendAsVoice(); break;
             case "dictate": composer.toggleDictation(); break;
-            default: break;
+            default:
+                // 6.11 "write:/keyword" — the model's sheet: write the command.
+                if (what != null && what.startsWith("write:")) composerWrite(what.substring("write:".length()));
+                break;
         }
     }
 
@@ -546,13 +591,12 @@ public final class Parts {
     }
 
     /**
-     * Suggestions for the composer: [label, detail, the text after picking].
-     * The fn package matches the operator's triggers — "/" commands (from the
-     * server), "@" the people in the room and away, "#" tags.
+     * Suggestions for the composer (null: none). The fn package matches the
+     * operator's triggers — "/" commands (from the server), "@" the people in
+     * the room and away, "#" tags; 6.11: loosely, the used commands first.
      */
-    java.util.List<String[]> suggest(String text, int caret) {
-        java.util.List<String[]> out = new java.util.ArrayList<>();
-        if (text == null) return out;
+    cz.m5cet.app.fn.Suggestions.Result suggestions(String text, int caret) {
+        if (text == null) return null;
         RoomSession r = app().rooms.activeSession();
         java.util.List<String> names = new java.util.ArrayList<>();
         java.util.List<String> recent = new java.util.ArrayList<>();
@@ -561,18 +605,12 @@ public final class Parts {
             for (int i = 0; i < peers.length(); i++) names.add(peers.optJSONObject(i).optString("name"));
             for (ChatMessage m : r.messagesCopy()) recent.add(m.visibleText());
         }
-        cz.m5cet.app.fn.Suggestions.Result res = fn.suggest(text, caret < 0 ? text.length() : caret, names, recent);
-        if (res == null) return out;
-        for (cz.m5cet.app.fn.Suggestions.Item it : res.items) {
-            if (it.disabled) {
-                String note = "off".equals(it.key) ? app().t("functions.off") : "";
-                if (!note.isEmpty()) out.add(new String[]{note, "", text}); // clicking a notice leaves the text as it is
-                continue;
-            }
-            String detail = it.extra != null && !it.extra.isEmpty() ? it.detail + "  " + it.extra : it.detail;
-            out.add(new String[]{it.label, detail == null ? "" : detail, it.text});
-        }
-        return out;
+        return fn.suggest(text, caret < 0 ? text.length() : caret, names, recent);
+    }
+
+    /** 6.11: the hint while a command's arguments are typed (null: none). */
+    cz.m5cet.app.fn.ArgHint argHint(String text, int caret) {
+        return text == null ? null : fn.hint(text, caret < 0 ? text.length() : caret);
     }
 
     /** A typed command (/keyword args) runs on the server instead of being sent; false = send it as text. */
