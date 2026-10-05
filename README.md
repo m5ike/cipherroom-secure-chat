@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **6.12.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **6.13.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 6.12.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-6.12.0.pdf`](docs/site/m5cet-dokumentace-6.12.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 6.13.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-6.13.0.pdf`](docs/site/m5cet-dokumentace-6.13.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -68,6 +68,12 @@ viz [M5cet Desktop](#m5cet-desktop-macos-windows).
 
 ## Hlavní vlastnosti
 
+- **Devět jazyků** (6.13) — angličtina, čeština, němčina, španělština, italština,
+  francouzština, slovenština, slovinština a finština na webu, v Androidu, v desktopové
+  aplikaci, v upozorněních a e-mailech; jazyk podle prohlížeče / telefonu, data, čísla,
+  řazení a množná čísla podle jazyka ([`docs/i18n.md`](docs/i18n.md)).
+- **Web, Android, macOS a Windows** — M5cet Desktop (6.13) je 1:1 webová aplikace, ale
+  klientský kód nese podepsaná aplikace, ne server ([`docs/desktop.md`](docs/desktop.md)).
 - **End-to-end šifrované zprávy** (protokol 4, od 6.12) — mezi každou dvojicí
   zařízení **hybridní post-kvantové ustavení klíče** (ECDH P-256 + ML-KEM-768)
   a **Double Ratchet s post-kvantovým ratchetem** (dopředná utajenost, obnova po
@@ -793,6 +799,10 @@ je v [dokumentaci › Návrhy a roadmapa](docs/site/index.html#navrhy).
   jen v paměti procesu (retenční sweep je maže průběžně, restart úplně).
 - `App.tsx` (~4 000 řádků) pokrývají hlavně e2e testy.
 - Historii prohlížeče web smazat neumí; pozvánky nepřežijí restart serveru.
+- **6.13:** překlady es / it / fr / sk / sl / fi vytvořila AI (bez rodilého mluvčího); konzole
+  a `/help` jsou anglicky; M5cet Desktop neběžel na skutečném Windows, buildy nejsou
+  podepsané, macOS starší než 13 Electron nepodporuje — viz
+  [`CHANGELOG.md`](CHANGELOG.md) › 6.13.0 › Známá omezení.
 - **6.12:** protokol 4 neběžel živě mezi webem a Androidem ani na telefonu
   (interoperabilitu dokládají sdílené testovací vektory), bubblewrap a `check.sh`
   nebyly vyzkoušené na produkčním Linuxu, žádný nezávislý audit ani formální
@@ -960,7 +970,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.12.0       | aktuální — **bezpečnostní vydání: protokol 4** (hybridní post-kvantové ustavení klíče ECDH + ML-KEM-768, Double Ratchet s post-kvantovým ratchetem, sender keys s podpisovým klíčem řetězu, zprávy pro nepřítomné šifrované pro každé zařízení příjemce, klíč souboru na přenos a médií na hovor, padding, trvalé okno proti přehrání, ochrana proti downgrade) na webu i v Androidu, **průhlednost klíčů** a stavy identity (nový / ověřený / změněný), **důkaz členství na hubu**; server: šifrované `functions.db` a `telephony.db`, sandbox funkcí v bubblewrap, auditní pin, přesné originy passkeys, limity na adresu; web a Android: náhodný klíč místnosti, NFC tag v2, normalizace jmen, zámek Androidu bez datového klíče se schránkou zámku; **`check.sh`** — kontrola balíčku a hostitele; nezávislá revize 6.12 se všemi nálezy opravenými |
+| 6.13.0       | aktuální — **devět jazyků** (en, cs, de, es, it, fr, sk, sl, fi) na webu, v Androidu, v upozorněních, e-mailech a hláškách telefonie — výběr v nativních názvech, slovenština samostatně, data / čísla / řazení / množná čísla podle jazyka, písma s rozšířenou latinkou, UTF-8 e-maily; **M5cet Desktop** pro macOS (13+, Intel i Apple Silicon) a Windows (x64, arm64) — 1:1 webová aplikace s klientským kódem v podepsané aplikaci místo ze serveru, přihlášení passkeyem přes systémový prohlížeč, nativní menu, upozornění, odznak, lišta |
+| 6.12.0       | **bezpečnostní vydání: protokol 4** (hybridní post-kvantové ustavení klíče ECDH + ML-KEM-768, Double Ratchet s post-kvantovým ratchetem, sender keys s podpisovým klíčem řetězu, zprávy pro nepřítomné šifrované pro každé zařízení příjemce, klíč souboru na přenos a médií na hovor, padding, trvalé okno proti přehrání, ochrana proti downgrade) na webu i v Androidu, **průhlednost klíčů** a stavy identity (nový / ověřený / změněný), **důkaz členství na hubu**; server: šifrované `functions.db` a `telephony.db`, sandbox funkcí v bubblewrap, auditní pin, přesné originy passkeys, limity na adresu; web a Android: náhodný klíč místnosti, NFC tag v2, normalizace jmen, zámek Androidu bez datového klíče se schránkou zámku; **`check.sh`** — kontrola balíčku a hostitele; nezávislá revize 6.12 se všemi nálezy opravenými |
 | 6.11.0       | **odpovědi modelů od system-messenger** (příchozí zpráva s názvem a ikonou modelu, cituje příkaz, v místnosti „přes <jméno>“, široká bublina), **běh příkazu vždy skončí** (30 s bez známky života = chyba s ikonou a flash, limit DNS 4 s, rozpočet `/mail`, ohlášené čekání, odchod volajícího běh zruší, právě jeden konec streamu), **kontrola parametrů** před odesláním s kartou definice a návodu, ikona a návod modelu v konzoli, `/hlr <číslo>` hned s výsledkem, **nový našeptávač** (volné hledání, naposledy použité, sekce, podrobnost, nápověda parametrů) na webu i v Androidu |
 | 6.10.0       | **šablony APDU jako úplná čtení typů karet** (EMV všech schémat, e-ID / e-pas, DESFire, ISO 7816) na webu i v Androidu, všechny kroky po sobě, pohledy surový vstup / výstup · surový · JSON · čitelný, sdílet / přeposlat / sobě, jen ke čtení, maskovaná čísla karet; **Android**: táhni bublinu doprava = odpovědět (citace nahoře, klepnutí na originál), doleva = přeposlat, avatar nahoře a klepnutím profil, *Můj profil* na očích; **bezpečnostní revize 6.10** (kap. 12) se dvěma koly oprav — padělané webhooky, obejití práv, anonymní hovory, toll fraud v TSA, hádání route kódů, výběr příjemců na všech cestách, design na Androidu bez úniku dat |
 | 6.9.0        | **Telephony & SIP jako ústředna**: nová stránka konzole, oprávnění, pravidla směrování příchozích i odchozích hovorů (aplikace poskytovatele nebo SIP trunk s caller ID; cíl TSA nebo stav busy / congestion / hangup / rejected), **TSA** — call flow ve vizuálním editoru (27 nástrojů: DTMF, TTS, STT, záznam, přehrání, podmínka s IN$x, smyčky, route audio…) spouštěné na živém hovoru se simulátorem, route kódy `m5.telephony.inroute.*`, zvuk hovoru do místnosti nebo členovi, log událostí včetně webhooků, testy a testovací příchozí SIP adresa |
@@ -1031,6 +1042,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/install-check.md`](docs/install-check.md)        | `check.sh` (6.12): kontrola instalačního balíčku a hostitele — HTTP server, TLS, firewall, jádro, síť, systém, Docker |
 | [`docs/protocol-v4.md`](docs/protocol-v4.md)            | Protokol 4 (6.12): specifikace — hello v4, ratchet, sender keys, schránky, soubory, média, padding, přehrání, identita, důkaz na hubu, průhlednost klíčů, manifesty vydání, NFC tag v2 |
 | [`docs/review-612.md`](docs/review-612.md)              | Nezávislá revize 6.12 s důkazními testy a stavem oprav |
+| [`docs/i18n.md`](docs/i18n.md)                          | Jazyky (6.13): devět jazyků, načítání, náhradní řetěz, množná čísla, formáty, písma; jak přidat jazyk nebo text, glosář `i18n/GLOSSARY.md`, nástroje `i18n-extract` / `i18n-check` |
 | [`docs/desktop.md`](docs/desktop.md)                    | M5cet Desktop (6.13) pro macOS a Windows: kód klienta z podepsané aplikace, výběr serveru a kontrola verze, passkeys podle systému a přihlášení přes prohlížeč, upozornění, NFC, bezpečnostní model, sestavení, podpis, CI, testy |
 | [`CHANGELOG.md`](CHANGELOG.md)                          | Historie verzí                                 |
 | [`docs/modes.md`](docs/modes.md)                        | Režimy Light / Server-enhanced, jejich parametry a soubory; Firebase |

@@ -5,6 +5,77 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.13.0] – 2026-10-05
+
+**Devět jazyků a M5cet Desktop.** Web, aplikace pro Android, texty serveru
+(upozornění, e-maily, stránky, hlášky telefonie) i nová desktopová aplikace
+mluví **anglicky, česky, německy, španělsky, italsky, francouzsky,
+slovensky, slovinsky a finsky** a správně pracují se znaky těchto jazyků
+(písma s rozšířenou latinkou, UTF-8 v e-mailech, řazení, data a čísla podle
+jazyka). **M5cet Desktop** pro macOS (Intel i Apple Silicon) a Windows
+(x64, arm64) je 1:1 webová aplikace, ale klientský kód nese **podepsaná
+aplikace**, ne server (bezpečnostní analýza F-02).
+
+### Přidáno — jazyky (`docs/i18n.md`)
+- **Kontrakt** `client/src/lib/locales.ts` (Android `core/Locales.java`): 9 jazyků, nativní
+  názvy, značky BCP 47, náhradní řetěz (slovenština → čeština → angličtina).
+- **Překlady** `i18n/locales/{es,it,fr,sk,sl,fi}/*.json` — webu i Androidu (3 609 textů na
+  jazyk) podle glosáře `i18n/GLOSSARY.md` (oslovení, terminologie, typografie); nástroje
+  `script/i18n-extract.ts` (zdroje `i18n/source/*.json`) a `script/i18n-check.ts`
+  (úplnost, zástupné symboly, tvary množného čísla).
+- **Web:** jazyk podle prohlížeče při první návštěvě, výběr v nativních názvech (nastavení
+  i úvodní obrazovka), přepnutí bez obnovení stránky, každý nový jazyk jako vlastní malý
+  balíček (~40 kB gzip) stažený až při výběru; data, časy, relativní časy, čísla, velikosti,
+  řazení přes `Intl`; množná čísla (`tp()`, `Intl.PluralRules`); natvrdo zapsané texty
+  převedené do slovníku; ověřené písma s rozšířenou latinkou (Google Fonts, zásobník písem).
+- **Android:** 9 jazyků v Nastavení (+ „podle telefonu“), **slovenština samostatně** (dřív
+  se zobrazovala česky), texty z Javy jako klíče designu v 9 jazycích, množná čísla
+  a formáty podle jazyka; výchozí design nese 9 jazyků (`default-design.json` ~0,9 MB).
+- **Server:** šablony upozornění a potvrzovací e-maily v 9 jazycích (jazyk podle nastavení
+  uživatele, jinak podle prohlížeče), e-maily v UTF-8 s RFC 2047 v předmětu a jménech,
+  stránka po odchodu v jazyce návštěvníka, hlášky telefonie a jazyky poskytovatelů
+  (es-ES, it-IT, fr-FR, sk-SK, sl-SI, fi-FI), offline hlasy Piper pro slovinštinu a finštinu,
+  `charset=utf-8` na všech textových odpovědích; konzole upozornění edituje 9 jazyků.
+
+### Přidáno — M5cet Desktop (`docs/desktop.md`)
+- **Electron 44** (Chromium 152); macOS 13 a novější, univerzální build (`.dmg`, `.zip`);
+  Windows 10 / 11 x64 a arm64 (instalátor NSIS, přenosný `.zip`).
+- **Kód z aplikace:** okno načte `https://<server>/` (stejný origin — passkeys, cookies, API
+  beze změny), ale `index.html`, skripty, styly a service worker dodá aplikace; na síť jdou
+  jen API, soubory, sandbox funkcí a WebSocket; cizí skript nebo stránka se v originu serveru
+  nespustí. Integrita archivu aplikace (asar) a Electron Fuses; bezpečnostní hlavičky shodné
+  se serverem (`server/security-headers.ts`); kontrola verze proti serveru s volbou.
+- **Přihlášení passkeyem:** Windows Hello v aplikaci; na macOS (a kde passkey nemá PRF) přes
+  systémový prohlížeč — stránka `/desktop-signin`, shodný 8místný kód, výsledek zapečetěný ke
+  klíči aplikace (`/api/desktop-auth/*`, 5 minut, jednou), nikdy v URL. Bezpečnostní klíče USB
+  fungují v aplikaci.
+- Nativní menu a dialogy v 9 jazycích, upozornění (klepnutí otevře místnost), odznak
+  nepřečtených, ikona v liště, odkazy `m5cet://`, spuštění po přihlášení, nastavení šifrovaná
+  `safeStorage`, aktualizace jen u podepsaných buildů; podpis a notarizace jen z proměnných
+  prostředí; CI `.github/workflows/desktop.yml` (macOS + Windows).
+
+### Opraveno
+- Přepnutí jazyka za běhu přeloží i už zobrazený stavový řádek.
+
+### Testy
+- `npx vitest run`: 313 souborů, 3858 testů (6 přeskočených); E2E 76 / 76 (nový test jazyků
+  ve dvou prohlížečích); Android 761 testů JVM, `lintDebug` 0 chyb; `i18n-check` čistý pro
+  všech 6 nových jazyků; desktop: unit testy (směrování, adresa serveru, navigace, oprávnění,
+  odkazy, verze, předávání přihlášení), Playwright test nezabalené aplikace a vestavěný
+  self-test zabalené aplikace na Apple Silicon i v Rosettě.
+
+### Známá omezení
+- **Překlady es, it, fr, sk, sl a fi vytvořila AI** podle glosáře; rodilý mluvčí je zatím
+  nečetl. Konzole provozovatele a `/help` zůstávají anglicky; část popisků zpráv o kartách NFC
+  pro es / it / fr / sl / fi také.
+- **Desktop:** nic neběželo na skutečném Windows ani na fyzickém Intel Macu; buildy jsou
+  nepodepsané (macOS ad-hoc, Windows bez podpisu — SmartScreen varuje, aktualizace vypnuté);
+  skutečný passkey přes prohlížeč ani Windows Hello s PRF nebyly vyzkoušeny. Web Push
+  v Electronu není (aplikace běží v liště); Web NFC na desktopu není (čtečky přes Web Serial
+  / Bluetooth). **macOS starší než 13 (OS X, Monterey) Electron 44 nepodporuje** — tam zůstává
+  webová aplikace v prohlížeči.
+- Aplikace pro Android s 9 jazyky neběžela na telefonu.
+
 ## [6.12.0] – 2026-10-05
 
 **Bezpečnostní vydání: protokol 4 (post-kvantový, s obnovou po kompromitaci),

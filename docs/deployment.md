@@ -336,6 +336,30 @@ cest).
 `<dir>/.m5cet/backups/`) a drží posledních `BACKUP_KEEP` (5) záloh;
 `update.sh --rollback` se k poslední vrátí.
 
+## Přechod na 6.13
+
+6.13 přidává jazyky a desktopovou aplikaci; nové proměnné prostředí serveru nejsou.
+
+- **Jazyky:** web volí jazyk podle prohlížeče (uložená volba má přednost), Android podle telefonu —
+  **telefony se slovenštinou dostanou slovenštinu** (dřív češtinu). Upozornění a potvrzovací e-maily
+  chodí v jazyce uživatele (jeho nastavení, jinak jazyk prohlížeče z jeho požadavků). Šablony
+  upozornění uložené dřív jen se třemi jazyky se pro ostatní doplní z náhradního řetězu (slovenština
+  → čeština → angličtina); *Konzole › Upozornění* edituje všech devět.
+- **E-maily** mají předmět a jméno odesílatele kódované podle RFC 2047 (UTF-8) — po aktualizaci
+  zkontrolujte jedno zkušební upozornění e-mailem v diakritice.
+- **Android:** výchozí design nese 9 jazyků (`default-design.json` ~0,9 MB, při stahování buildu
+  ~250 kB gzip). Starší aplikace (6.12) design použijí dál; jen design, jehož akce `lang.set` nastavuje
+  nový jazyk, potřebuje aplikaci 6.13 (`minAppCode` 61300).
+- **Telefonie:** hlášky mostu a TSA jsou v 9 jazycích, poskytovatelům se posílají kódy es-ES, it-IT,
+  fr-FR, sk-SK, sl-SI, fi-FI. Offline řeč nabízí navíc hlasy Piper `sl_SI-artur-medium`
+  a `fi_FI-harri-medium` (stáhnou se až po výběru v konzoli).
+- **M5cet Desktop:** server potřebuje 6.13 kvůli přihlášení přes prohlížeč (`/desktop-signin`,
+  `/api/desktop-auth/*`, vlastní limit požadavků); stránku `/desktop-signin` obslouží nginx jako SPA
+  (`try_files $uri /index.html` v referenční konfiguraci). Aplikace porovná svou verzi s
+  `/version-manifest.json` serveru a při nesouladu se zeptá. Sestavení a podpis (Apple Developer ID
+  + notarizace, Windows certifikát / Azure Trusted Signing) jsou jen z proměnných prostředí sestavení —
+  `docs/desktop.md` › 7; nepodepsané buildy fungují s varováním a bez automatických aktualizací.
+
 ## Přechod na 6.12
 
 6.12 je bezpečnostní vydání (protokol 4, opravy nálezů F / G a revize 6.12 —

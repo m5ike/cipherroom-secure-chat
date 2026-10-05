@@ -810,12 +810,15 @@ async function selfTest(): Promise<void> {
       bridgeKeys: Object.keys(window.m5desktop || {}).sort(),
       node: typeof require !== "undefined" || typeof process !== "undefined",
       notification: Boolean(window.Notification && window.Notification.m5desktop === true),
-      sw: await navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).then((reg) => new Promise((done) => {
-        const ch = new MessageChannel();
-        ch.port1.onmessage = (e) => done(e.data && e.data.build);
-        reg.active.postMessage({ type: "version" }, [ch.port2]);
-        setTimeout(() => done(null), 4000);
-      })).catch((e) => "error: " + e.message),
+      sw: await Promise.race([
+        navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).then((reg) => new Promise((done) => {
+          const ch = new MessageChannel();
+          ch.port1.onmessage = (e) => done(e.data && e.data.build);
+          reg.active.postMessage({ type: "version" }, [ch.port2]);
+          setTimeout(() => done(null), 4000);
+        })).catch((e) => "error: " + e.message),
+        new Promise((done) => setTimeout(() => done("timeout"), 8000)),
+      ]),
       csp: await fetch("/").then((r) => r.headers.get("content-security-policy")),
       handoff: await fetch("/api/desktop-auth/start", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then((r) => r.status, () => 0),
       manifest: await fetch("/version-manifest.json").then((r) => r.json()).then((m) => m.build, () => null),
