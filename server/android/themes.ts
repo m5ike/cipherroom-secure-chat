@@ -8,16 +8,41 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { THEME_CATALOG } from "../../client/src/lib/theme-catalog";
-import { t } from "../../client/src/lib/i18n";
+import { SUPPORTED_LANGS, t, type Lang } from "../../client/src/lib/i18n";
+import { LOCALES, type Locale } from "../../client/src/lib/locales";
 
 type Tokens = Record<string, string>;
+/** 6.13: a template's name in the nine languages (English always; the app looks a missing one up along the chain). */
+export type ThemeLabel = Partial<Record<Locale, string>> & { en: string };
+
+const webTables = new Map<string, Record<string, string>>();
+/** The web client's text of a key: its dictionary for the languages it has, else the translators' web.json (6.13). */
+function webText(lang: Locale, key: string): string | undefined {
+  if ((SUPPORTED_LANGS as readonly string[]).includes(lang)) {
+    const v = t(lang as Lang, key);
+    return v && v !== key ? v : undefined;
+  }
+  let table = webTables.get(lang);
+  if (!table) {
+    try { table = JSON.parse(readFileSync(resolve(import.meta.dirname, "..", "..", "i18n", "locales", lang, "web.json"), "utf8")) as Record<string, string>; } catch { table = {}; }
+    webTables.set(lang, table);
+  }
+  return typeof table[key] === "string" && table[key] ? table[key] : undefined;
+}
+
+export function themeLabel(key: string): ThemeLabel {
+  const label: ThemeLabel = { en: t("en", key) };
+  for (const lang of LOCALES) { const v = webText(lang, key); if (v) label[lang] = v; }
+  return label;
+}
+
 /**
  * 6.2: besides the colours a template carries its family (the picker's
  * groups), its corner radius (--radius, dp) and its font (--font-sans →
  * sans / serif / mono), so a template changes the shapes and the type too.
  */
 export type AndroidTheme = {
-  id: string; label: Record<"cs" | "en" | "de", string>; tones: string[]; light?: Tokens; dark?: Tokens;
+  id: string; label: ThemeLabel; tones: string[]; light?: Tokens; dark?: Tokens;
   family: string; radius?: number; font?: "sans" | "serif" | "mono";
 };
 
@@ -83,7 +108,7 @@ export function androidThemes(): AndroidTheme[] {
   const themes: AndroidTheme[] = [];
   for (const def of THEME_CATALOG) {
     const base = blocks.get(`${def.id}|`) ?? {};
-    const theme: AndroidTheme = { id: def.id, label: { cs: t("cs", def.labelKey), en: t("en", def.labelKey), de: t("de", def.labelKey) }, tones: [...def.tones], family: def.family };
+    const theme: AndroidTheme = { id: def.id, label: themeLabel(def.labelKey), tones: [...def.tones], family: def.family };
     const radius = radiusDp(base.radius), font = fontKind(base["font-sans"]);
     if (radius !== undefined) theme.radius = radius;
     if (font) theme.font = font;

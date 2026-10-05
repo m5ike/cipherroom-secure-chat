@@ -111,7 +111,13 @@ describe("the design", () => {
   it("the default design is valid and has every screen, string and menu", () => {
     const clean = design.sanitizeDesign(design.DEFAULT_DESIGN);
     expect(Object.keys(clean.screens).sort()).toEqual([...design.SCREEN_IDS].sort());
-    for (const lang of design.LANGS) expect(Object.keys(clean.strings[lang]).sort()).toEqual(Object.keys(design.DEFAULT_STRINGS.en).sort());
+    // 6.13: every language has every English key; a language may have more plural forms (cs "#few", sl "#two" …).
+    const en = Object.keys(design.DEFAULT_STRINGS.en).sort();
+    for (const lang of design.LANGS) {
+      const keys = Object.keys(clean.strings[lang]);
+      expect(keys, lang).toEqual(expect.arrayContaining(en));
+      for (const extra of keys.filter((k) => !en.includes(k))) expect(extra, lang).toMatch(/^[\w.-]+#(zero|one|two|few|many|other)$/);
+    }
     expect(clean.menus.main.length).toBeGreaterThan(0);
   });
 

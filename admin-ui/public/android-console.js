@@ -922,7 +922,11 @@
 
   /* ------------------------------------------------------- the preview */
 
-  const t = (key) => { const table = design.strings[previewLang] || {}; return table[key] ?? (design.strings.en || {})[key] ?? key; };
+  // 6.13: as the app looks a text up — along the language's chain (Slovak → Czech → English; client/src/lib/locales.ts).
+  const langChain = (l) => { const info = (catalog.locales || {})[l]; const chain = [l, ...((info && info.fallback) || [])]; if (!chain.includes("en")) chain.push("en"); return chain; };
+  const t = (key) => { for (const l of langChain(previewLang)) { const table = design.strings[l] || {}; if (table[key] !== undefined) return table[key]; } return key; };
+  /** "sk — Slovenčina" for a language picker. */
+  const langOption = (l) => h("option", { value: l }, (catalog.locales || {})[l] ? `${l} — ${catalog.locales[l].native}` : l);
 
   function colorOf(value, fallback) {
     if (value === undefined || value === null || value === "") return fallback;
@@ -1570,7 +1574,7 @@
   // Suggestions for an action's argument (typed freely all the same).
   const ARG_HINTS = {
     "screen.open": () => catalog.screens.filter((s) => s.group !== "parts").map((s) => s.id),
-    "menu.open": () => Object.keys(design.menus), "lib.run": () => Object.keys(design.libraries), "lang.set": () => catalog.langs,
+    "menu.open": () => Object.keys(design.menus), "lib.run": () => Object.keys(design.libraries), "lang.set": () => [...catalog.langs, "system"],
     "users.dock": () => ["none", "left", "right", "bottom"], "users.autoHide": () => ["true", "false"],
   };
 
@@ -1680,7 +1684,7 @@
     const zoomOut = h("output", {});
     const fitBtn = iconBtn("maximize-2", "Fit the phone to the space", () => { view.zoom = fitZoom(); applyDevice(); }, { "data-read": "1" });
     const tone = h("select", { class: "input input--sm", "aria-label": "Light or dark", "data-read": "1" }, h("option", { value: "light" }, "light"), h("option", { value: "dark" }, "dark"));
-    const lang = h("select", { class: "input input--sm", "aria-label": "Language", "data-read": "1" }, ...catalog.langs.map((l) => h("option", { value: l }, l)));
+    const lang = h("select", { class: "input input--sm", "aria-label": "Language", "data-read": "1" }, ...catalog.langs.map(langOption));
     const playBtn = iconBtn("play", "Play the enter animations", () => play(null), { "data-read": "1" });
     const note = h("div", { class: "and-note", role: "status" });
     const screenEl = h("div", { class: "and-screen" });
@@ -2556,26 +2560,30 @@
   }
 
   function textsEditor(body, markDirty) {
-    const lang = h("select", { class: "input input--sm", "data-read": "1" }, ...catalog.langs.map((l) => h("option", { value: l }, l)));
+    const lang = h("select", { class: "input input--sm", "aria-label": "Language", "data-read": "1" }, ...catalog.langs.map(langOption));
     lang.value = previewLang;
     const filter = h("input", { class: "input input--sm", type: "search", placeholder: "Filter keys or texts…", "data-read": "1" });
     const list = h("div", { class: "and-texts" });
     const draw = () => {
       clear(list);
-      const table = design.strings[lang.value];
+      const l = lang.value;
+      const table = design.strings[l] || (design.strings[l] = {});
       const q = filter.value.toLowerCase();
+      // 6.13: the placeholder is what the app shows without this language's own text (its chain: sk → cs → en).
+      const fallbackOf = (key) => { for (const c of langChain(l).slice(1)) { const v = (design.strings[c] || {})[key]; if (v !== undefined) return v; } return ""; };
       for (const key of Object.keys(design.strings.en).sort()) {
         if (q && !key.includes(q) && !String(table[key] || "").toLowerCase().includes(q)) continue;
-        const i = h("input", { class: "input input--sm", value: table[key] ?? "", placeholder: design.strings.en[key], disabled: !may("builds") || undefined });
-        i.addEventListener("input", () => { table[key] = i.value; markDirty(); });
+        const i = h("input", { class: "input input--sm", value: table[key] ?? "", placeholder: fallbackOf(key) || design.strings.en[key], disabled: !may("builds") || undefined });
+        // Emptied in a language other than English: the text is dropped — the app falls back along the chain (the server puts the default back on save).
+        i.addEventListener("input", () => { if (i.value === "" && l !== "en") delete table[key]; else table[key] = i.value; markDirty(); });
         list.append(h("span", { class: "mono small" }, key), i);
       }
     };
     lang.addEventListener("change", draw);
     filter.addEventListener("input", draw);
     const nk = h("input", { class: "input input--sm mono", placeholder: "new.key" });
-    body.append(h("div", { class: "card stack" }, h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Texts"), h("div", { class: "card__hint" }, "Every text of the app in Czech, English and German; screens use them as {_'key'}. New keys can be added for your own screens.")),
-      h("div", { class: "row" }, lang, filter, h("span", { class: "spacer" }), nk, may("builds") ? h("button", { class: "btn btn--sm", type: "button", onclick: () => { const k = nk.value.trim(); if (!/^[a-zA-Z0-9_.-]{1,80}$/.test(k)) { toast("letters, digits, . _ -", "err"); return; } for (const l of catalog.langs) design.strings[l][k] = design.strings[l][k] ?? ""; nk.value = ""; draw(); markDirty(); } }, "Add key") : null), list));
+    body.append(h("div", { class: "card stack" }, h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Texts"), h("div", { class: "card__hint" }, "Every text of the app in nine languages (6.13); screens use them as {_'key'}. A language without a text shows its fallback's (Slovak → Czech → English), as the placeholder does. A count's plural forms are keys with #one, #few, #other … New keys can be added for your own screens.")),
+      h("div", { class: "row" }, lang, filter, h("span", { class: "spacer" }), nk, may("builds") ? h("button", { class: "btn btn--sm", type: "button", onclick: () => { const k = nk.value.trim(); if (!/^[a-zA-Z0-9_.-]{1,80}(#(zero|one|two|few|many|other))?$/.test(k)) { toast("letters, digits, . _ - (and #one, #few … for a plural form)", "err"); return; } for (const l of ["en", lang.value]) { design.strings[l] = design.strings[l] || {}; design.strings[l][k] = design.strings[l][k] ?? ""; } nk.value = ""; draw(); markDirty(); } }, "Add key") : null), list));
     draw();
   }
 
