@@ -33,6 +33,8 @@ struct RootView: View {
         model.onLink { [weak h] link in h?.handleLink(link) ?? false }
         model.onScenePhase { [weak h] phase in if phase == .active { h?.resumed() } }
         #if DEBUG
+        // Sample mode: the parts read the sample core (Core/Preview) instead of the engine.
+        if DebugLaunch.screen != nil { PreviewCore.install() }
         if DebugLaunch.start(h) { return }
         #endif
         h.start()
