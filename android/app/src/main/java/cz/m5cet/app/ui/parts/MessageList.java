@@ -342,6 +342,7 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
         RoomSession r = a.app().rooms.activeSession();
         String was = roomKey;
         roomKey = r == null ? "" : r.key;
+        restoresSeen = r == null ? -1 : r.restores();
         if (!roomKey.equals(was)) peek = false;
         all.clear();
         byId.clear();
@@ -422,9 +423,12 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
         if (ad != null && isAttachedToWindow()) ad.notifyDataSetChanged();
     }
 
+    /** 6.12: the room's history as last read (RoomSession.restores — it comes again after an unlock). */
+    private int restoresSeen = -1;
+
     void refreshHeaderState() {
         RoomSession r = a.app().rooms.activeSession();
-        if (r == null || !r.key.equals(roomKey)) { load(); return; }
+        if (r == null || !r.key.equals(roomKey) || r.restores() != restoresSeen) { load(); return; }
         empty.setText(a.app().t("room.empty"));
         empty.setTextColor(Ui.color(getContext(), "@muted", Color.GRAY));
         empty.setVisibility(items.isEmpty() ? VISIBLE : GONE);

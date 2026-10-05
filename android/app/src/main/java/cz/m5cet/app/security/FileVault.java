@@ -67,7 +67,8 @@ public final class FileVault {
 
         public Writer(M5 app, String id) throws IOException, GeneralSecurityException {
             this.id = id;
-            this.key = app.vault.userKey();
+            // 6.12 (F-16): its own copy, zeroed at the end — a lock meanwhile zeroes the vault's, not this one mid-file.
+            this.key = app.vault.userKey().clone();
             this.nonce = Crypto.random(8);
             this.target = fileOf(app, id);
             this.tmp = new File(target.getPath() + ".part");
@@ -93,13 +94,18 @@ public final class FileVault {
         }
 
         @Override public void close() throws IOException {
-            flushSegment(true);
-            out.close();
-            if (!tmp.renameTo(target)) throw new IOException("cannot store the file");
+            try {
+                flushSegment(true);
+                out.close();
+                if (!tmp.renameTo(target)) throw new IOException("cannot store the file");
+            } finally {
+                Crypto.wipe(key);
+            }
         }
 
         public void abort() {
             try { out.close(); } catch (IOException ignored) { }
+            Crypto.wipe(key);
             //noinspection ResultOfMethodCallIgnored
             tmp.delete();
         }
@@ -107,7 +113,7 @@ public final class FileVault {
 
     /** Streams the plaintext of a stored file. */
     public static InputStream open(M5 app, String id) throws IOException, GeneralSecurityException {
-        byte[] key = app.vault.userKey();
+        byte[] key = app.vault.userKey().clone(); // 6.12: its own copy, zeroed when the stream closes
         File f = fileOf(app, id);
         long total = f.length();
         InputStream in = new FileInputStream(f);
@@ -148,7 +154,7 @@ public final class FileVault {
                 return n;
             }
 
-            @Override public void close() throws IOException { in.close(); }
+            @Override public void close() throws IOException { Crypto.wipe(key); in.close(); }
         };
     }
 
@@ -164,7 +170,7 @@ public final class FileVault {
 
         public Reader(M5 app, String id) throws IOException, GeneralSecurityException {
             this.id = id;
-            this.key = app.vault.userKey();
+            this.key = app.vault.userKey().clone(); // 6.12: its own copy (a send under way survives a lock), zeroed at close
             this.f = new java.io.RandomAccessFile(fileOf(app, id), "r");
             byte[] head = new byte[12];
             f.readFully(head);
@@ -206,7 +212,7 @@ public final class FileVault {
             return done;
         }
 
-        @Override public void close() throws IOException { f.close(); }
+        @Override public void close() throws IOException { Crypto.wipe(key); f.close(); }
     }
 
     public static byte[] readAll(M5 app, String id) throws IOException, GeneralSecurityException {

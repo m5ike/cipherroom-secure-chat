@@ -27,10 +27,12 @@ import cz.m5cet.app.core.Log;
  * 6.12 (security analysis F-16):
  *   - a lock forgets: "Lock" (the menu, the design's lock.now, the server's
  *     lock command) and the auto-lock (back from the background, or its time
- *     passing there — M5.whenLocked) disconnect the rooms, zero the vault's
- *     data key and drop what was opened with it (M5.forgetSecrets); the next
- *     unlock derives the key again and reconnects. During a call the key
- *     stays until the call ends (the screen is locked at once);
+ *     passing there — M5.whenLocked) zero the vault's data key and drop what
+ *     was opened with it (M5.forgetSecrets). By default the open rooms keep
+ *     receiving into the lock inbox (chat/LockedRooms), merged at the unlock;
+ *     with security.lockDisconnect they close too. The next unlock derives
+ *     the key again. During a call the key stays until the call ends (the
+ *     screen is locked at once), and while the unlock merges the inbox;
  *   - the attempt counter is sealed by a Keystore key that changes with every
  *     write (LockStore): an older copy of the vault's files does not give the
  *     attempts back — a rollback counts as every attempt used (the policy's
@@ -290,11 +292,13 @@ public final class AppLock {
 
     private void forgetOrWait(boolean force) {
         if (!app.vault.unlocked()) return;
-        if (!force && inCall()) {
+        // A call keeps the key until it ends; the unlock's merge of the lock inbox needs it until it is done (moments).
+        boolean draining = cz.m5cet.app.chat.LockedRooms.draining();
+        if ((!force && inCall()) || draining) {
             if (!forgetWaiting) {
                 forgetWaiting = true;
-                Log.i("lock", "locked during a call: the data key goes when it ends");
-                Io.mainLater(this::retryForget, FORGET_RETRY_MS);
+                Log.i("lock", draining ? "locked while the lock inbox is merged: the data key goes right after" : "locked during a call: the data key goes when it ends");
+                Io.mainLater(this::retryForget, draining ? 1_000 : FORGET_RETRY_MS);
             }
             return;
         }

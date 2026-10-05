@@ -150,7 +150,9 @@ public final class M5 extends Application {
     public void emit(String what) { Io.main(() -> { for (Listener l : listeners) l.onAppState(what); }); }
 
     public void onUnlocked() {
-        rooms.load();
+        // 6.12 (F-16): the saved rooms (rooms.load), and what arrived while locked (the lock inbox, also one a crash
+        // left) into the histories before the rooms' lists get them.
+        cz.m5cet.app.chat.LockedRooms.unlocked(this, rooms);
         emit("unlocked");
     }
 
@@ -176,18 +178,29 @@ public final class M5 extends Application {
         }
     }
 
+    /** 6.12 (F-16): Settings › Security — a lock disconnects the rooms too (off: they keep receiving into the lock inbox). */
+    public static final String LOCK_DISCONNECT = "security.lockDisconnect";
+
     /**
      * 6.12 (security analysis F-16): what a lock takes out of the memory — the
-     * rooms close (their histories are saved first, still with the key), the
-     * vault's data key is zeroed, and what was opened with it goes: the
+     * vault's data key is zeroed, and what was opened with it goes: each
+     * room's history (saved first, still with the key), the saved rooms, the
      * account's session record, the people's links, the profile card and the
      * profiles the rooms shared, the History's list, the speech consents. The
-     * screen drops its own (MainActivity on "locked"). The next unlock derives
-     * the key again and connects the selected rooms. Main thread
-     * (AppLock.lockNow / autolocked / onForeground).
+     * screen drops its own (MainActivity on "locked").
+     *
+     * By default the open rooms stay connected with their own keys and keep
+     * receiving: what would be stored goes into the lock inbox
+     * (chat/LockedRooms), merged at the unlock (onUnlocked). With
+     * security.lockDisconnect the rooms close as well (their keys go) and
+     * nothing arrives until the unlock. Main thread (AppLock.lockNow /
+     * autolocked / onForeground).
      */
     public void forgetSecrets() {
-        try { rooms.disconnectAll(); } catch (RuntimeException e) { Log.w("lock", "the rooms did not close cleanly: " + e.getClass().getSimpleName()); }
+        try {
+            if (settings.bool(LOCK_DISCONNECT)) rooms.disconnectAll();
+            else rooms.lockReceiving();
+        } catch (RuntimeException e) { Log.w("lock", "the rooms did not lock cleanly: " + e.getClass().getSimpleName()); }
         vault.lock();
         account.reload();
         cz.m5cet.app.contacts.Store.forget();

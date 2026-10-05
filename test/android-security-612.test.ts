@@ -60,8 +60,13 @@ describe("android 6.12 security — the design's rows", () => {
     const nodes = all(DEFAULT_SCREENS["settings.security"]);
     const ids = nodes.map((x) => x.id);
     expect(nodes.filter((x) => x.el === "switch").map((x) => x.props?.setting)).toContain("security.duress");
+    expect(nodes.filter((x) => x.el === "switch").map((x) => x.props?.setting)).toContain("security.lockDisconnect");
     expect(ids.indexOf("duress")).toBe(ids.indexOf("shuffle-hint") + 1);
-    expect(ids).toContain("lock-hint");
+    expect(ids.indexOf("lock-hint")).toBe(ids.indexOf("lock") + 3); // the lock row's icon and label, then the hint
+    expect(ids.indexOf("lockdisconnect")).toBe(ids.indexOf("lock-hint") + 1);
+    // The strict mode says honestly what it costs.
+    expect(DEFAULT_STRINGS.en["set.security.lockDisconnectHint"]).toMatch(/without an account you miss the messages/);
+    expect(DEFAULT_STRINGS.cs["set.security.lockDisconnectHint"]).toMatch(/bez účtu zprávy poslané během zámku zmeškáte/);
     expect(nodes.find((x) => x.id === "pinkey-value")?.text).toBe("{$security.pinKeyLabel}");
     // patched once, even if the patch ran again
     AREA.patch!(DEFAULT_SCREENS);
@@ -96,8 +101,18 @@ describe("android 6.12 security — the wiring", () => {
     expect(m5).toMatch(/public void onLocked\(\) \{ whenLocked\(\); emit\("locked"\); \}/);
     expect(m5).toContain("lock.autolocked()");
     const forget = m5.slice(m5.indexOf("public void forgetSecrets()"));
-    expect(forget.indexOf("rooms.disconnectAll()")).toBeLessThan(forget.indexOf("vault.lock()")); // histories saved with the key
+    // The default keeps receiving into the lock inbox; the strict setting disconnects. Both before the key goes.
+    expect(forget).toMatch(/if \(settings\.bool\(LOCK_DISCONNECT\)\) rooms\.disconnectAll\(\);\s*else rooms\.lockReceiving\(\);/);
+    expect(m5).toContain('LOCK_DISCONNECT = "security.lockDisconnect"');
+    expect(forget.indexOf("rooms.lockReceiving()")).toBeLessThan(forget.indexOf("vault.lock()")); // the inbox key sealed, histories saved with the key
     for (const s of ["account.reload()", "Store.forget()", "Profiles.of(this).forget()", "ServerVoiceConsent.reset()"]) expect(forget).toContain(s);
+    expect(m5).toContain("cz.m5cet.app.chat.LockedRooms.unlocked(this, rooms);");
+    const rooms = java("chat/Rooms.java");
+    expect(rooms).toContain("boolean inbox = LockedRooms.begin(app);");
+    expect(rooms).toContain("if (!\"sys\".equals(m.kind) && LockedRooms.active()) LockedRooms.message(r.key, m);");
+    expect(java("chat/Files.java")).toContain("LockedRooms.keepFile(room.app, room.key, in.id, in.key, in.tmp, in.slots");
+    expect(java("chat/History.java")).toContain("static synchronized void saveSession(M5 app, RoomSession r)");
+    expect(java("security/AppLock.java")).toContain("cz.m5cet.app.chat.LockedRooms.draining()");
     const vault = java("security/Vault.java");
     expect(vault).toMatch(/byte\[\] k = userKey;\s*userKey = null;\s*Crypto\.wipe\(k\);/);
     expect(java("ui/MainActivity.java")).toContain('case "locked": forgetUi();');

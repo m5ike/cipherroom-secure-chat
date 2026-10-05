@@ -60,6 +60,7 @@ public final class Wiper {
         // 6.8: the app's calls leave the phone's call log, its calling account Telecom, its call history the vault.
         try { cz.m5cet.app.telecom.CallLogBridge.wipe(app); } catch (Throwable ignored) { }
         try { app.rooms.disconnectAll(); } catch (Throwable ignored) { }
+        try { cz.m5cet.app.chat.LockedRooms.close(); } catch (Throwable ignored) { } // 6.12: the lock inbox takes nothing more (its files go below)
         teardown(app);
         // 6.2: the M5cet rows in the phone's address book (usernames of linked people) and our account go too —
         // also for a remote wipe, when no screen is there to do it.

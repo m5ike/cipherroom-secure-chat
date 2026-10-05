@@ -163,25 +163,52 @@ Změny 6.7 (audit S10–S14, N18, F-16):
 * Obrazovky `lock` a `enroll` dostávají prázdné `$form`; nový PIN je
   v soukromém poli, ne v `$form`.
 
-Změny 6.12 (F-16, `docs/security-analysis.md` kap. 13):
+Změny 6.12 (F-16; přehled všech oprav 6.12 pro Android viz § 3.1):
 
 * **Zámek zahodí datový klíč.** „Zamknout“ (menu, akce designu `lock.now`,
   příkaz serveru `lock`) i automatický zámek — při návratu z pozadí i když
   jeho čas uplyne na pozadí (časovač a alarm `Conversations`, od 6.12 budí
-  telefon `setAndAllowWhileIdle`) — odpojí místnosti (historie se uloží ještě
-  s klíčem), DEK uživatelské vrstvy vynuluje (`Vault.lock`) a zahodí, co se
-  s ním otevřelo: relaci účtu v paměti, propojení lidí, profilovou kartu
+  telefon `setAndAllowWhileIdle`) — vynulují DEK uživatelské vrstvy
+  (`Vault.lock`) a zahodí, co se s ním otevřelo: historii každé místnosti
+  v paměti (předtím se uloží ještě s klíčem), uložené místnosti (názvy,
+  passphrase), relaci účtu v paměti, propojení lidí, profilovou kartu
   a profily od členů, seznam Historie, souhlasy s řečí serveru
   (`M5.forgetSecrets`), na obrazovce `$form`, obrázky, seznam zpráv, composer
   a konverzaci s asistentem (`MainActivity.forgetUi`, `Parts.forget`).
-  Odemčení klíč znovu odvodí a vybrané místnosti připojí. **Během hovoru**
-  se obrazovka zamkne hned, klíč zůstane do konce hovoru (kontrola po 15 s);
-  příkaz serveru zamkne i hovor. Zamčená aplikace tedy **nepřijímá zprávy
-  živě** — přihlášenému účtu je drží server a probudí telefon přes FCM
-  (oznámení neutrální, bez obsahu); bez účtu je server nedrží, takže zprávy
-  poslané mezitím zamčená aplikace neuvidí (jako dřív, když ji Android uspal
-  nebo ukončil). Klíče místností v `RoomSession` (chat) se s odpojením zahodí
-  jen jako reference (nulování patří k protokolu 4).
+  Odemčení klíč znovu odvodí. **Během hovoru** se obrazovka zamkne hned,
+  klíč zůstane do konce hovoru (kontrola po 15 s); příkaz serveru zamkne
+  i hovor.
+* **Výchozí režim — příjem i po zamčení** (`chat/LockedRooms`,
+  `security/LockBox`). Otevřené místnosti **zůstanou připojené** se svými
+  klíči (klíč místnosti, sender keys, identita chatu, piny otevřených
+  místností), zprávy dál chodí a oznámení jsou neutrální. Co by se mezitím
+  zapsalo do šifrovaných úložišť, jde do **zámkové schránky**: při zámku
+  vznikne dočasný pár P-256; soukromý klíč se zašifruje DEK a zapíše
+  (`lockbox/<kid>.key`) **dřív, než se DEK vynuluje**, v paměti zůstane jen
+  veřejný klíč. Každá položka (zpráva nebo její novější stav, potvrzení
+  doručení / přečtení u mých starších zpráv, nový pin, údaj pro obnovení
+  spojení, hovor, přijatý soubor) se zapečetí k tomuto veřejnému klíči —
+  nový efemérní klíč na položku, ECDH, HKDF-SHA256, AES-256-GCM s AAD
+  `m5/lockbox/1|<kid>|<pořadí>` — a připíše se do `lockbox/<kid>.log`
+  (synchronizovaný zápis). Soubor, který se dokončí během zámku, se celý
+  ověří a zůstane šifrovaný klíčem přenosu (`lockbox/files`), ten jde do
+  schránky. **Odemčení** schránku uzavře, soukromý klíč odšifruje DEK,
+  položky otevře v pořadí a sloučí: zprávy podle id (nová se připojí, známá
+  se nahradí novějším stavem na svém místě; kontroly jako u historie),
+  potvrzení zvednou stav mých zpráv, piny „první vítězí“, hovory jednou,
+  soubory do trezoru; pak schránku i klíč smaže a místnostem vrátí historii
+  (zprávy přijaté během zámku zůstanou živé objekty). Pád během zámku
+  schránku nezničí (je na disku) a bez PINu ji nikdo nepřečte; další
+  odemčení ji sloučí (dvojí sloučení nic nezdvojí). Zámek během slučování
+  počká, až skončí. Zprávy přijaté během zámku jsou do odemčení v paměti
+  (klíče místností jsou tam také); historie z doby před zámkem ne.
+  Potvrzení „přečteno“ odejdou po odemčení, až se zprávy ukážou (jako dřív).
+* **Přísný režim** (*Nastavení › Zabezpečení › Při zamčení odpojit
+  místnosti*, `security.lockDisconnect`, výchozí vypnuto): zámek místnosti
+  odpojí (`Rooms.disconnectAll`) a zahodí i jejich klíče; zamčená aplikace nic
+  nepřijímá. Přihlášenému účtu zprávy podrží server (FCM, neutrální
+  oznámení); **bez účtu zprávy poslané během zámku zmeškáte** — tak to říká
+  i popis volby.
 * **Klíč PINu ve zkontrolovaném hardwaru.** Nový Keystore klíč `m5.pin`
   (HMAC-SHA256, StrongBox, jinak TEE; jeho umístění se ověří přes
   `KeyInfo`) — KEK = HMAC(`m5.pin`, `"m5/pin/2|"` ‖ PBKDF2(PIN)), obal
@@ -221,7 +248,31 @@ Zbývá (F-16): limit pokusů vynucený bezpečným hardwarem pro vlastní PIN
 aplikace Android nenabízí (s rootem / kódem jako aplikace lze PIN dál hádat
 přes Keystore); obnova celé databáze Keystore spolu se soubory čítač vrátí;
 mezi uplynutím autozámku a doručením alarmu zmrazenému procesu zůstává klíč
-v paměti.
+v paměti; ve výchozím režimu drží zamčená aplikace klíče otevřených místností
+a zprávy přijaté během zámku.
+
+### 3.1 Bezpečnostní opravy 6.12 (mimo protokol 4)
+
+Opravy aplikace, které nezávisí na protokolu 4 (`docs/protocol-v4.md` řeší
+kryptografii chatu zvlášť). `A/` = `android/app/src/main/java/cz/m5cet/app/`.
+Ověřeno JVM testy, sestavením a lintem — **ne na telefonu**.
+
+| Nález | Co se změnilo | Kde | Co zbývá |
+|---|---|---|---|
+| F-16 zámek | zámek vynuluje DEK a zahodí, co se s ním otevřelo; výchozí režim dál přijímá do zámkové schránky, přísný (`security.lockDisconnect`) odpojí | `A/security/AppLock.java`, `A/M5.java` (`forgetSecrets`), `A/chat/LockedRooms.java`, `A/security/LockBox.java`, `A/chat/Rooms.java` (`lockReceiving`), `A/chat/History.java` (`saveSession`, `merge`) | viz výše |
+| F-16 klíč PINu | `m5.pin` ve StrongBoxu / TEE se zkontrolovaným umístěním, obal v2, převod při odemčení PINem | `A/security/Keystore.java` (`ensurePinKey`), `A/security/PinWrap.java`, `A/security/Vault.java` | hardwarový limit pokusů Android nenabízí |
+| F-16 čítač | pečeť klíčem `m5.ctr.<generace>`, rotace při každém zápisu; rollback = vyčerpané pokusy | `A/security/LockStore.java`, `A/security/LockCounter.java` | obnova databáze Keystore rootem |
+| F-16 nouzový PIN | volitelný, smaže aplikaci, prázdný start bez hlášky | `A/security/Duress.java`, `A/security/Wiper.java` | server vidí důvod `duress` |
+| F-22 | jména normalizovaná (bez bidi / `\p{Cf}`, NFKC, mezery, 48 znaků), podobná jména a smíšená písma s „⚠“, oznámení serveru vždy „Operátor“ | `A/core/Names.java`, `A/ui/parts/People.java`, `A/ui/parts/MessageList.java`, `A/chat/RoomSession.java` (`onServerNotice`); vektory `android/app/src/test/resources/cz/m5cet/app/names-vectors.json` | web musí vektory odpovídat stejně |
+| G-14 | `voice.engine=server`: dotaz se jménem poskytovatele jednou na místnost (TTS i přepis), „ne“ nic nepošle, čip „text čte server“ | `A/voice/ServerVoiceConsent.java`, `A/voice/Voice.java`, `A/ui/parts/ComposerVoice.java` | souhlas do zámku / konce procesu |
+| G-20 | `copy` / `share` designu s počítaným textem: celý text (skryté znaky viditelně) a potvrzení; nad 2 000 znaků odmítnuto; kopie `IS_SENSITIVE` | `A/ui/DesignShare.java`, `A/ui/Actions.java` | — |
+| G-22 | `VISIBILITY_SECRET` pro oznámení zpráv při volbě *Skrýt na zamčené obrazovce* a vždy při zamčené aplikaci; vyzvánění zůstává | `A/telecom/LockScreen.java`, `A/telecom/Notify.java` | odemčená aplikace + systémové „zobrazit vše“ ukáže obsah jako dřív |
+
+Neověřeno (vyžaduje telefon): `KeyInfo` a StrongBox na Fold6, doba tvorby
+klíče čítače, `Os.fsync` adresáře na f2fs, převod obalu v1 → v2 na instalaci
+6.11, příjem během zámku a sloučení schránky (i po pádu procesu a s přijatým
+souborem), přísný režim, odložený zámek během hovoru, `VISIBILITY_SECRET`
+v One UI, nouzový PIN, dialog souhlasu s řečí serveru.
 
 ## 4. Framework: obrazovky, šablony, animace
 

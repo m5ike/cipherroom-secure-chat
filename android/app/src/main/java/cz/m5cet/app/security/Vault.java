@@ -82,12 +82,13 @@ public final class Vault {
      * on the disk before anything that depends on it (the attempt counter's
      * old Keystore key is deleted only after its new record is).
      */
-    static void writeDurable(File file, byte[] data) throws IOException {
+    public static void writeDurable(File file, byte[] data) throws IOException {
         writeAtomic(file, data);
         syncDir(file.getParentFile());
     }
 
-    private static void syncDir(File dir) {
+    /** 6.12: a directory's entries on the disk (after a rename into it — the lock inbox's kept files). */
+    public static void syncDir(File dir) {
         if (dir == null) return;
         java.io.FileDescriptor fd = null;
         try {

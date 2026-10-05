@@ -5,9 +5,12 @@
 //
 //   settings.security   "Duress PIN" (security.duress — the app asks for the
 //                       current PIN and the duress PIN when it is switched on,
-//                       ui/parts/Parts.duressChanged; security/Duress), a hint
-//                       under "Lock" (a lock forgets the data key —
-//                       security/AppLock, M5.forgetSecrets), and "PIN key":
+//                       ui/parts/Parts.duressChanged; security/Duress), under
+//                       "Lock" a hint (a lock forgets the data key, the rooms
+//                       keep receiving into the lock inbox — security/AppLock,
+//                       M5.forgetSecrets, chat/LockedRooms) and "Disconnect the
+//                       rooms when locked" (security.lockDisconnect, off — the
+//                       strict mode, said honestly), and "PIN key":
 //                       where the PIN's Keystore key lives ($security.pinKeyLabel —
 //                       StrongBox, the TEE, the older scheme, software only;
 //                       security/Keystore.ensurePinKey, Vault)
@@ -49,9 +52,15 @@ const STR: Record<string, { cs: string; en: string; de: string }> = {
   ),
   "set.security.duress.length": T("Nouzový PIN musí mít {n} číslic.", "The duress PIN must have {n} digits.", "Die Notfall-PIN muss {n} Ziffern haben."),
   "set.security.lockHint": T(
-    "Zamčená aplikace nedrží v paměti klíč k datům: místnosti se odpojí a po odemčení se znovu připojí.",
-    "A locked app keeps no data key in memory: the rooms disconnect and connect again after the unlock.",
-    "Eine gesperrte App behält keinen Datenschlüssel im Speicher: Die Räume trennen sich und verbinden sich nach dem Entsperren wieder.",
+    "Zamčená aplikace nedrží v paměti klíč k datům ani historii. Otevřené místnosti zůstanou připojené: co mezitím přijde, se uloží zašifrovaně, otevřít to jde až PINem, a po odemčení se to doplní do historie.",
+    "A locked app keeps neither the data key nor the history in memory. The open rooms stay connected: what arrives meanwhile is stored encrypted, opened only with your PIN, and added to the history after the unlock.",
+    "Eine gesperrte App behält weder den Datenschlüssel noch den Verlauf im Speicher. Die offenen Räume bleiben verbunden: Was inzwischen ankommt, wird verschlüsselt gespeichert, lässt sich nur mit deiner PIN öffnen und kommt nach dem Entsperren in den Verlauf.",
+  ),
+  "set.security.lockDisconnect": T("Při zamčení odpojit místnosti", "Disconnect the rooms when locked", "Räume beim Sperren trennen"),
+  "set.security.lockDisconnectHint": T(
+    "Přísnější: zamčená aplikace nedrží ani klíče místností a nic nepřijímá. Zprávy pro přihlášený účet podrží server; bez účtu zprávy poslané během zámku zmeškáte.",
+    "Stricter: a locked app keeps not even the rooms' keys and receives nothing. The server keeps messages for a signed-in account; without an account you miss the messages sent while the app is locked.",
+    "Strenger: Eine gesperrte App behält nicht einmal die Schlüssel der Räume und empfängt nichts. Für ein angemeldetes Konto hält der Server die Nachrichten; ohne Konto verpasst du die Nachrichten, die während der Sperre gesendet werden.",
   ),
   "set.security.pinKey": T("Klíč PINu", "PIN key", "PIN-Schlüssel"),
   "set.security.pinKey.strongbox": T("StrongBox (bezpečnostní čip)", "StrongBox (security chip)", "StrongBox (Sicherheitschip)"),
@@ -154,7 +163,11 @@ export function patchSecurity(screens: Record<string, ANode>): void {
   }
   if (!find(sec, "lock-hint")) {
     const parent = parentOf(sec, "lock");
-    if (parent) insert(parent, { after: "lock" }, [hint("lock-hint", "set.security.lockHint")]);
+    if (parent) insert(parent, { after: "lock" }, [
+      hint("lock-hint", "set.security.lockHint"),
+      toggleRow("lockdisconnect", "wifi-off", "set.security.lockDisconnect", "security.lockDisconnect"),
+      hint("lockdisconnect-hint", "set.security.lockDisconnectHint"),
+    ]);
   }
   if (!find(sec, "pinkey")) {
     const parent = parentOf(sec, "policy") ?? find(sec, "list");

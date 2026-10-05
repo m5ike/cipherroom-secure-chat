@@ -28,7 +28,6 @@
 10. [Nesoulad dokumentace s kódem](#10-nesoulad-dokumentace-s-kódem)
 11. [Stav po opravách 6.7](#11-stav-po-opravách-67) (doplněno po vydání, commit `28f10ad0`)
 12. [Stav 6.10: nové části a srovnání](#12-stav-610-nové-části-a-srovnání) (6.8, 6.9 telefonie, 6.10; srovnání i s iMessage a Telegramem)
-13. [Stav 6.12: Android mimo protokol 4](#13-stav-612-android-mimo-protokol-4) (F-16, F-22, G-14, G-20, G-22)
 
 ---
 
@@ -1493,42 +1492,3 @@ má dva režimy, proto ho tabulka uvádí jednou.
   Telegramu, rozsah metadat u Applu a serverové AI funkce WhatsAppu a Applu jsou **neověřené**.
 
 *Kapitola 12 vznikla stejně jako zbytek analýzy — revizí kódu s pomocí AI (Claude). Nenahrazuje nezávislý audit.*
-
----
-
-## 13. Stav 6.12: Android mimo protokol 4
-
-> Opravy aplikace pro Android, které nezávisí na protokolu 4 (`docs/protocol-v4.md` řeší F-06,
-> F-09, F-19, F-21 a kryptografii chatu zvlášť). `A/` = `android/app/src/main/java/cz/m5cet/app/`.
-> Ověřeno JVM testy, sestavením a lintem — **ne na telefonu** (viz konec kapitoly).
-
-| ID | Stav 6.12 | Doklad | Co zbývá |
-|---|---|---|---|
-| F-16 (zámek a DEK) | **opraveno** | `A/security/AppLock.java` (`lockNow`, `autolocked`, `onForeground` → `forgetOrWait`), `A/M5.java` (`forgetSecrets`, `whenLocked`), `A/security/Vault.java` (`lock`: reference pryč, pak nuly), `A/ui/MainActivity.java` (`forgetUi`), `A/ui/parts/Parts.java` (`forget`); alarm autozámku budí telefon (`A/telecom/Conversations.java`) | každý zámek (ruční, automatický, příkaz serveru) odpojí místnosti a vynuluje DEK; během hovoru až po jeho konci. Klíče místností v `chat/*` se jen přestanou držet (nulování s protokolem 4); zmrazený proces drží klíč do doručení alarmu |
-| F-16 (pepř PINu) | **opraveno (v rámci možností Androidu)** | `A/security/Keystore.java` (`ensurePinKey`: StrongBox → TEE, úroveň z `KeyInfo`, software se odmítne), `A/security/PinWrap.java` (obal v2), `A/security/Vault.java` (`open`, `migrate`) | nález tvrdil „pepř v souboru“ — `m5.pep` byl Keystore klíč už dřív, jen bez kontroly umístění. Hardwarový limit pokusů pro vlastní PIN aplikace Android nenabízí (`setMaxUsageCount` > 1 vynucuje keystore2 softwarově); s kódem jako aplikace lze PIN dál hádat (~4 číslice za hodiny) |
-| F-16 (čítač pokusů) | **opraveno** | `A/security/LockStore.java` (pečeť klíčem `m5.ctr.<generace>`, rotace při každém zápisu, `mig` při první pečeti), `A/security/Vault.java` (`putDurable`, `strictJson`), `A/security/LockCounter.java` (`rolledBack`) | rollback = vyčerpané pokusy (wipe / blokace dle politiky); obnova celé databáze Keystore (root) čítač vrátí; Keystore bez odpovědi nic nerozhodne |
-| F-16 (nouzový PIN) | **opraveno** | `A/security/Duress.java`, `A/security/AppLock.java` (`attemptPin` → `duress`), `A/security/Wiper.java` (`quiet`), `A/ui/parts/Parts.java` (`duressChanged`) | výchozí vypnuto; server se o smazání dozví (důvod `duress`) — kdo vidí konzoli, pozná, že šlo o nouzový PIN |
-| F-16 (politika) | opraveno v 6.7 | `A/security/SignedPolicy.java` | — |
-| F-22 (Android) | **opraveno** | `A/core/Names.java` (normalizace, kostra, smíšená písma, `flags`, `senderFlag`, `operator`), `A/ui/parts/People.java` (`flagLookalikes`), `A/ui/parts/MessageList.java` (`senderFlagged`), `A/chat/RoomSession.java` (`onServerNotice`: vždy „Operátor“), vektory `android/app/src/test/resources/cz/m5cet/app/names-vectors.json` | web musí dát pro vektory stejné odpovědi (`client/src/lib/names.ts`); citace a „přeposláno“ se jen normalizují (ověření proti originálu je F-22 web); kostra pokrývá jen latinku, cyrilici a řečtinu |
-| G-14 (Android) | **opraveno** | `A/voice/ServerVoiceConsent.java`, `A/voice/Voice.java` (`serverVoiceMessage`, `serverVoiceToText`), `A/ui/parts/ComposerVoice.java` (`asker`), `A/ui/parts/Composer.java` (čip „text čte server“) | souhlas platí do zámku nebo konce procesu (web: do znovunačtení) |
-| G-20 (zbytek) | **opraveno** | `A/ui/DesignShare.java`, `A/ui/Actions.java` (`copy` / `share`) | počítaný text se ukáže celý (skryté znaky jako `[U+…]`) a projde až po potvrzení; nad 2 000 znaků se odmítne. Kopie z aplikace nese `IS_SENSITIVE` |
-| G-22 (zbytek) | **opraveno** | `A/telecom/LockScreen.java`, `A/telecom/Notify.java` (`message`, `templated`, `neutralizeAll`) | `VISIBILITY_SECRET` s volbou *Skrýt na zamčené obrazovce* a vždy při zamčené aplikaci; bez volby a s odemčenou aplikací ukáže systémové „zobrazit vše“ obsah jako dřív |
-
-**Změny chování (nasazení):**
-
-* **Zamčená aplikace nepřijímá zprávy živě.** Do 6.11 zůstávaly místnosti po zámku (i automatickém,
-  výchozí po 60 s na pozadí) připojené a zprávy chodily s neutrálním oznámením. Od 6.12 se odpojí;
-  přihlášenému účtu zprávy drží server a probudí telefon přes FCM, bez účtu je zamčená aplikace
-  zmešká. Po odemčení se místnosti znovu připojí (Argon2id pro každou místnost).
-* Oznámení zpráv se při zamčené aplikaci na zamčené obrazovce telefonu neukážou vůbec.
-* Instalace z 6.11: klíč PINu se převede při prvním odemčení PINem (odemčení otiskem nepřevádí);
-  záznam čítače pokusů se převezme se svými pokusy — **upgrade nic nesmaže**.
-
-**Neověřeno (vyžaduje telefon):** že `KeyInfo` na Fold6 hlásí StrongBox a klíč PINu i čítače
-vznikne (a jak dlouho trvá vytvoření klíče čítače při každém pokusu); `Os.fsync` adresáře na f2fs;
-převod obalu v1 → v2 na skutečné instalaci 6.11; odpojení a znovupřipojení místností při zámku
-a odemčení (včetně odloženého zámku během hovoru a alarmu autozámku ve spánku); dialog souhlasu
-s řečí serveru se skutečným poskytovatelem; chování `VISIBILITY_SECRET` na zamčené obrazovce
-One UI; nouzový PIN end-to-end (smazání, prázdný start, událost na serveru).
-
-*Kapitola 13 — revize a opravy kódu s pomocí AI (Claude); nenahrazuje nezávislý audit ani test na zařízení.*

@@ -140,12 +140,15 @@ loguje jen kind/peerId/room/peerCount — nikdy plaintext zprávy.
   správce) aplikace **smaže všechna svá data** — místnosti, zprávy i klíče.
   Počet zbývajících pokusů je vidět na obrazovce zámku. Změna PINu chce
   současný PIN.
-- **Zámek od 6.12** — zamčená aplikace nedrží v paměti klíč k datům:
-  místnosti se při zámku odpojí a po odemčení samy připojí (během hovoru se
-  zamkne jen obrazovka, odpojí se po jeho konci). Zprávy pro přihlášený účet
-  mezitím drží server a dá vědět oznámením; bez účtu zamčená aplikace zprávy
-  poslané mezitím nedostane. *Nastavení › Zabezpečení › Klíč PINu* ukazuje,
-  kde je klíč PINu (bezpečnostní čip StrongBox, bezpečný hardware, nebo jen
+- **Zámek od 6.12** — zamčená aplikace nedrží v paměti klíč k datům ani
+  historii zpráv. Otevřené místnosti zůstanou připojené a zprávy dál chodí
+  (oznámení jen „Nová zpráva“); co mezitím přijde, se uloží zašifrovaně tak,
+  že to jde otevřít jen po odemčení PINem nebo otiskem, a po odemčení se to
+  doplní do historie — i když se telefon mezitím restartuje. *Nastavení ›
+  Zabezpečení › Při zamčení odpojit místnosti* je přísnější volba: zamčená
+  aplikace pak nic nepřijímá; zprávy pro přihlášený účet podrží server, **bez
+  účtu zprávy poslané během zámku zmeškáte**. *Klíč PINu* ukazuje, kde je
+  klíč PINu (bezpečnostní čip StrongBox, bezpečný hardware, nebo jen
   software).
 - **Nouzový PIN (6.12)** — *Nastavení › Zabezpečení › Nouzový PIN*. Zapnete
   ho současným PINem a zvolíte jiný PIN stejné délky. Kdo ho zadá na obrazovce
