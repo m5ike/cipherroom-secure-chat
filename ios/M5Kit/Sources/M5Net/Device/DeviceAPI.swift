@@ -17,6 +17,8 @@
 //   GET  /releases/:id   (s)   a release record and the server's signature over it
 
 import Foundation
+import M5Core
+import M5Crypto
 
 public enum DevicePlatform: String, Sendable {
     case ios, android

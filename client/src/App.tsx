@@ -114,11 +114,12 @@ import { MediaE2ee } from "./lib/media-e2ee";
 import { validatePayload, verifyQuote, verifyForward, forwardIndex, type AudioStatusPayload, type ChatPayload } from "./lib/validate";
 import { nameWarningsFor, normalizeFrameNames, noticeSender, type NameWarning } from "./lib/names";
 import { newId } from "./lib/id";
+import { CALL_WAKE_FEATURE, CallWakeInbox, CallWakeSender, callRelayFields, callWakePayload, parseCallWake, type CallWakePayload } from "./lib/call-wake";
 import { APP_BUILD, APP_VERSION } from "./lib/build-info";
 import type { SignInProgress } from "./components/AccountPanel";
 import { TransferCard } from "./components/TransferCard";
 import { MainMenu } from "./components/MainMenu";
-import { formatTime, formatFullDate, formatBytes } from "./lib/format";
+import { formatTime, formatFullDate, formatBytes, formatClock } from "./lib/format";
 import { numberFormat } from "./lib/i18n-intl";
 import { fetchLayoutConfig, applyLayoutStyles, loadCachedLayout } from "./lib/layout-client";
 import { layoutBlocks, layoutTree, renderTemplate, type LayoutConfig, type LayoutContext } from "./lib/layout-config";
@@ -846,6 +847,11 @@ function ChatApp() {
   // it reads them, and whether this server does.
   const binaryChannelsRef = useRef(new WeakSet<RTCDataChannel>());
   const serverBinaryRef = useRef(false);
+  /** 6.14 (call wake): the server wakes away members for calls (hello feature), my ring, relayed call items. */
+  const serverCallWakeRef = useRef(false);
+  const callWakeSenderRef = useRef(new CallWakeSender());
+  const callWakeInboxRef = useRef(new CallWakeInbox());
+  const callWakeTimerRef = useRef<number | null>(null);
   const proxyLimitsRef = useRef<ProxyLimits>(DEFAULT_PROXY_LIMITS);
   const roomRef = useRef("");
   const nameRef = useRef(name);
@@ -987,6 +993,9 @@ function ChatApp() {
     () => peers.filter((peer) => peer.audio === "live" || peer.audio === "muted").length,
     [peers],
   );
+  /** 6.14 (call wake): the peers as last rendered, for code outside rendering (who is in the call). */
+  const peersViewRef = useRef<PeerView[]>(peers);
+  peersViewRef.current = peers;
 
   // 6.2: messages I hid stay out until their time is up — or while I ask to see them.
   const [showHidden, setShowHidden] = useState(false);
@@ -1742,7 +1751,7 @@ function ChatApp() {
    * without any known bundle get the protocol-3 room envelope — `roomKeyFor`
    * names them (the info view says so).
    */
-  async function relayToAway(payload: { id: string }, roomEnvelope: () => Promise<DataChannelEnvelope | null>, targets: AwayPeer[], text?: string): Promise<{ count: number; roomKeyFor: string[]; mailbox: boolean; mailboxFor: string[] }> {
+  async function relayToAway(payload: { id: string }, roomEnvelope: () => Promise<DataChannelEnvelope | null>, targets: AwayPeer[], text?: string, extra?: Record<string, unknown>): Promise<{ count: number; roomKeyFor: string[]; mailbox: boolean; mailboxFor: string[] }> {
     const socket = socketRef.current;
     const keys = keyRef.current;
     const none = { count: 0, roomKeyFor: [], mailbox: false, mailboxFor: [] };
@@ -1774,7 +1783,8 @@ function ChatApp() {
     if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN || to.length === 0) return none;
     // 6.7: "@name" makes their notification a mention (only that reaches the server).
     const mention = mentionedAway(text, targets);
-    socket.send(JSON.stringify({ type: "relay", messageId: payload.id, to, ...(envelope ? { envelope } : {}), ...(Object.keys(per).length ? { per } : {}), ...(mention.length ? { mention } : {}) }));
+    // 6.14: `extra` — a call wake's fields (call / callEnd, callId, video — lib/call-wake.ts).
+    socket.send(JSON.stringify({ type: "relay", messageId: payload.id, to, ...(envelope ? { envelope } : {}), ...(Object.keys(per).length ? { per } : {}), ...(mention.length ? { mention } : {}), ...(extra ?? {}) }));
     const names = (list: string[]) => targets.filter((a) => list.includes(a.accountId)).map((a) => a.name);
     // The info view names who got which form: mailboxes (how many devices, account-pinned or not), or the room key.
     const mailboxFor = sealing.flatMap((s) => (s.form === "mailbox" ? [tp(lang, s.account ? "sec.sealedHow.mailboxAccount" : "sec.sealedHow.mailboxDevice", s.devices, { name: names([s.ref])[0] ?? "?" })] : []));
@@ -2323,6 +2333,14 @@ function ChatApp() {
         }
       }
       handled.push(item.id);
+      // 6.14 (call wake): a call item — a missed call, unless the room shows that call (lib/call-wake.ts).
+      const wake = parseCallWake(opened.payload, { transportSender: item.from.peerId, myId: myIdRef.current });
+      if (wake) {
+        const fresh = await freshMessage(wake.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: item.from.peerId, name: wake.senderName }, { live: false });
+        if (fresh === "unavailable") { handled.splice(handled.indexOf(item.id), 1); continue; }
+        if (fresh !== null) takeCallWake(wake);
+        continue;
+      }
       // The payload must name the peer the server says relayed it, and
       // never us; anything malformed is dropped.
       const checked = validatePayload(opened.payload, { transportSender: item.from.peerId, myId: myIdRef.current });
@@ -2775,6 +2793,69 @@ function ChatApp() {
     await deliverToPeers(payload, () => sealForRoom(payload));
   }
 
+  /* ------------------------------------------------ 6.14: call wake */
+
+  /** Away members who are not on an open data channel here (those see the call themselves). */
+  function awayForCall(): AwayPeer[] {
+    const here = new Set<string>();
+    for (const [peerId, ref] of peerRefsRef.current) if (peersRef.current.get(peerId)?.channel?.readyState === "open") here.add(ref);
+    return awayPeersRef.current.filter((a) => !here.has(a.accountId));
+  }
+
+  const othersInCall = () => peersViewRef.current.filter((p) => p.audio === "live" || p.audio === "muted").length;
+
+  /**
+   * My call just started: when nobody else is in it (I start it), the away
+   * members get ONE call item, sealed like a message (mailboxes, else the room
+   * envelope), and the server rings them (lib/call-wake.ts). Only to a server
+   * that wakes for calls.
+   */
+  async function ringAway(video: boolean) {
+    const away = awayForCall();
+    const ring = callWakeSenderRef.current.start({
+      serverWakes: serverCallWakeRef.current, othersInCall: othersInCall(), away: away.map((a) => a.accountId), video, now: Date.now(), newCallId: () => newId("cw"),
+    });
+    if (ring) await sendCallWake(ring, "ring", away);
+  }
+
+  /** I hung up: when nobody answered my ring, its end stops the phones of those still away. */
+  async function endRing() {
+    const away = awayPeersRef.current;
+    const end = callWakeSenderRef.current.stop(away.map((a) => a.accountId));
+    if (end) await sendCallWake(end, "end", away);
+  }
+
+  async function sendCallWake(ring: { callId: string; video: boolean; at: number; refs: string[] }, state: "ring" | "end", away: AwayPeer[]) {
+    const payload = callWakePayload({ callId: ring.callId, state, video: ring.video, at: ring.at, senderId: myIdRef.current, senderName: nameRef.current, now: Date.now() });
+    const targets = away.filter((a) => ring.refs.includes(a.accountId));
+    let roomCopy: Promise<DataChannelEnvelope | null> | null = null;
+    await relayToAway(payload, () => (roomCopy ??= sealForRoom(payload)), targets, undefined, callRelayFields({ callId: ring.callId, state, video: ring.video })).catch(() => undefined);
+  }
+
+  /** A relayed call item: a missed call now (its end), later (nobody in a call here by then), or never (the room shows it). */
+  function takeCallWake(item: CallWakePayload) {
+    const missed = callWakeInboxRef.current.take(item, Date.now(), othersInCall() > 0);
+    if (missed) noteMissedCall(missed);
+    scheduleCallWakeCheck();
+  }
+
+  function scheduleCallWakeCheck() {
+    if (callWakeTimerRef.current !== null) window.clearTimeout(callWakeTimerRef.current);
+    callWakeTimerRef.current = null;
+    const next = callWakeInboxRef.current.nextDue();
+    if (next === null) return;
+    callWakeTimerRef.current = window.setTimeout(() => {
+      callWakeTimerRef.current = null;
+      if (othersInCall() > 0) callWakeInboxRef.current.roomInCall();
+      for (const missed of callWakeInboxRef.current.due(Date.now())) noteMissedCall(missed);
+      scheduleCallWakeCheck();
+    }, Math.max(100, next - Date.now() + 50));
+  }
+
+  function noteMissedCall(item: CallWakePayload) {
+    systemMessage(tf(lang, item.video ? "call.wake.missedVideo" : "call.wake.missed", { name: item.senderName, time: formatClock(item.at, lang) }), { chatOnly: true });
+  }
+
   function attachAudioTrack(handle: PeerHandle, stream: MediaStream) {
     if (handle.audioElement) {
       handle.audioElement.srcObject = stream;
@@ -3181,6 +3262,8 @@ function ChatApp() {
 
     if (plaintext.kind === "audio-status") {
       setPeerView(peerId, { audio: plaintext.status });
+      // 6.14 (call wake): someone's audio is on — my ring was answered, and a relayed ring's call is the room's.
+      if (plaintext.status === "live" || plaintext.status === "muted") { callWakeSenderRef.current.answered(); callWakeInboxRef.current.roomInCall(); }
       return;
     }
     if (plaintext.kind === "receipt") {
@@ -4010,6 +4093,7 @@ function ChatApp() {
 
       if (frame.type === "hello") {
         serverBinaryRef.current = Array.isArray(frame.features) && frame.features.includes("bin");
+        serverCallWakeRef.current = Array.isArray(frame.features) && frame.features.includes(CALL_WAKE_FEATURE);
         const pl = frame.limits?.proxy;
         proxyLimitsRef.current = pl && [pl.bytesPerSec, pl.burstBytes, pl.framesPerSec, pl.burstFrames].every((n) => typeof n === "number" && n > 0)
           ? pl : DEFAULT_PROXY_LIMITS;
@@ -4288,6 +4372,10 @@ function ChatApp() {
     p4Ref.current = null;
     fileKeysRef.current.clear();
     peerRefsRef.current.clear();
+    // 6.14 (call wake): no ring of mine, nothing waiting for this room any more (an unanswered ring ends on its own in 60 s).
+    callWakeSenderRef.current.stop([]);
+    callWakeInboxRef.current.clear();
+    if (callWakeTimerRef.current !== null) { window.clearTimeout(callWakeTimerRef.current); callWakeTimerRef.current = null; }
     setP4Peers({});
     setHubProven(null);
     void replayStoreRef.current?.flush();
@@ -5371,6 +5459,7 @@ function ChatApp() {
       });
       setAudioStatus("live");
       await broadcastAudioStatus("live");
+      void ringAway(false); // 6.14: an outgoing call rings the away members
       systemMessage(t(lang, "app.audio.live"));
     } catch (err) {
       setAudioStatus("off");
@@ -5395,6 +5484,7 @@ function ChatApp() {
     });
     setAudioStatus("off");
     await broadcastAudioStatus("off");
+    void endRing(); // 6.14: nobody answered my ring — it stops
     systemMessage(t(lang, "app.audio.left"));
   }
 
@@ -5683,6 +5773,7 @@ function ChatApp() {
       setVideoOn(true);
       setCallMode("video");
       await broadcastAudioStatus("live");
+      void ringAway(true); // 6.14: an outgoing video call rings the away members
       systemMessage(t(lang, "app.video.started"));
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
     } catch (err) {

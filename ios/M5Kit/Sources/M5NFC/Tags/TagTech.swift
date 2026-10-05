@@ -7,6 +7,7 @@
 // AIDs or emulation on an iPhone unless the capability says so).
 
 import Foundation
+import M5Core
 
 public enum TagTech {
     /// The NXP DESFire ATS: historical bytes 75 77 81 02 80 (with or without the length byte).
@@ -68,9 +69,9 @@ public enum TagTech {
             }
         case .iso7816(let aid, _, _):
             let a = JSText.upperASCII(aid)
-            if a == Hex.encode(MrtdReader.aid) { return NfcCatalog.eid }
+            if a == Hex.upper(MrtdReader.aid) { return NfcCatalog.eid }
             if EmvTags.scheme(forAid: a) != nil { return NfcCatalog.emv }
-            if a == Hex.encode(Ndef.t4tAid) { return NfcCatalog.ndef }
+            if a == Hex.upper(Ndef.t4tAid) { return NfcCatalog.ndef }
             return NfcCatalog.isoDep
         }
     }

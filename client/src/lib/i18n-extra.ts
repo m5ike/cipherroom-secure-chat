@@ -195,6 +195,9 @@ const en: Dict = {
   "nfc.pcsc.slot.contactless": "contactless",
   "nfc.pcsc.slot.sam": "SAM",
   "nfc.pcsc.slot.unknown": "slot",
+  // 6.14: call wake — a call while I was away that the room no longer shows.
+  "call.wake.missed": "📞 Missed call from {name} ({time})",
+  "call.wake.missedVideo": "📹 Missed video call from {name} ({time})",
 };
 
 const cs: Dict = {
@@ -377,6 +380,8 @@ const cs: Dict = {
   "nfc.pcsc.slot.contactless": "bezkontaktní",
   "nfc.pcsc.slot.sam": "SAM",
   "nfc.pcsc.slot.unknown": "slot",
+  "call.wake.missed": "📞 Zmeškaný hovor od {name} ({time})",
+  "call.wake.missedVideo": "📹 Zmeškaný videohovor od {name} ({time})",
 };
 
 const de: Dict = {
@@ -548,6 +553,8 @@ const de: Dict = {
   "nfc.pcsc.slot.contactless": "kontaktlos",
   "nfc.pcsc.slot.sam": "SAM",
   "nfc.pcsc.slot.unknown": "Steckplatz",
+  "call.wake.missed": "📞 Verpasster Anruf von {name} ({time})",
+  "call.wake.missedVideo": "📹 Verpasster Videoanruf von {name} ({time})",
 };
 
 export const EXTRA_I18N = { cs, en, de } as const;

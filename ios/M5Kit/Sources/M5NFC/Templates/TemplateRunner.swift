@@ -20,6 +20,7 @@
 
 import Foundation
 import Synchronization
+import M5Core
 
 /// One recorded exchange of a run (apdu-templates.ts TemplateExchange).
 public struct TemplateExchange: Sendable, Hashable {
@@ -136,7 +137,7 @@ public final class TemplateRunner: Sendable {
         let cla = Int(apdu[0]), ins = Int(apdu[1])
         if ApduTemplates.readCommand(cla, ins) { return nil }
         if op == "eid-read" && ApduTemplates.secureChannelCommand(cla, ins) { return nil }
-        return ApduTemplates.commandProblem(Hex.encode(apdu)) ?? "not a read command"
+        return ApduTemplates.commandProblem(Hex.upper(apdu)) ?? "not a read command"
     }
 
     /// A status a reader operation goes on from: success, more data (61xx), a Le to fix (6Cxx), the end of a file (6282).
@@ -247,11 +248,11 @@ final class RunState {
             let ms = max(0, Int((Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15).rounded()))
             let data: String, sw: String
             if let r = resp {
-                if r.count < 2 { data = Hex.encode(r); sw = "" } else { data = Hex.encode(r[0..<(r.count - 2)]); sw = StatusWords.hex(Int(r[r.count - 2]) << 8 | Int(r[r.count - 1])) }
+                if r.count < 2 { data = Hex.upper(r); sw = "" } else { data = Hex.upper(r[0..<(r.count - 2)]); sw = StatusWords.hex(Int(r[r.count - 2]) << 8 | Int(r[r.count - 1])) }
             } else { data = ""; sw = "" }
             let c = state.current
             let status = resp == nil ? "error" : TemplateRunner.tolerated(sw) ? "ok" : "warn"
-            let e = TemplateExchange(step: c?.step ?? 0, label: c?.label ?? "", op: c?.op ?? "", command: Hex.encode(apdu), response: data, sw: sw, status: status, ms: ms)
+            let e = TemplateExchange(step: c?.step ?? 0, label: c?.label ?? "", op: c?.op ?? "", command: Hex.upper(apdu), response: data, sw: sw, status: status, ms: ms)
             state.result.exchanges.append(e)
             state.runner.onExchange?(e)
         }
@@ -312,7 +313,7 @@ final class RunState {
             case "gpo":
                 emvRan = true
                 let a = appRead(aid)
-                if await a.gpo(sender) { result.steps[index].setNote("nfc.tpl.n.gpo", a.x.aip.map { Hex.encode($0) } ?? "—", a.x.afl.map { Hex.encode($0) } ?? "—") }
+                if await a.gpo(sender) { result.steps[index].setNote("nfc.tpl.n.gpo", a.x.aip.map { Hex.upper($0) } ?? "—", a.x.afl.map { Hex.upper($0) } ?? "—") }
                 else { result.steps[index].status = s.optional ? "warn" : "error"; result.steps[index].setNote("nfc.tpl.n.gpoRefused") }
             case "read-afl":
                 emvRan = true
@@ -379,7 +380,7 @@ final class RunState {
         result.steps[index].command = command
         if !command.fullMatch("([0-9A-F]{2}){4,261}") { result.steps[index].status = "error"; result.steps[index].setNote("nfc.tpl.n.badCommand"); return }
         if let why = ApduTemplates.commandProblem(command) { result.steps[index].status = "error"; result.steps[index].setNote("nfc.tpl.n.refused", why); return } // G-18: never sent
-        let cmd = Hex.decode(command)
+        let cmd = Hex.decodeLenient(command)
         var resp = Apdu.split(try await recorder.transmit(cmd))
         if resp.sw1 == 0x6c && cmd.count >= 5 {
             var again = cmd
@@ -397,7 +398,7 @@ final class RunState {
         if let more = s.more, !more.isEmpty {
             let whyMore = more.fullMatch("([0-9A-F]{2}){4,261}") ? ApduTemplates.commandProblem(more) : "bad follow-up command"
             if let why = whyMore { result.steps[index].status = "error"; result.steps[index].setNote("nfc.tpl.n.refused", why); return } // G-18: never sent
-            let next = Hex.decode(more)
+            let next = Hex.decodeLenient(more)
             var n = 0
             while n < 32 && resp.sw == 0x91af {
                 resp = Apdu.split(try await recorder.transmit(next))
@@ -405,7 +406,7 @@ final class RunState {
                 n += 1
             }
         }
-        result.steps[index].data = Hex.encode(data)
+        result.steps[index].data = Hex.upper(data)
         result.steps[index].sw = StatusWords.hex(resp.sw)
         let status = TemplateRunner.expected(s.expect, resp.sw) ? "ok" : s.optional ? "warn" : "error"
         result.steps[index].status = status

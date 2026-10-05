@@ -24,6 +24,8 @@
  "audio.muted": "Microfono disattivato",
  "away.received#one": "Consegnato {n} messaggio arrivato mentre eri assente.",
  "away.received#other": "Consegnati {n} messaggi arrivati mentre eri assente.",
+ "call.wake.missed": "📞 Chiamata persa da {name} ({time})",
+ "call.wake.missedVideo": "📹 Videochiamata persa da {name} ({time})",
  "caps.body": "Questa app richiede la crittografia moderna del browser e WebRTC. Usa una versione recente di Edge, Chrome, Firefox o Safari.",
  "caps.ie": "Internet Explorer non è supportato. Usa Edge, Chrome, Firefox o Safari.",
  "caps.title": "M5cet — browser non supportato",

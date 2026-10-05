@@ -14,7 +14,7 @@ final class CallSystem {
     static let shared = CallSystem()
 
     @ObservationIgnored let engine: RtcEngine
-    @ObservationIgnored let history: CallHistoryStore
+    @ObservationIgnored let history: AppCallHistory
     let center: CallCenter
     @ObservationIgnored let voip: VoIPPushHandler
     @ObservationIgnored private let provider: any CallProviding
@@ -38,7 +38,7 @@ final class CallSystem {
 
     /// Any providers (tests: fakes).
     init(engine: RtcEngine, provider: any CallProviding, controller: any CallControlling, environment: any CallEnvironment,
-         iconTemplate: Data? = nil, audio: CallAudioSession? = nil, history: CallHistoryStore = CallHistoryStore()) {
+         iconTemplate: Data? = nil, audio: CallAudioSession? = nil, history: AppCallHistory = AppCallHistory()) {
         self.engine = engine
         self.provider = provider
         self.environment = environment

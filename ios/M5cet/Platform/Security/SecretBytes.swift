@@ -1,5 +1,6 @@
-// Secret key material that is zeroed in place, and the byte helpers of the
-// security code (Android: byte[] + Crypto.wipe / random / b64 / hex / same).
+// Secret key material that is zeroed in place, and the few byte helpers the
+// platform layer adds to M5Core's (`Bytes` = [UInt8] and its `Bytes.b64 / unb64 /
+// hex / same / random …` for Data are M5Core's and M5Crypto's — one owner per name).
 //
 // A data key (DEK) lives in one SecretBytes: readers share the instance, so
 // Vault.lock() zeroes it for everyone — as Android zeroes the one array it
@@ -8,6 +9,8 @@
 
 import CryptoKit
 import Foundation
+import M5Core
+import M5Crypto
 import Security
 
 /// Why a security operation did not happen. Messages never carry secrets.
@@ -56,11 +59,18 @@ final class SecretBytes: @unchecked Sendable {
         buffer = b
     }
 
+    /// Takes a copy of M5Kit's bytes (the caller wipes its own copy: `ByteOps.wipe`).
+    convenience init(bytes: Bytes) {
+        var d = Data(bytes)
+        self.init(d)
+        SecData.wipe(&d)
+    }
+
     /// Fresh random key material.
     convenience init(random count: Int) {
         var d = Bytes.random(count)
         self.init(d)
-        Bytes.wipe(&d)
+        SecData.wipe(&d)
     }
 
     deinit { wipe() }
@@ -95,7 +105,7 @@ final class SecretBytes: @unchecked Sendable {
     func copy() throws -> SecretBytes {
         try withBytes { raw in
             var d = Data(raw)
-            defer { Bytes.wipe(&d) }
+            defer { SecData.wipe(&d) }
             return SecretBytes(d)
         }
     }
@@ -103,22 +113,19 @@ final class SecretBytes: @unchecked Sendable {
     /// The bytes as Data — only where an API needs Data (the caller wipes it).
     func data() throws -> Data { try withBytes { Data($0) } }
 
+    /// The bytes as M5Kit's `Bytes`, for M5Crypto's formats (PinWrap, LockBox) — the caller wipes them
+    /// (`ByteOps.wipe`; a Swift array is a value, so this is best effort, as M5Crypto's own keys).
+    func bytes() throws -> Bytes { try withBytes { Array($0) } }
+
     /// Constant-time comparison with other bytes.
     func same(as other: Data) -> Bool {
         (try? withBytes { Bytes.same(Data($0), other) }) ?? false
     }
 }
 
-/// Byte helpers, as Android's Crypto (base64 with padding for binary fields,
-/// base64url without padding for identifiers — docs/android-architecture.md § 1).
-enum Bytes {
-    static func random(_ n: Int) -> Data {
-        var d = Data(count: n)
-        let status = d.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, n, $0.baseAddress!) }
-        precondition(status == errSecSuccess, "no system randomness")
-        return d
-    }
-
+/// What the platform layer adds to M5Core's byte helpers: zeroing `Data`, a zero-based copy,
+/// UTF-8 as `Data` (M5Core's `Bytes.utf8` gives `[UInt8]`), a big-endian u32 as `Data`.
+enum SecData {
     /// Zeroes and empties a Data (its buffer, when this is its only owner).
     static func wipe(_ d: inout Data) {
         d.withUnsafeMutableBytes { raw in
@@ -134,56 +141,17 @@ enum Bytes {
         a.removeAll()
     }
 
-    /// Constant time for equal lengths (Android MessageDigest.isEqual).
-    static func same(_ a: Data, _ b: Data) -> Bool {
-        guard a.count == b.count else { return false }
-        var diff: UInt8 = 0
-        for i in 0..<a.count { diff |= a[a.startIndex + i] ^ b[b.startIndex + i] }
-        return diff == 0
-    }
-
     /// A copy that starts at index 0 (a slice of a Data keeps its parent's indices).
     static func fresh(_ d: Data) -> Data { d.withUnsafeBytes { Data($0) } }
 
     static func utf8(_ s: String) -> Data { Data(s.utf8) }
     static func str(_ d: Data) -> String? { String(data: d, encoding: .utf8) }
 
-    static func b64(_ d: Data) -> String { d.base64EncodedString() }
+    static func u32be(_ v: UInt32) -> Data { Data(ByteOps.be32(v)) }
 
-    /// Standard base64; padding optional (as Java's decoder), anything else outside the alphabet refused.
-    static func unb64(_ s: String) -> Data? {
-        var t = s
-        if t.contains("-") || t.contains("_") { return nil }
-        let rem = t.count % 4
-        if rem == 1 { return nil }
-        if rem > 0 && !t.hasSuffix("=") { t += String(repeating: "=", count: 4 - rem) }
-        return Data(base64Encoded: t)
-    }
+    /// A JSON object's text as Data (M5Core's `stringify`, JavaScript's JSON.stringify output).
+    static func json(_ o: JSONObject) -> Data { Data(o.stringify().utf8) }
 
-    static func b64url(_ d: Data) -> String {
-        d.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-
-    static func unb64url(_ s: String) -> Data? {
-        if s.contains("+") || s.contains("/") { return nil }
-        return unb64(s.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/"))
-    }
-
-    static func hex(_ d: Data) -> String { d.map { String(format: "%02x", $0) }.joined() }
-
-    static func unhex(_ s: String) -> Data? {
-        guard s.count % 2 == 0 else { return nil }
-        var out = Data(capacity: s.count / 2)
-        var i = s.startIndex
-        while i < s.endIndex {
-            let j = s.index(i, offsetBy: 2)
-            guard let b = UInt8(s[i..<j], radix: 16) else { return nil }
-            out.append(b)
-            i = j
-        }
-        return out
-    }
-
-    static func u32be(_ v: UInt32) -> Data { Data([UInt8(v >> 24 & 0xff), UInt8(v >> 16 & 0xff), UInt8(v >> 8 & 0xff), UInt8(v & 0xff)]) }
+    /// A JSON object from Data; nil when it is not one.
+    static func json(_ d: Data) -> JSONObject? { JSON.parseObject(String(decoding: d, as: UTF8.self)) }
 }

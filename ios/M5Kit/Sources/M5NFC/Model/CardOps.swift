@@ -5,6 +5,7 @@
 // transport's; on iOS they are flagged (`NfcPlatform`).
 
 import Foundation
+import M5Core
 
 public enum CardOps {
     /// EMV PUBLIC read: PPSE → the card's application labels and AIDs. Read-only, no transaction.
@@ -12,13 +13,13 @@ public enum CardOps {
         let r = Apdu.split(try await t.transmit(Apdu.selectByAid(EmvReader.ppse)))
         var out = NfcJSONObject()
         let ok = r.sw == 0x9000
-        out["ppse"] = .string(ok ? Hex.encode(r.data) : "no-ppse")
+        out["ppse"] = .string(ok ? Hex.upper(r.data) : "no-ppse")
         var apps = [NfcJSON]()
         if ok {
             let nodes = BerTlv.decode(r.data, recurse: true)
             let aids = BerTlv.findAll(nodes, 0x4f), labels = BerTlv.findAll(nodes, 0x50)
             for (i, a) in aids.enumerated() {
-                var app: NfcJSONObject = ["aid": .string(Hex.encode(a.value))]
+                var app: NfcJSONObject = ["aid": .string(Hex.upper(a.value))]
                 if i < labels.count { app["label"] = .string(Bytes.asciiString(labels[i].value)) }
                 apps.append(.object(app))
             }
@@ -64,7 +65,7 @@ public enum CardOps {
         var p = 0
         while p < maxPage {
             guard let four = try? await t.mifareCommand([0x30, UInt8(p & 0xff)]), four.count >= 16 else { break }
-            for i in 0..<4 { pages.append(.string(Hex.encode(four[(i * 4)..<(i * 4 + 4)]))) }
+            for i in 0..<4 { pages.append(.string(Hex.upper(four[(i * 4)..<(i * 4 + 4)]))) }
             p += 4
         }
         return ["pages": .array(pages), "pageCount": NfcJSON(pages.count)]

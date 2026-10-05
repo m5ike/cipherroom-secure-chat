@@ -124,6 +124,16 @@
   "cs": "Doručeno {n} zpráv, které přišly během vaší nepřítomnosti.",
   "de": "{n} Nachrichten zugestellt, die während Ihrer Abwesenheit ankamen."
  },
+ "call.wake.missed": {
+  "en": "📞 Missed call from {name} ({time})",
+  "cs": "📞 Zmeškaný hovor od {name} ({time})",
+  "de": "📞 Verpasster Anruf von {name} ({time})"
+ },
+ "call.wake.missedVideo": {
+  "en": "📹 Missed video call from {name} ({time})",
+  "cs": "📹 Zmeškaný videohovor od {name} ({time})",
+  "de": "📹 Verpasster Videoanruf von {name} ({time})"
+ },
  "caps.body": {
   "en": "This app needs modern browser crypto and WebRTC. Use a recent Edge, Chrome, Firefox or Safari.",
   "cs": "Aplikace potřebuje moderní kryptografii prohlížeče a WebRTC. Použijte aktuální Edge, Chrome, Firefox nebo Safari.",

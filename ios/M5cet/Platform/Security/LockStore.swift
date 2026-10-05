@@ -21,6 +21,8 @@
 // (the keys and the record are protocols): LockStoreTests run every order of a stop.
 
 import Foundation
+import M5Core
+import M5Crypto
 
 /// The secure-hardware side (Keyring's counter keys).
 protocol LockAnchor {
@@ -37,9 +39,9 @@ protocol LockAnchor {
 protocol LockRecords {
     /// The record; [:] when there is none; nil when it cannot be read now (nothing is decided then);
     /// [unreadable: true] when it does not parse (changed by someone).
-    func read() -> SecRecord?
+    func read() -> JSONObject?
     /// Durably; false when it could not be written.
-    func write(_ record: SecRecord) -> Bool
+    func write(_ record: JSONObject) -> Bool
 }
 
 final class LockStore {
@@ -55,7 +57,7 @@ final class LockStore {
     }
 
     struct View {
-        var state: SecRecord
+        var state: JSONObject
         var verdict: Verdict
     }
 
@@ -70,46 +72,48 @@ final class LockStore {
     }
 
     /// The counter's fields without the seal.
-    static func fields(_ r: SecRecord) -> SecRecord {
-        r.filter { ![gen, mac, mig, unreadable].contains($0.key) }
+    static func fields(_ r: JSONObject) -> JSONObject {
+        var out = JSONObject()
+        for (k, v) in r where ![gen, mac, mig, unreadable].contains(k) { out[k] = v }
+        return out
     }
 
     /// What the seal covers: the generation and every field that decides, in a fixed order
     /// (Android's "m5/lock/1|gen|attempts|until|pending" + the monotonic wait of iOS).
-    static func canonical(_ r: SecRecord, gen g: Int64) -> Data {
-        let pending = r.jHas("pending") ? String(r.jInt64("pending")) : "-1"
-        let parts = ["m5/lock/ios/1", String(g), String(r.jInt("attempts")), String(r.jInt64("until")), pending,
-                     String(r.jInt64("untilMono")), r.jString("boot"), String(r.jInt64("wait"))]
-        return Bytes.utf8(parts.joined(separator: "|"))
+    static func canonical(_ r: JSONObject, gen g: Int64) -> Data {
+        let pending = r.isPresent("pending") ? String(r.optInt64("pending")) : "-1"
+        let parts = ["m5/lock/ios/1", String(g), String(r.optInt("attempts")), String(r.optInt64("until")), pending,
+                     String(r.optInt64("untilMono")), r.optString("boot"), String(r.optInt64("wait"))]
+        return SecData.utf8(parts.joined(separator: "|"))
     }
 
     /// Reads and checks the record.
     func load() -> View {
-        guard let r = records.read() else { return View(state: [:], verdict: .unverified) }
+        guard let r = records.read() else { return View(state: JSONObject(), verdict: .unverified) }
         guard let gens = anchor.generations() else { return View(state: Self.fields(r), verdict: .unverified) }
         // A record that does not parse: someone changed it — but before the first seal it reads as none.
-        if r.jBool(Self.unreadable) { return View(state: [:], verdict: gens.isEmpty ? .legacy : .rollback) }
-        let sealed = r.jHas(Self.gen)
+        if r.bool(Self.unreadable) == true { return View(state: JSONObject(), verdict: gens.isEmpty ? .legacy : .rollback) }
+        let sealed = r.isPresent(Self.gen)
         if gens.isEmpty {
             // No key at all: never sealed — unless the record says it was (its keys are gone).
             return View(state: Self.fields(r), verdict: sealed ? .rollback : .legacy)
         }
         if !sealed {
             // A first seal that stopped after making its key (the record names the generation it was getting).
-            if r.jHas(Self.mig), gens.contains(r.jInt64(Self.mig, -1)) { return View(state: Self.fields(r), verdict: .legacy) }
+            if r.isPresent(Self.mig), gens.contains(r.optInt64(Self.mig, -1)) { return View(state: Self.fields(r), verdict: .legacy) }
             return View(state: Self.fields(r), verdict: .rollback)
         }
-        let g = r.jInt64(Self.gen, -1)
+        let g = r.optInt64(Self.gen, -1)
         guard gens.contains(g) else { return View(state: Self.fields(r), verdict: .rollback) }
         guard let want = anchor.mac(g, Self.canonical(r, gen: g)) else { return View(state: Self.fields(r), verdict: .unverified) }
-        let have = Bytes.unb64(r.jString(Self.mac)) ?? Data()
+        let have = Bytes.unb64(r.optString(Self.mac)) ?? Data()
         return View(state: Self.fields(r), verdict: Bytes.same(want, have) ? .ok : .rollback)
     }
 
     /// Writes the counter's state sealed by a new generation; the older keys go after the record is
     /// stored. False when it could not be written (AppLock then checks no PIN). Keys that cannot be
     /// made at all leave the record unsealed; no new key now seals with the one there is.
-    func save(_ state: SecRecord) -> Bool {
+    func save(_ state: JSONObject) -> Bool {
         guard let gens = anchor.generations() else { return false }
         let cur = gens.max() ?? -1
         var next = cur < 0 ? 1 : cur + 1
@@ -117,7 +121,7 @@ final class LockStore {
         if cur < 0 {
             // The first seal: say so in the record before the key exists.
             var marked = plain
-            marked[Self.mig] = next
+            marked[Self.mig] = .int(next)
             guard records.write(marked) else { return false }
             if !anchor.create(next) { return true } // no key on this device: the unsealed record stays
         } else if !anchor.create(next) {
@@ -128,8 +132,8 @@ final class LockStore {
             return false
         }
         var sealed = plain
-        sealed[Self.gen] = next
-        sealed[Self.mac] = Bytes.b64(mac)
+        sealed[Self.gen] = .int(next)
+        sealed[Self.mac] = .string(Bytes.b64(mac))
         guard records.write(sealed) else {
             if next != cur { anchor.delete(next) }
             return false
@@ -154,16 +158,16 @@ struct SecureStoreLockRecords: LockRecords {
     let store: SecureStore
     var name = "lock"
 
-    func read() -> SecRecord? {
+    func read() -> JSONObject? {
         do {
-            guard let d = try store.read(name) else { return [:] }
-            return SecJSON.parse(d) ?? [LockStore.unreadable: true]
+            guard let d = try store.read(name) else { return JSONObject() }
+            return SecData.json(d) ?? JSONObject([(LockStore.unreadable, .bool(true))])
         } catch {
             return nil
         }
     }
 
-    func write(_ record: SecRecord) -> Bool {
-        (try? store.write(name, SecJSON.data(record), access: .foreground)) != nil
+    func write(_ record: JSONObject) -> Bool {
+        (try? store.write(name, SecData.json(record), access: .foreground)) != nil
     }
 }

@@ -43,10 +43,17 @@ push any more:
    audit journal (`notify.sent` / `notify.failed`).
 
 Which kinds fire today: `message` and `mention` (from the away relay),
-`summon` (the operator calls an away member back, `m5room.connect`) and `test`
-(the user's or the console's test). `call` and `function` exist in the
-templates, the settings and the console, but no client or server code sends
-them yet — only the console test reaches them.
+`summon` (the operator calls an away member back, `m5room.connect`), `test`
+(the user's or the console's test) and — 6.14, *call wake* — `call`: a member
+starting a call rings the room's away members (one sealed relay item; the web
+and Android send it). A ring carries `call` {id, video, at} (and, for the app
+channel only, sealed per device, the room), has its own tag `m5-call-<id>` and
+lives 60 s on every channel (iOS: a PushKit VoIP push sealing the call); its
+end — the caller hung up unanswered — goes only where the ring went (never by
+e-mail) as a quiet "missed call" in the ring's place. Details:
+[`api.md` › Buzení při hovoru (6.14)](api.md#buzení-při-hovoru-614).
+`function` exists in the templates, the settings and the console, but no code
+sends it yet — only the console test reaches it.
 
 Before 6.7 the Android app was never woken: it signed in with `away: false`
 (so the server neither kept it away nor queued its messages), and the relay's

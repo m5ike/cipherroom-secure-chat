@@ -4,6 +4,8 @@ Port of the Android app's networking (`android/app/src/main/java/cz/m5cet/app/` 
 `push/*`, `update/*`, the hub parts of `chat/*`, `rtc/Rtc`, `security/{ServerPin,SignedPolicy}`) to Swift 6
 (strict concurrency: actors for connection state, `Sendable` models). Foundation, URLSession, Network
 (tests only), CryptoKit (SHA-256, P-256 verification, AES-GCM of design bundles) — no third-party code.
+The byte helpers it calls (`Bytes.b64`, `Bytes.unb64`, `Bytes.hex`, `Bytes.same`, … for `Data`) are M5Core's,
+`Bytes.sha256` / `Bytes.random` M5Crypto's.
 Builds for iOS, iPadOS, watchOS and macOS 26.
 
 Everything that needs a secret key comes in through a protocol (§ 2): M5Crypto and the app's Platform
@@ -18,7 +20,7 @@ layer (Secure Enclave, Keychain) implement them; tests use small CryptoKit versi
 | `net/WebSocket` | `HubTransport`, `URLSessionHubTransport` | `URLSessionWebSocketTask`, no Origin header, custom close codes (4001 / 4003) arrive |
 | frames (`server/signaling/frames.ts`) | `HubClientFrame` (+ `validate()`), `HubServerFrame`, `HubWire`, `BinaryChunkFrame` | every v2 frame both ways; the encoder writes the hub's normalized form; `validate()` checks what `parseFrame` checks |
 | `server/signaling/limits.ts` | `HubRateLimiter`, `HubLimitClass` | the hub's token buckets mirrored; `rate-limited` blocks a class for `retryAfterMs` |
-| `chat/RoomSession.hubProof`, `p4/HubProof` | `HubProof`, `HubProofSigner` | `m5cet/hub-join/4|roomId|nonce`; legacy retry (`legacyAllowed`), proofs skipped 1 h after |
+| `chat/RoomSession.hubProof`, `p4/HubProof` | `HubProofFrames`, `HubProofSigner`, `HubSeedSigner` | the join frame's proof over `m5cet/hub-join/4\|roomId\|nonce` — its bytes and keys are M5Crypto's `HubProof` (joinData, pub, build, verify); legacy retry (`legacyAllowed`), proofs skipped 1 h after |
 | `chat/Resume` | `HubResumeStore`, `StoredResumeStore` | peer id + resume secret per room (record `resume`, ≤ 64 rooms) |
 | `chat/P4Relay` | `RelayDirectory`, `RelayDeviceChecker` | `key-bundles` / `kt-lookup` cache and questions, which devices to seal for, the `relay` frame with `per` / `mb-set` / room envelope |
 | `p4/Kt.State` | `KtMonitor` (actor), `KtVerifier`, `KtStateStore` | pinned KT key, consistent heads, unreachable → pending → unproven (24 h), gossip / split view, lookups |
@@ -43,7 +45,7 @@ layer (Secure Enclave, Keychain) implement them; tests use small CryptoKit versi
 |---|---|---|
 | `RequestSigner` | Platform/Security | the device signing key: `publicKeySPKI()` (SPKI DER b64), `signP1363(data)` (ECDSA P-256/SHA-256, r‖s). `SecureEnclaveRequestSigner` is ready (keep its `dataRepresentation` in the Keychain); `SoftwareRequestSigner` for the simulator / tests |
 | `EciesOpener` | M5Crypto (+ Secure Enclave key agreement) | the device encryption key: `publicKeySPKI()` (`/enroll` `encKey`) and `open(wire, deviceId, purpose)` — ECDH P-256 with `e`, HKDF-SHA256(salt `m5cet/android/ecies/1`, info `<purpose>|<deviceId>`), AES-256-GCM with AAD `m5cet/android/ecies/1|<purpose>|<deviceId>`; purposes `push`, `bundle|<id>` |
-| `HubProofSigner` | M5Crypto (per room) | Ed25519 from hubSeed = RoomKeys.derive(`m5cet/hub-auth/4`, 32): `signHubJoin(message)` → (raw public key 32 B, signature 64 B) |
+| `HubProofSigner` | M5Crypto (per room) | Ed25519 from hubSeed = RoomKeys.derive(`m5cet/hub-auth/4`, 32): `signHubJoin(message)` → (raw public key 32 B, signature 64 B); `HubSeedSigner(seed:)` is M5Crypto's Ed25519 over the seed |
 | `KtVerifier` | M5Crypto (Kt, Merkle) | `verifySTH` (`m5cet/kt/sth/4|size|root|ts`, Ed25519), `verifyConsistency` (RFC 6962), `verifyLookup` (canonical entries, inclusion, `u`) |
 | `RelayDeviceChecker` | M5Crypto (Handshake, Mailbox) | `certifiedAccountKey(certificate:devicePublicKey:now:)` (device certificate v2) and `bundleValid(_:devicePublicKey:now:)` (Mailbox.check) |
 | sealing for the relay | M5Crypto (Mailbox) | the `seal` closure of `RelayDirectory.frame` (one `mb` item per device) and the protocol-3 room envelope |
