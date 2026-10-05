@@ -13,6 +13,8 @@
 // reset, and a backgrounded app exits (no screen is showing it).
 
 import Foundation
+import M5Core
+import M5Crypto
 import os
 
 /// What the report needs from the network layer (M5Net): a signed request for the events endpoint.
@@ -41,7 +43,7 @@ final class Wiper {
     private let vault: Vault
     private let keyring: Keyring
     private let stores: [any SecureStore]
-    private let inbox: LockInbox
+    private let inbox: LockInboxFiles
     private let clock: any LockClock
     /// Other directories to empty (caches, tmp).
     var extraDirs: [URL]
@@ -53,7 +55,7 @@ final class Wiper {
     private var teardown: [(String, @MainActor () -> Void)] = []
     private let logger = Logger(subsystem: "cz.m5cet.app", category: "wipe")
 
-    init(paths: SecurityPaths, vault: Vault, keyring: Keyring, stores: [any SecureStore], inbox: LockInbox, clock: any LockClock,
+    init(paths: SecurityPaths, vault: Vault, keyring: Keyring, stores: [any SecureStore], inbox: LockInboxFiles, clock: any LockClock,
          extraDirs: [URL] = [], defaultsDomains: [String] = []) {
         self.paths = paths
         self.vault = vault
@@ -70,9 +72,10 @@ final class Wiper {
 
     /// The wipe event's body (Android: {"events": [{id, type, at, detail: {reason, attempts}}]}).
     static func eventBody(reason: String, remote: Bool, attempts: Int, at: Int64) -> Data {
-        let event: SecRecord = ["id": Bytes.b64url(Bytes.random(12)), "type": remote ? "remote-wipe" : "wipe", "at": at,
-                                "detail": ["reason": reason, "attempts": attempts] as SecRecord]
-        return SecJSON.data(["events": [event]])
+        let detail = JSONObject([("reason", .string(reason)), ("attempts", .int(attempts))])
+        let event = JSONObject([("id", .string(Bytes.b64url(Bytes.random(12)))), ("type", .string(remote ? "remote-wipe" : "wipe")),
+                                ("at", .int(at)), ("detail", .object(detail))])
+        return SecData.json(JSONObject([("events", .array([.object(event)]))]))
     }
 
     /// Erases everything now. The report (when enrolled) is prepared first and sent after.

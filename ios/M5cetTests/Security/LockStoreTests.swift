@@ -4,6 +4,8 @@
 // keys that cannot be read decide nothing. Then the same on the real parts: the
 // Keychain record and the Keyring's counter keys (software and Secure Enclave).
 
+import M5Core
+import M5Crypto
 import XCTest
 @testable import M5cet
 
@@ -43,12 +45,12 @@ final class LockStoreTests: XCTestCase {
         func mac(_ gen: Int64, _ data: Data) -> Data? {
             if died { return nil }
             guard !noMac, let k = keys[gen] else { return nil }
-            return SecCrypto.hmac(key: k, data)
+            return Data(Crypto.hmac256(Array(k), Array(data)))
         }
     }
 
     final class Disk: LockRecords {
-        var record: SecRecord = [:]
+        var record = JSONObject()
         var unavailable = false, noWrite = false
         var dieAfterWrite = -1, writes = 0
         var life = Life()
@@ -57,11 +59,11 @@ final class LockStoreTests: XCTestCase {
             set { life.dead = newValue }
         }
 
-        func read() -> SecRecord? { unavailable ? nil : SecJSON.parse(SecJSON.data(record)) }
-        func write(_ r: SecRecord) -> Bool {
+        func read() -> JSONObject? { unavailable ? nil : JSON.parseObject(record.stringify()) }
+        func write(_ r: JSONObject) -> Bool {
             if died { return false }
             if noWrite { return false }
-            record = SecJSON.parse(SecJSON.data(r))!
+            record = JSON.parseObject(r.stringify())!
             writes += 1
             if writes == dieAfterWrite { died = true }
             return true
@@ -81,28 +83,28 @@ final class LockStoreTests: XCTestCase {
         d.died = false; d.dieAfterWrite = -1
     }
 
-    private func state(_ attempts: Int) -> SecRecord { ["attempts": attempts, "until": 0] }
+    private func state(_ attempts: Int) -> JSONObject { JSONObject([("attempts", .int(attempts)), ("until", .int(0))]) }
 
     func testANeverSealedRecordKeepsTheAttemptsAndIsSealedAtItsNextWrite() {
         let (keys, disk) = pair()
-        disk.record = ["attempts": 3, "until": 0, "last": 1]
+        disk.record = JSONObject([("attempts", .int(3)), ("until", .int(0)), ("last", .int(1))])
         let s = LockStore(anchor: keys, records: disk)
         var v = s.load()
         XCTAssertEqual(v.verdict, .legacy)
-        XCTAssertEqual(v.state.jInt("attempts"), 3)
+        XCTAssertEqual(v.state.optInt("attempts"), 3)
         var next = v.state
         LockCounter.begin(&next, now: LockTime(wallMs: 10, monoMs: 10, boot: "A"))
         XCTAssertTrue(s.save(next))
-        XCTAssertEqual(disk.record.jInt64(LockStore.gen), 1)
-        XCTAssertFalse(disk.record.jHas(LockStore.mig))
+        XCTAssertEqual(disk.record.optInt64(LockStore.gen), 1)
+        XCTAssertFalse(disk.record.isPresent(LockStore.mig))
         XCTAssertEqual(Set(keys.keys.keys), [1])
         v = s.load()
         XCTAssertEqual(v.verdict, .ok)
-        XCTAssertEqual(v.state.jInt("attempts"), 4)
+        XCTAssertEqual(v.state.optInt("attempts"), 4)
         XCTAssertTrue(LockCounter.interrupted(v.state))
         let fresh = LockStore(anchor: Keys(), records: Disk())
         XCTAssertEqual(fresh.load().verdict, .legacy)
-        XCTAssertEqual(fresh.load().state.jInt("attempts"), 0)
+        XCTAssertEqual(fresh.load().state.optInt("attempts"), 0)
     }
 
     func testAFirstSealStoppedHalfwayIsNoRollback() {
@@ -115,7 +117,7 @@ final class LockStoreTests: XCTestCase {
             revive(keys, disk)
             let v = s.load()
             XCTAssertEqual(v.verdict, .legacy, "stop \(stop)")
-            XCTAssertEqual(v.state.jInt("attempts"), 3, "stop \(stop)")
+            XCTAssertEqual(v.state.optInt("attempts"), 3, "stop \(stop)")
             XCTAssertTrue(s.save(state(4)))
             XCTAssertEqual(s.load().verdict, .ok)
             XCTAssertEqual(keys.keys.count, 1)
@@ -138,14 +140,14 @@ final class LockStoreTests: XCTestCase {
         }
         disk.record = state(0)
         XCTAssertEqual(s.load().verdict, .rollback, "an unsealed record put back after the first seal")
-        disk.record = [:]
+        disk.record = JSONObject()
         XCTAssertEqual(s.load().verdict, .rollback, "the record deleted while a key exists")
         XCTAssertTrue(s.save(state(6)))
         var edited = disk.record
         edited["attempts"] = 0
         disk.record = edited
         XCTAssertEqual(s.load().verdict, .rollback, "an edited record: the seal does not match")
-        disk.record = [LockStore.unreadable: true]
+        disk.record = JSONObject([(LockStore.unreadable, .bool(true))])
         XCTAssertEqual(s.load().verdict, .rollback)
     }
 
@@ -162,7 +164,7 @@ final class LockStoreTests: XCTestCase {
             XCTAssertEqual(keys.keys.count, 2, "stop \(stop): two generations meanwhile")
             let v = s.load()
             XCTAssertEqual(v.verdict, .ok, "stop \(stop)")
-            XCTAssertEqual(v.state.jInt("attempts"), stop == 1 ? 2 : 3, "stop \(stop)")
+            XCTAssertEqual(v.state.optInt("attempts"), stop == 1 ? 2 : 3, "stop \(stop)")
             XCTAssertTrue(s.save(state(4)))
             XCTAssertEqual(keys.keys.count, 1)
             XCTAssertEqual(s.load().verdict, .ok)
@@ -175,7 +177,7 @@ final class LockStoreTests: XCTestCase {
         XCTAssertTrue(s.save(state(2)))
         keys.unreadable = true
         XCTAssertEqual(s.load().verdict, .unverified)
-        XCTAssertEqual(s.load().state.jInt("attempts"), 2)
+        XCTAssertEqual(s.load().state.optInt("attempts"), 2)
         XCTAssertFalse(s.save(state(3)), "not stored → not checked")
         keys.unreadable = false
         keys.noMac = true
@@ -190,7 +192,7 @@ final class LockStoreTests: XCTestCase {
         XCTAssertFalse(s.save(state(3)))
         disk.noWrite = false
         XCTAssertEqual(s.load().verdict, .ok)
-        XCTAssertEqual(s.load().state.jInt("attempts"), 2)
+        XCTAssertEqual(s.load().state.optInt("attempts"), 2)
     }
 
     func testWithoutNewKeysItStillCounts() {
@@ -200,15 +202,15 @@ final class LockStoreTests: XCTestCase {
         let s = LockStore(anchor: none, records: disk)
         XCTAssertTrue(s.save(state(4)))
         XCTAssertEqual(s.load().verdict, .legacy)
-        XCTAssertEqual(s.load().state.jInt("attempts"), 4)
+        XCTAssertEqual(s.load().state.optInt("attempts"), 4)
         let keys = Keys(), d2 = Disk()
         let s2 = LockStore(anchor: keys, records: d2)
         XCTAssertTrue(s2.save(state(1)))
         keys.noCreate = true
         XCTAssertTrue(s2.save(state(2)))
-        XCTAssertEqual(d2.record.jInt64(LockStore.gen), 1)
+        XCTAssertEqual(d2.record.optInt64(LockStore.gen), 1)
         XCTAssertEqual(s2.load().verdict, .ok)
-        XCTAssertEqual(s2.load().state.jInt("attempts"), 2)
+        XCTAssertEqual(s2.load().state.optInt("attempts"), 2)
     }
 
     func testKeysGoneWithASealedRecordIsARollback() {
@@ -218,14 +220,14 @@ final class LockStoreTests: XCTestCase {
         keys.keys.removeAll()
         XCTAssertEqual(s.load().verdict, .rollback)
         let d2 = Disk()
-        d2.record = [LockStore.unreadable: true]
+        d2.record = JSONObject([(LockStore.unreadable, .bool(true))])
         XCTAssertEqual(LockStore(anchor: Keys(), records: d2).load().verdict, .legacy, "an unreadable record before the first seal reads as none")
     }
 
     func testTheSealCoversWhatDecides() {
-        let a: SecRecord = ["attempts": 3, "until": 0, "pending": 5, "last": 7, "untilMono": 9, "boot": "A", "wait": 30_000]
+        let a = (["attempts": 3, "until": 0, "pending": 5, "last": 7, "untilMono": 9, "boot": "A", "wait": 30_000] as JSON).objectValue!
         let base = LockStore.canonical(a, gen: 4)
-        func changed(_ k: String, _ v: Any?) -> Data {
+        func changed(_ k: String, _ v: JSON?) -> Data {
             var b = a
             b[k] = v
             return LockStore.canonical(b, gen: 4)
@@ -241,10 +243,10 @@ final class LockStoreTests: XCTestCase {
         XCTAssertEqual(base, changed("last", 8), "\"last\" is only informative")
         var sealed = a
         sealed[LockStore.gen] = 4; sealed[LockStore.mac] = "x"; sealed[LockStore.mig] = 4
-        XCTAssertFalse(LockStore.fields(sealed).jHas(LockStore.gen))
-        XCTAssertFalse(LockStore.fields(sealed).jHas(LockStore.mac))
-        XCTAssertFalse(LockStore.fields(sealed).jHas(LockStore.mig))
-        XCTAssertEqual(LockStore.fields(sealed).jInt("attempts"), 3)
+        XCTAssertFalse(LockStore.fields(sealed).isPresent(LockStore.gen))
+        XCTAssertFalse(LockStore.fields(sealed).isPresent(LockStore.mac))
+        XCTAssertFalse(LockStore.fields(sealed).isPresent(LockStore.mig))
+        XCTAssertEqual(LockStore.fields(sealed).optInt("attempts"), 3)
     }
 
     // MARK: the real parts

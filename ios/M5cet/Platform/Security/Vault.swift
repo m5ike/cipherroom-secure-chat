@@ -4,11 +4,13 @@
 //   SYS   DEK_sys, wrapped to the Secure Enclave key "sys" (no user needed, after the
 //         first unlock): server settings, policy, device records, events, bundles,
 //         the duress verifier — readable in the background (pushes) and by the
-//         notification extension (App Group), never outside this device.
+//         notification extension (App Group + the shared keychain group), never
+//         outside this device.
 //         sys.key = {v: 1, hw, e, iv, ct}: e = an ephemeral P-256 key (SPKI),
 //         K = HKDF-SHA256(ECDH(sys, e), salt "m5/ios/sys.key/1", info e), AES-256-GCM, AAD "m5/sys.key".
 //   USER  DEK_user, wrapped twice (app container only, never the App Group):
-//         user.pin  PinWrap v 2 — KEK = PRF_pin("m5/pin/2|" ‖ PBKDF2-SHA256(PIN, salt, 210 000))
+//         user.pin  M5Crypto's PinWrap v 2 (Android's format) — the KEK is the Secure
+//                   Enclave PRF: PRF_pin("m5/pin/2|" ‖ PBKDF2-SHA256(PIN, salt, 210 000))
 //         user.bio  {v: 1, hw, e, iv, ct} to the Secure Enclave key "bio" (biometryCurrentSet:
 //                   every use needs a biometric, a new enrolment invalidates it),
 //                   salt "m5/ios/user.bio/1", AAD "m5/user.bio"
@@ -21,6 +23,8 @@
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import M5Core
+import M5Crypto
 
 enum VaultTier: String, Sendable {
     case sys = "SYS"
@@ -55,13 +59,13 @@ final class Vault: @unchecked Sendable {
             if let k = state.withLock({ sysKeyBytes }), !k.isWiped { return k }
             let k: SecretBytes
             if let wrapped = try ProtectedFiles.read(paths.sysKey) {
-                guard let o = SecJSON.parse(wrapped) else { throw SecurityError.damaged("sys.key") }
+                guard let o = SecData.json(wrapped) else { throw SecurityError.damaged("sys.key") }
                 k = try unwrap(o, alias: "sys", label: "m5/ios/sys.key/1", aad: "m5/sys.key", context: nil)
             } else {
                 try paths.prepare()
                 k = SecretBytes(random: 32)
                 let o = try wrap(k, alias: "sys", access: .background, label: "m5/ios/sys.key/1", aad: "m5/sys.key")
-                try ProtectedFiles.writeDurable(SecJSON.data(o), to: paths.sysKey, protection: .completeUntilFirstUserAuthentication)
+                try ProtectedFiles.writeDurable(SecData.json(o), to: paths.sysKey, protection: .completeUntilFirstUserAuthentication)
             }
             state.withLock { sysKeyBytes = k }
             return k
@@ -89,33 +93,39 @@ final class Vault: @unchecked Sendable {
         state.withLock { userKeyBytes = key }
     }
 
-    private func pinKek(_ stretched: Data, _ version: Int) throws -> Data {
-        // v 1 needs Android's pepper key — never on iOS (the format reads in PinWrapTests only).
-        guard version >= 2 else { throw SecurityError.unavailable("a v 1 PIN wrap") }
-        return try keyring.prf("pin", PinWrap.prfInput(stretched))
+    /// The KEK of M5Crypto's PinWrap: v 2 = the Secure Enclave PRF of "m5/pin/2|" ‖ stretched (Android: HMAC by m5.pin).
+    private var pinKek: PinWrap.Kek {
+        { [keyring] stretched, version in
+            // v 1 needs Android's pepper key — never on iOS.
+            guard version >= 2 else { throw SecurityError.unavailable("a v 1 PIN wrap") }
+            return Array(try keyring.prf("pin", Data(PinWrap.kekInput(stretched))))
+        }
     }
 
     private func writePinWrap(_ key: SecretBytes, pin: String) throws {
         try paths.prepare()
-        let salt = Bytes.random(16)
-        var stretched = PinWrap.stretch(pin, salt: salt, iterations: iterations)
-        defer { Bytes.wipe(&stretched) }
+        let salt = Crypto.random(16)
+        var stretched = PinWrap.stretch(pin: pin, salt: salt, iterations: iterations)
+        var dek = try key.bytes()
+        defer { ByteOps.wipe(&stretched); ByteOps.wipe(&dek) }
         let hw = try keyring.ensureAgreementKey("pin", access: .foreground)
-        let o = try PinWrap.seal(dek: key, stretched: stretched, salt: salt, iterations: iterations, version: 2, hw: hw.rawValue, kek: pinKek)
-        try ProtectedFiles.writeDurable(SecJSON.data(o), to: paths.pinWrap, protection: .complete)
+        let o = try PinWrap.seal(dek: dek, stretched: stretched, salt: salt, iterations: iterations, version: 2, hw: hw.rawValue, kek: pinKek)
+        try ProtectedFiles.writeDurable(SecData.json(o), to: paths.pinWrap, protection: .complete)
     }
 
-    private func readWrap() throws -> SecRecord {
-        guard let d = try ProtectedFiles.read(paths.pinWrap), let o = SecJSON.parse(d) else { throw SecurityError.damaged("the PIN wrap") }
+    private func readWrap() throws -> JSONObject {
+        guard let d = try ProtectedFiles.read(paths.pinWrap), let o = SecData.json(d) else { throw SecurityError.damaged("the PIN wrap") }
         return o
     }
 
     /// The data key this PIN opens, or nil for a wrong PIN.
     private func open(pin: String) throws -> SecretBytes? {
         let o = try readWrap()
-        var stretched = PinWrap.stretch(pin, salt: try PinWrap.salt(o), iterations: try PinWrap.iterations(o))
-        defer { Bytes.wipe(&stretched) }
-        return try PinWrap.open(o, stretched: stretched, kek: pinKek)
+        var stretched = PinWrap.stretch(pin: pin, salt: try PinWrap.salt(o), iterations: try PinWrap.iterations(o))
+        defer { ByteOps.wipe(&stretched) }
+        guard var dek = try PinWrap.open(o, stretched: stretched, kek: pinKek) else { return nil }
+        defer { ByteOps.wipe(&dek) }
+        return SecretBytes(bytes: dek)
     }
 
     /// True when the PIN opens the user key (it is then held in memory).
@@ -139,7 +149,7 @@ final class Vault: @unchecked Sendable {
     /// What protects the PIN, for the security screen: "secure-enclave", "software", "" (no PIN).
     var pinKeyLevel: String {
         guard hasUserKey, let o = try? readWrap() else { return "" }
-        return PinWrap.version(o) >= 2 ? o.jString("hw", KeyLevel.secureEnclave.rawValue) : "legacy"
+        return PinWrap.version(o) >= 2 ? o.optString("hw", KeyLevel.secureEnclave.rawValue) : "legacy"
     }
 
     // MARK: biometrics
@@ -150,14 +160,14 @@ final class Vault: @unchecked Sendable {
         let key = try userKey()
         let level = try keyring.replaceAgreementKey("bio", access: .biometry)
         let o = try wrap(key, alias: "bio", access: .biometry, label: "m5/ios/user.bio/1", aad: "m5/user.bio")
-        try ProtectedFiles.writeDurable(SecJSON.data(o), to: paths.bioWrap, protection: .complete)
+        try ProtectedFiles.writeDurable(SecData.json(o), to: paths.bioWrap, protection: .complete)
         return level
     }
 
     /// Unwraps the user key with the biometric key — `context` is the LAContext that just
     /// evaluated a biometric (the Secure Enclave uses the key only with it).
     func unlockWithBiometrics(context: LAContext?) throws {
-        guard let d = try ProtectedFiles.read(paths.bioWrap), let o = SecJSON.parse(d) else { throw SecurityError.noKey("user.bio") }
+        guard let d = try ProtectedFiles.read(paths.bioWrap), let o = SecData.json(d) else { throw SecurityError.noKey("user.bio") }
         hold(try unwrap(o, alias: "bio", label: "m5/ios/user.bio/1", aad: "m5/user.bio", context: context))
     }
 
@@ -204,28 +214,31 @@ final class Vault: @unchecked Sendable {
 
     // MARK: wrapping a key to a Keyring key (ECIES with the Secure Enclave)
 
-    private func wrap(_ secret: SecretBytes, alias: String, access: KeyAccess, label: String, aad: String) throws -> SecRecord {
-        let level = try keyring.ensureAgreementKey(alias, access: access)
-        let eph = P256.KeyAgreement.PrivateKey()
-        let e = EcP256.spki(eph.publicKey)
-        var shared = try EcP256.ecdh(eph, keyring.agreementPublicKey(alias))
-        defer { Bytes.wipe(&shared) }
-        var k = SecCrypto.hkdf(shared, salt: Bytes.utf8(label), info: Bytes.utf8(e), length: 32)
-        defer { Bytes.wipe(&k) }
-        let iv = Bytes.random(12)
-        let ct = try secret.withBytes { try SecCrypto.gcmSeal(SymmetricKey(data: k), iv: iv, Data($0), aad: Bytes.utf8(aad)) }
-        return ["v": 1, "hw": level.rawValue, "e": e, "iv": Bytes.b64(iv), "ct": Bytes.b64(ct)]
+    private static func wrapKey(_ shared: Data, label: String, e: String) -> SymmetricKey {
+        var k = Crypto.hkdf(Array(shared), Crypto.utf8(label), Crypto.utf8(e), 32)
+        defer { ByteOps.wipe(&k) }
+        return SymmetricKey(data: k)
     }
 
-    private func unwrap(_ o: SecRecord, alias: String, label: String, aad: String, context: LAContext?) throws -> SecretBytes {
-        let e = o.jString("e")
-        guard let iv = Bytes.unb64(o.jString("iv")), let ct = Bytes.unb64(o.jString("ct")) else { throw SecurityError.damaged(alias) }
-        var shared = try keyring.agree(alias, with: EcP256.publicKey(spki: e), context: context)
-        defer { Bytes.wipe(&shared) }
-        var k = SecCrypto.hkdf(shared, salt: Bytes.utf8(label), info: Bytes.utf8(e), length: 32)
-        defer { Bytes.wipe(&k) }
-        var plain = try SecCrypto.gcmOpen(SymmetricKey(data: k), iv: iv, ct, aad: Bytes.utf8(aad))
-        defer { Bytes.wipe(&plain) }
+    private func wrap(_ secret: SecretBytes, alias: String, access: KeyAccess, label: String, aad: String) throws -> JSONObject {
+        let level = try keyring.ensureAgreementKey(alias, access: access)
+        let eph = P256.KeyAgreement.PrivateKey()
+        let e = Ec.spki(eph.publicKey)
+        var shared = try eph.sharedSecretFromKeyAgreement(with: keyring.agreementPublicKey(alias)).withUnsafeBytes { Data($0) }
+        defer { SecData.wipe(&shared) }
+        let iv = Bytes.random(12)
+        let ct = try secret.withBytes { try SecCrypto.gcmSeal(Self.wrapKey(shared, label: label, e: e), iv: iv, Data($0), aad: SecData.utf8(aad)) }
+        return JSONObject([("v", .int(1)), ("hw", .string(level.rawValue)), ("e", .string(e)), ("iv", .string(Bytes.b64(iv))), ("ct", .string(Bytes.b64(ct)))])
+    }
+
+    private func unwrap(_ o: JSONObject, alias: String, label: String, aad: String, context: LAContext?) throws -> SecretBytes {
+        let e = o.optString("e")
+        guard let iv = Bytes.unb64(o.optString("iv")), let ct = Bytes.unb64(o.optString("ct")),
+              let peer = try? Ec.publicFromSpki(e) else { throw SecurityError.damaged(alias) }
+        var shared = try keyring.agree(alias, with: peer, context: context)
+        defer { SecData.wipe(&shared) }
+        var plain = try SecCrypto.gcmOpen(Self.wrapKey(shared, label: label, e: e), iv: iv, ct, aad: SecData.utf8(aad))
+        defer { SecData.wipe(&plain) }
         return SecretBytes(plain)
     }
 
@@ -242,7 +255,7 @@ final class Vault: @unchecked Sendable {
         return (tier == .sys ? paths.sysDir : paths.userDir).appendingPathComponent(name + ".bin")
     }
 
-    private static func aad(_ tier: VaultTier, _ name: String) -> Data { Bytes.utf8(tier.rawValue + "|" + name) }
+    private static func aad(_ tier: VaultTier, _ name: String) -> Data { SecData.utf8(tier.rawValue + "|" + name) }
 
     private static func protection(_ tier: VaultTier) -> FileProtectionType {
         tier == .sys ? .completeUntilFirstUserAuthentication : .complete
@@ -278,24 +291,24 @@ final class Vault: @unchecked Sendable {
         return try open(tier, name, sealed)
     }
 
-    /// {} when there is none or it does not open (logged by the caller's choice).
-    func json(_ tier: VaultTier, _ name: String) -> SecRecord {
-        guard let d = try? get(tier, name), let o = SecJSON.parse(d) else { return [:] }
+    /// {} when there is none or it does not open.
+    func json(_ tier: VaultTier, _ name: String) -> JSONObject {
+        guard let d = try? get(tier, name), let o = SecData.json(d) else { return JSONObject() }
         return o
     }
 
-    func putJson(_ tier: VaultTier, _ name: String, _ value: SecRecord, durable: Bool = false) throws {
-        try put(tier, name, SecJSON.data(value), durable: durable)
+    func putJson(_ tier: VaultTier, _ name: String, _ value: JSONObject, durable: Bool = false) throws {
+        try put(tier, name, SecData.json(value), durable: durable)
     }
 
-    /// For the attempt counter's kind of reading: {} when there is none, nil when it cannot be read
-    /// now (the key, the storage), ["unreadable": true] when it does not open (changed by someone).
-    func strictJson(_ tier: VaultTier, _ name: String) -> SecRecord? {
+    /// For a strict reader (Android Vault.strictJson): {} when there is none, nil when it cannot be read
+    /// now (the key, the storage), {"unreadable": true} when it does not open (changed by someone).
+    func strictJson(_ tier: VaultTier, _ name: String) -> JSONObject? {
         guard let url = try? recordURL(tier, name) else { return nil }
-        guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
+        guard FileManager.default.fileExists(atPath: url.path) else { return JSONObject() }
         guard let key = try? keyOf(tier), let sealed = try? ProtectedFiles.read(url) else { return nil }
-        guard let plain = try? SecCrypto.openWithIV(key, sealed, aad: Self.aad(tier, name)), let o = SecJSON.parse(plain) else {
-            return [LockStore.unreadable: true]
+        guard let plain = try? SecCrypto.openWithIV(key, sealed, aad: Self.aad(tier, name)), let o = SecData.json(plain) else {
+            return JSONObject([(LockStore.unreadable, .bool(true))])
         }
         return o
     }
