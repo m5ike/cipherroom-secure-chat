@@ -105,8 +105,10 @@ final class AppCore {
     @ObservationIgnored var settingObservers: [@MainActor (String, DesignHost) -> Void] = []
     /// A room a notification or a link opened before the app was unlocked (MainActivity.pendingRoom).
     @ObservationIgnored var pendingRoom: String?
-    /// "apns" | "poll" (Settings › User › Connection).
-    @ObservationIgnored var pushMode = "poll"
+    /// "apns" | "poll" (Settings › User › Connection, $notify.push): Platform/Push's DeviceService answers
+    /// (CoreInstall) — "apns" once the server has APNs and this device a push token.
+    @ObservationIgnored var pushModeSource: @MainActor () -> String = { "poll" }
+    var pushMode: String { pushModeSource() }
     @ObservationIgnored private(set) var lastCheckin: Int64 = 0
     @ObservationIgnored var iceCount = 0
     /// The device key's id (what the server calls its kid).
@@ -146,6 +148,8 @@ final class AppCore {
         messageAudit.account = { [weak self] in self?.account.signedIn == true ? self?.account.username ?? "" : "" }
         messageAudit.roomId = { [weak self] key in self?.rooms.controller(key)?.keys?.roomId ?? "" }
         installTexts()
+        // A design bundle that became active (DesignBundleStore → setDesign) or another language: the new words.
+        services.onTextsChanged { [weak self] in self?.installTexts() }
     }
 
     /// Becomes the app's core (CoreModels.shared, the Texts provider).

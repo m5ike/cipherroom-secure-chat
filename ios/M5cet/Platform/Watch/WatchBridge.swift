@@ -21,8 +21,9 @@
 // snapshot after `debounce`), refreshes an unchanged snapshot every WatchWire.refreshMs (the watch hides content
 // past its `exp`), and answers requests on the channel they came by (WatchTransport).
 //
-// Not here (other areas): the design's switch for `watch.on` and its texts (the design / SettingsModel),
-// Handoff to open the room on the iPhone (Info.plist NSUserActivityTypes + the app's onContinueUserActivity).
+// Not here (other areas): the design's switch for `watch.on` and its texts (the iOS design's Settings ›
+// Notifications, SettingsModel), Handoff to open the room on the iPhone (Info.plist NSUserActivityTypes + the
+// app's onContinueUserActivity).
 
 import Foundation
 import M5Proto
@@ -81,6 +82,8 @@ final class WatchBridge: LockParticipant, WatchTransportHandler {
         model.design.actions.onSettingChanged { [weak bridge] key, _ in
             if key == WatchSetting.key || key.hasPrefix("notify.") || key == "lang" { bridge?.refresh() }
         }
+        // Another design (a bundle) or language: the watch's strings anew (also while it shows "locked" / "off").
+        model.design.onTextsChanged { [weak bridge] in bridge?.refresh() }
         model.onScenePhase { [weak bridge] _ in bridge?.refresh() }
         bridge.start()
     }

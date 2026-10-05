@@ -82,12 +82,28 @@ final class DesignServices {
         guard l.isEmpty || DesignLocales.isLocale(l) else { return }
         langChoice = l
         store.saveLang(l)
+        textsChanged()
     }
 
     // MARK: the design
 
-    /// A bundle became active (or the built-in design again): every window draws it.
-    func setDesign(_ d: Design) { design = d.withFallback(builtIn) }
+    /// A bundle became active (or the built-in design again): every window draws it, and whoever keeps texts
+    /// outside the screens takes the new ones.
+    func setDesign(_ d: Design) {
+        design = d.withFallback(builtIn)
+        textsChanged()
+    }
+
+    // MARK: texts outside the screens
+
+    @ObservationIgnored private var textObservers: [@MainActor () -> Void] = []
+
+    /// Called after every design or language change — for those that hold the design's words outside the windows
+    /// (M5Core Texts' provider, the notifications' action titles and hidden-preview texts, the watch's strings).
+    /// The screens redraw by themselves (they observe `design` and the language).
+    func onTextsChanged(_ observer: @escaping @MainActor () -> Void) { textObservers.append(observer) }
+
+    private func textsChanged() { for o in textObservers { o() } }
 }
 
 /// The settings' storage: the App Group's defaults (group.cz.m5cet.app, shared with the notification

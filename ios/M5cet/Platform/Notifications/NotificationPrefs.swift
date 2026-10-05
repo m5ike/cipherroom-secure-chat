@@ -75,6 +75,8 @@ final class NotificationPrefs {
     /// The account's sync went through ("" = fine).
     private(set) var status = ""
     private(set) var busy = false
+    /// This device is linked to the account's notifications (the last sync's answer; Android: a linked token).
+    private(set) var linked = false
     private var pending: Task<Void, Never>?
     private let logger = Logger(subsystem: "cz.m5cet.app", category: "notify")
     var http = HTTPClient()
@@ -223,6 +225,7 @@ final class NotificationPrefs {
         guard unlocked() else { return }
         guard let account, account.signedIn, let token = account.sessionToken else {
             _ = await device?.linkNotifications(token: nil, wanted: false)
+            linked = await device?.notificationsLinked ?? false
             return
         }
         do {
@@ -233,6 +236,7 @@ final class NotificationPrefs {
             logger.warning("settings not saved on the server")
         }
         _ = await device?.linkNotifications(token: token, wanted: on && bool("notify.away"))
+        linked = await device?.notificationsLinked ?? false
     }
 
     /// Signed in or out: the settings and the link follow.

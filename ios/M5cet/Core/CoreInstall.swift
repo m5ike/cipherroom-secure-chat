@@ -77,7 +77,14 @@ enum CoreInstall {
             }
             n.unreadCount = { [weak core] in core?.rooms.unreadTotal ?? 0 }
             core.notifications = NotifierBridge(notifier: n)
+            // Settings › Notifications' $notify (Android MainActivity.scopeFor → NotifyPrefs.scope): the channels'
+            // order, the quiet hours' choices, whether push wakes this device, the account's sync.
+            core.models.variables.register("settings.notify", "notify") { [weak core, weak n] in
+                guard let n else { return .object([:]) }
+                return DesignValue(any: n.prefs.scope(pushEnabled: core?.pushMode == "apns", linked: n.prefs.linked))
+            }
         }
+        if let d = PushCenter.shared?.device { core.pushModeSource = { [weak d] in d?.pushMode ?? "poll" } }
 
         // Platform/Location.
         let loc = LocationService.shared
