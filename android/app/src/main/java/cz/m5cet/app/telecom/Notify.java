@@ -220,7 +220,10 @@ public final class Notify {
             : locked ? new String[]{ app.design().appName(), app.t("notify.message") }
             : new String[]{ NotifyTemplate.clean(p.optString("title", app.design().appName()), NotifyTemplate.TITLE_MAX), NotifyTemplate.clean(p.optString("body"), NotifyTemplate.BODY_MAX) };
         if (tb[1].isEmpty()) tb[1] = locked ? app.t("notify.message") : NotifyTemplate.clean(p.optString("body"), NotifyTemplate.BODY_MAX);
-        String channel = kind.equals("call") ? CH_CALLS : !p.optBoolean("sound", true) ? CH_QUIET : kind.equals("message") || kind.equals("mention") ? CH_MESSAGES : CH_NOTICES;
+        // 6.14 (call wake): a call's end (`call.end`) is the quiet "missed call" in its ring's place (the same tag).
+        JSONObject call = kind.equals("call") ? p.optJSONObject("call") : null;
+        boolean callEnd = call != null && call.optBoolean("end", false);
+        String channel = callEnd ? CH_QUIET : kind.equals("call") ? CH_CALLS : !p.optBoolean("sound", true) ? CH_QUIET : kind.equals("message") || kind.equals("mention") ? CH_MESSAGES : CH_NOTICES;
         String tag = p.optString("tag", "m5-" + kind);
         int id = room != null ? room.key.hashCode() : ("m5n:" + tag).hashCode();
         // 6.12 (G-22): a message-like template off the lock screen when hidden there or while the app is locked; a call's stays.
@@ -229,14 +232,16 @@ public final class Notify {
             .setSmallIcon(R.drawable.ic_stat_m5).setContentTitle(tb[0]).setContentText(tb[1])
             .setStyle(new Notification.BigTextStyle().bigText(tb[1])).setAutoCancel(true)
             .setContentIntent(open(room == null ? null : room.key, id))
-            .setCategory(kind.equals("call") ? Notification.CATEGORY_CALL : Notification.CATEGORY_MESSAGE)
+            .setCategory(callEnd && android.os.Build.VERSION.SDK_INT >= 31 ? Notification.CATEGORY_MISSED_CALL : kind.equals("call") ? Notification.CATEGORY_CALL : Notification.CATEGORY_MESSAGE)
             .setVisibility(secret ? Notification.VISIBILITY_SECRET : Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(app.design().appName(), app.t("notify.message")));
         if (p.optLong("at") > 0) b.setWhen(p.optLong("at")).setShowWhen(true);
+        // 6.14: a call's ring rings as long as the server's push lives (60 s), like CallRing's.
+        if (call != null && !callEnd) b.setTimeoutAfter(cz.m5cet.app.chat.CallWake.RING_MS);
         if (!"none".equals(p.optString("group")) && !tag.isEmpty()) b.setGroup(tag);
         Integer color = accent(p.optString("accent"));
         if (color != null) b.setColor(color);
         if (p.optBoolean("actions") && !locked && room != null && (kind.equals("message") || kind.equals("mention"))) b.addAction(replyAction(room.key));
-        b.addExtras(neutralMark(kind.equals("call") ? "ring.call" : "notify.message", locked));
+        b.addExtras(neutralMark(callEnd ? "ring.missed" : kind.equals("call") ? "ring.call" : "notify.message", locked));
         nm().notify(id, b.build());
     }
 

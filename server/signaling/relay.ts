@@ -27,6 +27,15 @@
 // recipient (`per[ref]`, sealed for that account's devices' mailboxes);
 // each queue item gets its own, the others `envelope`. The size limit is the
 // queue's, per item; receipts and the ledger are unchanged.
+//
+// 6.14 (call wake, docs/api.md › Buzení při hovoru): a caller's client relays
+// one sealed call item to the away members when its call starts (`call`,
+// `callId`, `video`) and one when it ends before anyone answered (`callEnd`).
+// Both are stored like messages (the item becomes the recipient's call
+// record); the ring wakes them with kind "call" — limited per sender and room
+// (CALL_WAKE_LIMITS) — and the end stops the ring where it went. The server
+// learns what it learns of any message with `call: true`: a call wake from
+// member X in room R to members Y, and the call's random id.
 
 import type { WebSocket } from "ws";
 import type { AccountStore } from "../accounts/store";
@@ -50,6 +59,8 @@ export type RelayPeer = {
   lastSeen?: number;
   /** Queue items handed to this socket and not yet acknowledged. */
   leased?: Set<string>;
+  /** The client's address (the hub's) — 6.14: who a call wake counts against when it has no account. */
+  ip?: string;
 };
 
 type Rooms = Map<string, Map<string, RelayPeer>>;
@@ -64,8 +75,20 @@ export type WakeRequest = {
   kind: "message" | "mention" | "call" | "summon";
   from: { name: string; accountId?: string };
   count?: number;
+  /** 6.14 (call wake): the call — its id (the caller's), whether with video, and
+   *  `end`: it ended before anyone answered (the ring stops; notify/dispatch.ts). */
+  call?: { id: string; video: boolean; end?: boolean };
 };
 export type WakeFn = (req: WakeRequest) => Promise<{ ok: boolean; skipped?: string }>;
+
+/**
+ * 6.14: call wakes one sender may start in one room — a ring at most every
+ * `gapMs` and at most `max` in `windowMs` (per account, else per address).
+ * Over it the item is still stored (the recipient's missed-call record) but
+ * nobody is woken. A call's end is not limited: the notifier sends it only
+ * where its ring went.
+ */
+export const CALL_WAKE_LIMITS = { gapMs: 10_000, max: 6, windowMs: 10 * 60_000, senders: 10_000 } as const;
 
 /** 6.7: `lastSeen` — when they last had the app open (the room shows how long ago). */
 type AwayEntry = { name: string; since: number; lastSeen?: number };
@@ -82,6 +105,8 @@ const DELIVER_BATCH = 50;
 export class AwayRelay {
   /** room → accountId → away entry. The truth lives here, not on disk. */
   private awayByRoom = new Map<string, Map<string, AwayEntry>>();
+  /** 6.14: the rings each sender started in each room lately (CALL_WAKE_LIMITS). */
+  private callRings = new Map<string, number[]>();
   cluster: RelayCluster | null = null;
 
   constructor(
@@ -286,10 +311,12 @@ export class AwayRelay {
   /** A sender relays room-key ciphertext to members it cannot reach. 6.12:
    *  `per[ref]` is that recipient's own envelope (protocol 4: sealed for its
    *  devices' mailboxes); recipients without one get `envelope`. */
-  async relay(client: RelayPeer, frame: { messageId: string; to: string[]; envelope?: QueueEnvelope; per?: Record<string, QueueEnvelope>; expiresAt?: number; mention?: string[]; call?: boolean }): Promise<void> {
+  async relay(client: RelayPeer, frame: { messageId: string; to: string[]; envelope?: QueueEnvelope; per?: Record<string, QueueEnvelope>; expiresAt?: number; mention?: string[]; call?: boolean; callEnd?: boolean; callId?: string; video?: boolean }): Promise<void> {
     const room = client.room;
     if (!room) return;
     const queue = this.queue();
+    // 6.14: a call wake — the ring (limited per sender and room) or its end.
+    const call = frame.call || frame.callEnd ? this.callOf(client, room, frame) : null;
     const status = (ref: string, state: string, name = "", reason?: string) =>
       this.send(client.socket, { type: "relay-status", messageId: frame.messageId, recipient: { account: ref, accountId: ref, name }, state, at: this.now(), ...(reason ? { reason } : {}) });
 
@@ -334,11 +361,48 @@ export class AwayRelay {
         status(ref, "stored", name);
         // 6.7: the sender's client may say the message calls or mentions this
         // recipient (its own choice; the server cannot read the message).
-        const kind = frame.call ? "call" : frame.mention?.includes(ref) ? "mention" : "message";
-        wakes.push(this.wake(accountId, room, { name: client.name, ...(client.accountId ? { accountId: client.accountId } : {}) }, kind));
+        // 6.14: a call wake over its limit is stored and wakes nobody.
+        if (call === "limited") continue;
+        const kind = call ? "call" : frame.mention?.includes(ref) ? "mention" : "message";
+        wakes.push(this.wake(accountId, room, { name: client.name, ...(client.accountId ? { accountId: client.accountId } : {}) }, kind, call ?? undefined));
       }
     }
     await Promise.all(wakes);
+  }
+
+  /**
+   * 6.14 (call wake): what a relay frame's call is — its id (a ring without
+   * one, from a client before 6.14, gets one here), video, and whether it is
+   * the end; "limited" when this sender rang too often in this room.
+   */
+  private callOf(client: RelayPeer, room: string, frame: { messageId: string; call?: boolean; callEnd?: boolean; callId?: string; video?: boolean }): WakeRequest["call"] | "limited" {
+    const video = frame.video === true;
+    if (frame.callEnd) return { id: frame.callId ?? frame.messageId, video, end: true };
+    const sender = client.accountId ? `a:${client.accountId}` : client.ip ? `ip:${client.ip}` : `p:${client.id}`;
+    if (!this.mayRing(`${room}\u0000${sender}`)) {
+      audit.add({ category: "security", level: "notice", event: "relay.call-limited", actor: client.accountId ?? client.id, roomHash: hashRoom(room) });
+      return "limited";
+    }
+    return { id: frame.callId ?? `call-${frame.messageId}`.slice(0, 96), video };
+  }
+
+  /** 6.14: may this sender ring in this room now (CALL_WAKE_LIMITS)? Counts the ring when it may. */
+  private mayRing(key: string): boolean {
+    const now = this.now();
+    const recent = (this.callRings.get(key) ?? []).filter((t) => now - t < CALL_WAKE_LIMITS.windowMs);
+    const last = recent[recent.length - 1];
+    if (recent.length >= CALL_WAKE_LIMITS.max || (last !== undefined && now - last < CALL_WAKE_LIMITS.gapMs)) {
+      this.callRings.set(key, recent);
+      return false;
+    }
+    recent.push(now);
+    this.callRings.set(key, recent);
+    if (this.callRings.size > CALL_WAKE_LIMITS.senders) {
+      for (const [k, list] of this.callRings) if (now - (list[list.length - 1] ?? 0) >= CALL_WAKE_LIMITS.windowMs) this.callRings.delete(k);
+      // Still too many senders ringing at once: the oldest go.
+      for (const k of this.callRings.keys()) { if (this.callRings.size <= CALL_WAKE_LIMITS.senders) break; if (k !== key) this.callRings.delete(k); }
+    }
+    return true;
   }
 
   /** The recipient processed delivered items: drop them, tell the senders. */
@@ -439,12 +503,12 @@ export class AwayRelay {
    *  and never wakes the sender or someone who is present. The relay used to
    *  push a fixed text to web push only, and could not tell a dead
    *  subscription (web-push's error message carries no status code). */
-  private async wake(accountId: string, room: string, from: WakeRequest["from"], kind: WakeRequest["kind"]): Promise<boolean> {
+  private async wake(accountId: string, room: string, from: WakeRequest["from"], kind: WakeRequest["kind"], call?: WakeRequest["call"]): Promise<boolean> {
     if (!this.wakeFn) return false;
     let count: number | undefined;
-    try { count = this.queue()?.pending(accountId, room).filter((i) => i.kind === "message").length; } catch { /* only a number in the text */ }
+    if (!call) try { count = this.queue()?.pending(accountId, room).filter((i) => i.kind === "message").length; } catch { /* only a number in the text */ }
     try {
-      const r = await this.wakeFn({ accountId, room, kind, from, ...(count ? { count } : {}) });
+      const r = await this.wakeFn({ accountId, room, kind, from, ...(count ? { count } : {}), ...(call ? { call } : {}) });
       audit.add({ category: "account", event: "relay.push", accountId, roomHash: hashRoom(room), status: r.ok ? "sent" : r.skipped ?? "failed" });
       return r.ok;
     } catch {

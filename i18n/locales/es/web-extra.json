@@ -24,6 +24,8 @@
  "audio.muted": "Micrófono silenciado",
  "away.received#one": "Se ha entregado {n} mensaje que llegó mientras estabas ausente.",
  "away.received#other": "Se han entregado {n} mensajes que llegaron mientras estabas ausente.",
+ "call.wake.missed": "📞 Llamada perdida de {name} ({time})",
+ "call.wake.missedVideo": "📹 Videollamada perdida de {name} ({time})",
  "caps.body": "Esta app necesita la criptografía moderna del navegador y WebRTC. Usa una versión reciente de Edge, Chrome, Firefox o Safari.",
  "caps.ie": "Internet Explorer no es compatible. Usa Edge, Chrome, Firefox o Safari.",
  "caps.title": "M5cet: navegador no compatible",
