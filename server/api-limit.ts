@@ -4,7 +4,7 @@
 // API_RATE_WINDOW_MIN (minutes, default 15) — and the routes that have a
 // bucket of their own no longer spend this one too:
 //
-//   /api/account/vault, /api/storage, /api/admin, /api/android, /api/profile
+//   /api/account/vault, /api/storage, /api/admin, /api/android, /api/ios (6.14), /api/profile
 //                            their own, larger buckets (index.ts)
 //   /api/map/tile/…          300 a minute (map-tiles.ts) — a map preview is
 //                            several tiles, and a room's history several maps
@@ -48,7 +48,7 @@ export function apiLimitConfig(env: Record<string, string | undefined> = process
 }
 
 /** Prefixes whose routes have a bucket of their own (the path itself or below it). */
-const OWN_BUCKET_PREFIXES = ["/api/account/vault", "/api/storage", "/api/admin", "/api/android", "/api/profile", "/api/map/tile", "/api/kt", "/api/desktop-auth"];
+const OWN_BUCKET_PREFIXES = ["/api/account/vault", "/api/storage", "/api/admin", "/api/android", "/api/ios", "/api/profile", "/api/map/tile", "/api/kt", "/api/desktop-auth"];
 
 /** The passkey ceremonies (accounts/routes.ts ceremonyLimiter, registrationLimiter, recoveryLimiter). */
 const OWN_BUCKET_ROUTES = new Set([

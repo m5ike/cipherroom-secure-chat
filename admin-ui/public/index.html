@@ -65,6 +65,7 @@
         <button class="nav__item" data-route="plugins"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg>AI &amp; speech</button>
         <button class="nav__item" data-route="functions"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m8 3-6 9 6 9M16 3l6 9-6 9M13 3l-2 18"/></svg>Functions</button>
         <button class="nav__item" data-route="android"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>Android</button>
+        <button class="nav__item" data-route="ios" data-module="android"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="3.5"/><path d="M10 4.5h4"/><path d="M10.5 19h3"/></svg>iOS</button>
         <button class="nav__item" data-route="admins" data-min-role="owner" hidden><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>Administrators</button>
         <button class="nav__item" data-route="commands"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 17 6-6-6-6M12 19h8"/></svg>Commands &amp; push</button>
         <button class="nav__item" data-route="notifications"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M4 2C2.8 3.7 2 5.7 2 8M22 8c0-2.3-.8-4.3-2-6"/></svg>Notifications</button>
@@ -328,6 +329,8 @@
         <section data-panel="functions" class="stack" hidden><div id="fnRoot" class="stack"><div class="card empty">Loading…</div></div></section>
         <!-- 6.0: the Android app — devices, push, design, builds, releases, security (android-console.js) -->
         <section data-panel="android" class="stack" hidden><div id="androidRoot" class="stack"><div class="card empty">Loading…</div></div></section>
+        <!-- 6.14: the iOS app — the same page for iPhone and iPad: devices, APNs, design, builds, release records, security (ios-console.js on android-console.js) -->
+        <section data-panel="ios" class="stack" hidden><div id="iosRoot" class="stack"><div class="card empty">Loading…</div></div></section>
         <!-- 6.7: notifications — channels, templates, privacy, e-mail, tests, the log (notify-console.js) -->
         <section data-panel="notifications" class="stack" hidden><div id="notifyRoot" class="stack"><div class="card empty">Loading…</div></div></section>
         <section data-panel="commands" class="stack" hidden>
@@ -543,6 +546,7 @@
   <script src="functions-builder.js"></script>
   <script src="android-expr.js"></script>
   <script src="android-console.js"></script>
+  <script src="ios-console.js"></script>
   <script src="notify-console.js"></script>
   <script src="telephony-console.js"></script>
 </body>

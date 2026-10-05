@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  M5cet for iPhone and iPad (docs/ios-architecture.md). The counterpart of the Android
+  app's AndroidManifest.xml. Usage descriptions are in English here and translated
+  in InfoPlist.xcstrings (the nine app languages, client/src/lib/locales.ts).
+  Version and build come from package.json (ios/scripts/sync-version.mjs).
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>M5cet</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>cs</string>
+		<string>de</string>
+		<string>es</string>
+		<string>it</string>
+		<string>fr</string>
+		<string>sk</string>
+		<string>sl</string>
+		<string>fi</string>
+	</array>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+
+	<!-- m5cet://enroll?server=…&code=…&kid=… — the console's QR code (Android: MainActivity's intent filter). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>cz.m5cet.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>m5cet</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- The App Group shared with the notification extension (Base.xcconfig M5_APP_GROUP), for the code to read. -->
+	<key>M5AppGroup</key>
+	<string>$(M5_APP_GROUP)</string>
+
+	<!-- Scenes: SwiftUI's WindowGroup; several windows on iPad (multitasking, Split View, Stage Manager). -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<!-- The system launch screen: the mark on the splash colour (Android Theme.M5 windowSplashScreen*). -->
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+		<key>UIImageName</key>
+		<string>Mark</string>
+		<key>UIImageRespectsSafeAreaInsets</key>
+		<true/>
+	</dict>
+
+	<!-- Background: silent pushes (control messages), VoIP pushes (calls, PushKit + CallKit),
+	     call audio, and background processing (check-in — Android's Checkin job). -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+		<string>voip</string>
+		<string>audio</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>cz.m5cet.app.checkin</string>
+	</array>
+
+	<!-- Navigation and ride apps a position can open (Android: <queries>, location/GeoLinks). -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>comgooglemaps</string>
+		<string>waze</string>
+		<string>osmandmaps</string>
+		<string>com.sygic.aura</string>
+		<string>uber</string>
+	</array>
+
+	<!-- Release: HTTPS only (Android network_security_config: no cleartext). -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
+
+	<!-- Export compliance: the app implements end-to-end encryption of its own (AES-GCM, ECDH,
+	     ML-KEM, Ed25519, Argon2id) — not exempt. See ios/README.md (Export compliance). -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<true/>
+
+	<!-- ========== Usage descriptions (translated in InfoPlist.xcstrings) ========== -->
+	<key>NSCameraUsageDescription</key>
+	<string>M5cet uses the camera for video calls and for photos and videos you send to a room.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>M5cet uses the microphone for calls, voice messages and dictation.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>M5cet turns your speech into text when you dictate a message or give a voice command.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>M5cet uses your location only when you share it in a message or show it on a map.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>When you turn on location sharing for a room, M5cet keeps sending your position to that room, also while the app is in the background. You can turn it off at any time.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>M5cet links the people you talk to with the contacts you choose.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>M5cet connects to the Bluetooth NFC readers you choose, to read cards with them.</string>
+	<key>NFCReaderUsageDescription</key>
+	<string>M5cet reads the NFC tags and cards you hold to the iPhone — connection cards, payment cards and e-IDs — only when you start a reading.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>M5cet uses Face ID to unlock the app and the keys it keeps on this device.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>M5cet connects directly to other devices on your network for calls and file transfers, and to an M5cet server on your network.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>M5cet saves photos and videos from your rooms to your library when you ask it to.</string>
+
+	<!-- ========== NFC (Core NFC, iPhone only) ==========
+	     The ISO 7816 applications the app may SELECT (Core NFC refuses others) — the ones
+	     android/app/src/main/java/cz/m5cet/app/nfc (EmvTags, EmvReader, CardOps, CardService)
+	     and client/src/lib/nfc (apdu-templates, emv-tags, cards/detect) select, plus common
+	     payment applications a card's PPSE directory may list. iOS tries them in this order
+	     when a card is found: the directories and the e-ID first. -->
+	<key>com.apple.developer.nfc.readersession.iso7816.select-identifiers</key>
+	<array>
+		<string>325041592E5359532E4444463031</string><!-- PPSE 2PAY.SYS.DDF01 (contactless EMV directory) -->
+		<string>A0000002471001</string><!-- ICAO eMRTD LDS1 (e-passports, e-ID cards: BAC / PACE) -->
+		<string>D2760000850101</string><!-- NFC Forum Type 4 NDEF application (connection cards, tags) -->
+		<string>D2760000850100</string><!-- NFC Forum Type 4 NDEF application, mapping 1.0 -->
+		<string>315041592E5359532E4444463031</string><!-- PSE 1PAY.SYS.DDF01 (contact EMV directory) -->
+		<string>A0000000031010</string><!-- Visa credit / debit -->
+		<string>A0000000032010</string><!-- Visa Electron -->
+		<string>A0000000032020</string><!-- V PAY -->
+		<string>A0000000033010</string><!-- Visa Interlink -->
+		<string>A0000000038010</string><!-- Visa Plus -->
+		<string>A0000000041010</string><!-- Mastercard credit / debit -->
+		<string>A0000000043060</string><!-- Maestro -->
+		<string>A000000004306001</string><!-- Maestro UK -->
+		<string>A0000000046000</string><!-- Cirrus -->
+		<string>A00000002501</string><!-- American Express -->
+		<string>A0000000651010</string><!-- JCB -->
+		<string>A0000001523010</string><!-- Discover / Diners -->
+		<string>A0000003241010</string><!-- Discover Zip -->
+		<string>A000000333010101</string><!-- UnionPay debit -->
+		<string>A000000333010102</string><!-- UnionPay credit -->
+		<string>A0000002771010</string><!-- Interac -->
+		<string>A0000006581010</string><!-- Mir -->
+		<string>A0000005241010</string><!-- RuPay -->
+		<string>A0000000421010</string><!-- Cartes Bancaires (CB) -->
+		<string>A0000003591010028001</string><!-- girocard -->
+	</array>
+	<!-- FeliCa systems (Android CardOps.felicaSystems): NDEF, FeliCa Lite-S, common area, transit. -->
+	<key>com.apple.developer.nfc.readersession.felica.systemcodes</key>
+	<array>
+		<string>12FC</string>
+		<string>88B4</string>
+		<string>FE00</string>
+		<string>0003</string>
+	</array>
+</dict>
+</plist>
