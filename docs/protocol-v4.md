@@ -319,7 +319,26 @@ The relay frame (`server/signaling/relay.ts`) gains `per: { [ref]: envelope }`: 
 for each recipient reference its own envelope (`per[ref]`, else `envelope`). A sender seals one
 item per known device of each away recipient (an account may have several devices: the item for
 that account is `{ v:4, kind:"mb-set", id, items:[MailboxItem…] }`), and falls back to the
-protocol-3 room envelope (`sealMessage`) only for recipients without any known bundle.
+protocol-3 room envelope (`sealMessage`) only for recipients without any **trusted** bundle.
+
+**Which devices a sender may seal to (6.12 review P01).** A bundle is never trusted because the
+server delivered it. A device is sealed to only when one of these holds:
+
+1. its device key `pk` was seen in a valid hello in this room or another (the device pin), the
+   bundle is signed by that `pk`, and — when the member's account is pinned — the device carries a
+   valid certificate (v1 or v2, not expired, not revoked in key transparency) from **that** pinned
+   account key; or
+2. it comes from the key directory (`key-bundles`) with a v2 certificate signed by an account key
+   that this client has **pinned for that member** — learned from an earlier attested hello of the
+   same member, or verified by the user (safety number / QR) — and is not revoked in key
+   transparency (§ 14). The member is identified by the hub's room-scoped reference only for
+   routing; the reference never establishes trust by itself.
+
+Account pins (account key ↔ member) are kept **independently of bundle expiry** (they outlive
+the 7-day bundles; they end only when the user removes them or accepts a changed key). A member
+whose account key this client never authenticated gets the protocol-3 room envelope, as in 6.11 —
+the server, which does not know the room key, cannot read it; sealing to a server-chosen key would
+let it. The message info view names which recipients got which form.
 
 Server details (6.12):
 
