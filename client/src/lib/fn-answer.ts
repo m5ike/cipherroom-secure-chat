@@ -97,9 +97,11 @@ export function exampleCall(cmd: Pick<Command, "keyword" | "inputs">, problems: 
  * guide, and an example call. `server`: the server refused the inputs (its
  * "bad-input" message, and its list of problems when it sends one).
  */
-export function usageCardOutputs(lang: Lang, cmd: Pick<Command, "keyword" | "name" | "inputs"> & { usage?: string }, opts: { problems?: InputProblem[]; server?: { message: string; problems?: unknown; inputs?: unknown; usage?: unknown }; trigger?: string } = {}): FnOutput[] {
+export function usageCardOutputs(lang: Lang, cmd: Pick<Command, "keyword" | "name" | "inputs"> & { usage?: string }, opts: { problems?: InputProblem[]; server?: { message: string; problems?: unknown; inputs?: unknown; usage?: unknown; command?: unknown }; trigger?: string } = {}): FnOutput[] {
   const trigger = opts.trigger ?? "/";
-  const inputs = serverInputs(opts.server?.inputs) ?? (cmd.inputs as Input[]);
+  // The server's bad-input answer carries the model's definition as `command` (a /commands entry: inputs, usage).
+  const srv = opts.server?.command && typeof opts.server.command === "object" ? opts.server.command as { inputs?: unknown; usage?: unknown } : undefined;
+  const inputs = serverInputs(opts.server?.inputs ?? srv?.inputs) ?? (cmd.inputs as Input[]);
   const problems = opts.problems ?? serverProblems(opts.server?.problems) ?? [];
   const byName = new Map(inputs.map((i) => [i.name, i]));
   const out: FnOutput[] = [{
@@ -132,7 +134,8 @@ export function usageCardOutputs(lang: Lang, cmd: Pick<Command, "keyword" | "nam
       ]),
     });
   }
-  const guide = typeof cmd.usage === "string" && cmd.usage.trim() ? cmd.usage.trim() : typeof opts.server?.usage === "string" ? opts.server.usage.trim() : "";
+  const srvUsage = opts.server?.usage ?? srv?.usage;
+  const guide = typeof cmd.usage === "string" && cmd.usage.trim() ? cmd.usage.trim() : typeof srvUsage === "string" ? srvUsage.trim() : "";
   if (guide) out.push({ type: "markdown", text: `**${t(lang, "fnusage.guide")}**\n\n${guide.slice(0, 4000)}` });
   out.push({ type: "markdown", text: tf(lang, "fnusage.hint", { example: `\`${code(exampleCall(shape, problems, trigger))}\`` }) });
   return out;

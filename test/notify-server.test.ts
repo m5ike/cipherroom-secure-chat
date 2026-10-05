@@ -355,9 +355,11 @@ describe("the Android channel", () => {
     expect(attempts).toMatchObject([{ channel: "android", ok: true, target: "and_n1 (Pixel)" }]);
     const msg = JSON.parse(fcmCalls.find((c) => c.url.includes("messages:send"))!.body).message;
     expect(msg.android.priority).toBe("HIGH");
-    // FCM sees only ciphertext: no name, no room id.
-    expect(JSON.stringify(msg)).not.toContain("Bob");
-    expect(JSON.stringify(msg)).not.toContain("r3.abc");
+    // FCM sees only ciphertext: no name, no room id. (The ciphertext and signature are random base64 that may
+    // contain "Bob" by chance — about once in a few hundred runs — so they are left out of this check.)
+    const readable = JSON.stringify(msg).replace(/"[A-Za-z0-9+/_=-]{24,}"/g, '"…"');
+    expect(readable).not.toContain("Bob");
+    expect(readable).not.toContain("r3.abc");
     const server = androidStore.signingKey();
     expect(crypto.verifyP1363(server.publicKey, crypto.pushSignedString("and_n1", msg.data.i, msg.data), msg.data.s)).toBe(true);
     const content = JSON.parse(crypto.eciesOpen(devKeys.enc.privateKey, "and_n1", "push", msg.data).toString());

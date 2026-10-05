@@ -445,18 +445,22 @@ export function useComposerSuggest(o: ComposerSuggestOptions): ComposerSuggest {
   const move = (index: number) => setSel({ sig, index });
 
   // The caret: typing, clicking and the arrow keys move it (the field may be re-created by its layout, so listen on the document).
+  // In the BUBBLE phase and deferred: a state update made while the browser is still delivering a typed
+  // character — before React's own change handler (on the root) has run — re-renders the controlled field
+  // with the text from before the keystroke and the character is lost (6.11 regression: nothing could be typed).
   useEffect(() => {
     if (typeof document === "undefined") return;
     const sync = (e: Event) => {
       const el = e.target as HTMLTextAreaElement | null;
       if (!el || el.id !== inputId) return;
-      setCaret(typeof el.selectionStart === "number" ? el.selectionStart : null);
+      const caretAt = typeof el.selectionStart === "number" ? el.selectionStart : null;
       // a space or a new line typed ends the word Ctrl+Space opened the list for
-      if (e.type === "input") { const d = (e as InputEvent).data; if ((d && /\s/.test(d)) || (e as InputEvent).inputType === "insertLineBreak") setForced(false); }
+      const ends = e.type === "input" && (((e as InputEvent).data && /\s/.test((e as InputEvent).data as string)) || (e as InputEvent).inputType === "insertLineBreak");
+      queueMicrotask(() => { setCaret(caretAt); if (ends) setForced(false); });
     };
-    const evs = ["input", "keyup", "mouseup", "select", "focus"];
-    for (const ev of evs) document.addEventListener(ev, sync, true);
-    return () => { for (const ev of evs) document.removeEventListener(ev, sync, true); };
+    const evs = ["input", "keyup", "mouseup", "select", "focusin"];
+    for (const ev of evs) document.addEventListener(ev, sync);
+    return () => { for (const ev of evs) document.removeEventListener(ev, sync); };
   }, [inputId]);
   // …and a text changed from elsewhere puts it where the field has it — or, after a pick, where the pick leaves it.
   const pendingCaret = useRef<number | null>(null);
