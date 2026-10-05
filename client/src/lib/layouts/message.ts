@@ -216,7 +216,8 @@ export function messageTree(kind: MessageKind): LNode {
   const bubble = n("panel", {
     id: "bubble", name: "Bubble",
     attrs: {
-      class: `msg-bubble ${bubbleKind}{if $queued} msg-bubble--queued{/if}{if $fnRunning} msg-bubble--fn-running{/if}{if $private} msg-bubble--private{/if}{if $vanishing} vanish-ring{/if}{if $vanished} msg-bubble--vanished{/if}{if $collapsed} msg-bubble--sys-collapsed{/if}{if $hidden} msg-bubble--hidden{/if}`,
+      // 6.11: a model's answer (system-messenger) is as wide as its content (msg-bubble--fn-answer); a failed call is marked.
+      class: `msg-bubble ${bubbleKind}{if $queued} msg-bubble--queued{/if}{if $fnRunning} msg-bubble--fn-running{/if}{if $fnAnswer} msg-bubble--fn-answer{/if}{if $fnFailed} msg-bubble--fn-failed{/if}{if $private} msg-bubble--private{/if}{if $vanishing} vanish-ring{/if}{if $vanished} msg-bubble--vanished{/if}{if $collapsed} msg-bubble--sys-collapsed{/if}{if $hidden} msg-bubble--hidden{/if}`,
       "data-private": "=$private ? '1' : null",
       "data-collapsed": "=$collapsed ? '1' : null",
     },

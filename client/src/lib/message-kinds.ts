@@ -73,9 +73,19 @@ export type FnMeta = {
   query?: string;
   pending?: boolean;
   status?: FnStatus;
+  /**
+   * 6.11: the model's icon (a lucide name or an emoji) — with `keyword` and
+   * `name` the identity its answer is shown under ("system-messenger": the
+   * model's name as the nickname, its icon as the avatar; system-messenger.ts).
+   * Display only: a room answer still names the member who sent it ("via …").
+   */
+  icon?: string;
+  /** 6.11: what a running call last said of itself (m5.run.progress) — under its loading. Never sent. */
+  progress?: { p: number; text: string };
 };
 
-/** The outcome shown under a call's own bubble when there is no inline result. */
+/** The outcome shown under a call's own bubble when there is no inline result.
+ *  6.11: an empty `label` with a `code` is said in the viewer's language (functions.status.<code>). */
 export type FnStatus = { kind: "ok" | "error" | "info"; label: string; code?: string };
 
 export function hasAnyFlag(flags: MsgFlags | undefined): boolean {

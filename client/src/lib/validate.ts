@@ -12,6 +12,7 @@ import { sanitizeFnOutputs } from "./fn-outputs";
 import { clampVanishSeconds, type MsgFlags } from "./message-kinds";
 import type { AttachmentMeta } from "./chat-types";
 import { parseProfileFrame, type ProfileFrame } from "./profile/room";
+import { SYSTEM_MESSENGER_ID, cleanModelIcon } from "./system-messenger";
 
 export const PAYLOAD_LIMITS = {
   idChars: 96,
@@ -108,6 +109,9 @@ function validateFlags(value: unknown): MsgFlags | undefined {
       if (Array.isArray(fn.events)) { const ev = fn.events.filter((e): e is string => typeof e === "string" && FN_EVENTS.has(e)); if (ev.length) out.fn.events = [...new Set(ev)]; }
       if (Array.isArray(fn.outputs)) { const outputs = sanitizeFnOutputs(fn.outputs); if (outputs.length) out.fn.outputs = outputs; }
       if (fn.origin === "error") out.fn.origin = "error";
+      // 6.11: the model's icon its answer is shown under (display only — the sender stays the member).
+      const icon = cleanModelIcon(fn.icon);
+      if (icon) out.fn.icon = icon;
     }
   }
   return out.tap || out.vanishSeconds || out.sealed || out.fn ? out : undefined;
@@ -157,13 +161,15 @@ export type AudioStatusPayload = { kind: "audio-status"; id: string; createdAt: 
 /** 6.7: a member's profile — announce / request / full (profile/room.ts); only for callers passing { profiles: true }. */
 export type ProfilePayload = { kind: "profile"; id: string; createdAt: number; senderId: string; senderName: string } & ProfileFrame;
 
-/** Ids the app itself uses for its own notices; a peer may not borrow them. */
-const RESERVED_SENDERS = new Set(["system", "self", "server", "admin"]);
+/** Ids the app itself uses for its own notices; a peer may not borrow them.
+ *  6.11: "system-messenger" — the sender of a model's answers shown here. */
+const RESERVED_SENDERS = new Set(["system", "self", "server", "admin", SYSTEM_MESSENGER_ID]);
 
 /** 6.7: an id only this app gives — its own notices, or a caller-only function
- *  answer ("function:<keyword>", whose outputs act by themselves). Never a peer's. */
+ *  answer ("function:<keyword>"; 6.11 "system-messenger" — whose outputs act by
+ *  themselves). Never a peer's: a member cannot pass a message off as the system's. */
 export function isReservedSender(id: string): boolean {
-  return RESERVED_SENDERS.has(id) || id.startsWith("function:");
+  return RESERVED_SENDERS.has(id) || id.startsWith("function:") || id.startsWith(`${SYSTEM_MESSENGER_ID}:`);
 }
 
 /**

@@ -114,3 +114,26 @@ export function checkCommandInputs(cmd: Pick<Command, "inputs">, values: Record<
   }
   return out;
 }
+
+/** An id only this app gives to a model's answer shown here (6.11
+ *  "system-messenger"; 5.3–6.10 "function:<keyword>"). Never a peer's —
+ *  validate.ts refuses both as a payload's sender. */
+export function isModelSender(id: string): boolean {
+  return id === SYSTEM_MESSENGER_ID || id.startsWith("function:");
+}
+
+/**
+ * A model's icon as it may be drawn: a lucide name ("mail", "shield-check")
+ * or a short emoji (with its joiners / variation selectors) — no letters or
+ * digits of any script, no markup, no controls or bidi marks. Anything else,
+ * from a peer's message or a stored one, is dropped (the avatar then falls
+ * back to the keyword's default).
+ */
+export function cleanModelIcon(icon: unknown): string | undefined {
+  if (typeof icon !== "string") return undefined;
+  const s = icon.trim();
+  if (!s || s.length > 48) return undefined;
+  if (/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(s)) return s;
+  if (Array.from(s).length > 8 || /[\u0000-\u007f]/.test(s) || /[\p{L}\p{N}\p{Cc}‎‏‪-‮⁦-⁩]/u.test(s)) return undefined;
+  return /\p{Extended_Pictographic}|\p{S}/u.test(s) ? s : undefined;
+}

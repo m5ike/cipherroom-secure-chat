@@ -50,8 +50,18 @@ export type StreamHandlers = {
   onInteraction?: (i: Interaction) => void;
   onProgress?: (p: number, text: string) => void;
   onDone?: (r: RunDone) => void;
-  onError?: (e: { code: string; message: string }) => void;
+  /** 6.11: every way a stream can end without an answer comes here, exactly once:
+   *  the server's error event, an HTTP error (the body's code, else "rate" /
+   *  "unauthorized" / "forbidden" / "server" / "error"), "network", "aborted" (the
+   *  caller's signal) and "incomplete" (the stream closed without done / error).
+   *  A "bad-input" may carry more fields (the inputs, the usage). */
+  onError?: (e: StreamError) => void;
+  /** 6.11: any event the server sent (start, progress, output, log, interaction,
+   *  done, error — not the keep-alive pings): a sign of life for the run's clock. */
+  onEvent?: (event: string) => void;
 };
+
+export type StreamError = { code: string; message: string; [more: string]: unknown };
 
 /** Runs a command with a live stream: progress, questions, then the outputs. */
 export async function runCommandStream(opts: { keyword: string; inputs: Record<string, unknown>; room: string | null; client: string | null; lang: string; tz?: string; token: string | null; signal?: AbortSignal }, h: StreamHandlers): Promise<void> {
@@ -84,7 +94,25 @@ export async function sendFnReport(opts: { model?: string; keyword: string; chai
   } catch { return null; }
 }
 
+/** An HTTP error's code when the body names none (a rate limiter, a proxy). */
+function httpCode(status: number): string {
+  return status === 429 ? "rate" : status === 401 ? "unauthorized" : status === 403 ? "forbidden" : status >= 500 ? "server" : "error";
+}
+
+const isAbort = (err: unknown, signal?: AbortSignal) => Boolean(signal?.aborted) || (err as { name?: string } | null)?.name === "AbortError";
+
+/**
+ * 6.11: a stream ends in exactly one onDone or onError, whatever happens — the
+ * server's done / error, an HTTP error or an answer that is not a stream (a
+ * proxy's page, an older server's JSON), the network gone, the caller's abort
+ * (a newer command), or a stream that simply closes without an answer (a
+ * restart, a proxy's timeout). Before 6.11 the last three left the call's
+ * loading spinning for good (and an abort escaped as an unhandled rejection).
+ */
 async function streamFunction(path: string, body: Record<string, unknown>, token: string | null, signal: AbortSignal | undefined, h: StreamHandlers): Promise<void> {
+  let ended = false;
+  const fail = (e: StreamError) => { if (!ended) { ended = true; h.onError?.(e); } };
+  const aborted = () => fail({ code: "aborted", message: "Cancelled." });
   let res: Response;
   try {
     res = await fetch(path, {
@@ -93,16 +121,41 @@ async function streamFunction(path: string, body: Record<string, unknown>, token
       body: JSON.stringify({ ...body, stream: true }),
       signal,
     });
-  } catch (err) { h.onError?.({ code: "network", message: (err as Error).message }); return; }
-  if (!res.ok || !res.body) { const d = await res.json().catch(() => ({})); h.onError?.({ code: (d as { code?: string }).code || "error", message: (d as { message?: string }).message || `HTTP ${res.status}` }); return; }
-  for await (const { event, data } of readEvents(res.body)) {
-    const d = data as Record<string, unknown>;
-    if (event === "start") h.onStart?.(String(d.runId));
-    else if (event === "interaction") h.onInteraction?.(d as never);
-    else if (event === "progress") h.onProgress?.(Number(d.p), String(d.text ?? ""));
-    else if (event === "done") h.onDone?.(d as never);
-    else if (event === "error") h.onError?.(d as never);
+  } catch (err) {
+    if (isAbort(err, signal)) aborted(); else fail({ code: "network", message: (err as Error)?.message || "The connection failed." });
+    return;
   }
+  if (!res.ok || !res.body) {
+    const d = await res.json().catch(() => ({})) as Record<string, unknown>;
+    const { code, message, ok: _ok, ...more } = d && typeof d === "object" ? d : {};
+    fail({ ...more, code: typeof code === "string" && code ? code : httpCode(res.status), message: typeof message === "string" && message ? message : `HTTP ${res.status}` });
+    return;
+  }
+  const type = res.headers?.get?.("content-type") ?? "";
+  if (type && !/text\/event-stream/i.test(type)) {
+    // Not a stream: an older server's JSON answer, or a page a proxy put in its place.
+    const d = await res.json().catch(() => null) as Record<string, unknown> | null;
+    if (d && Array.isArray(d.outputs) && d.ok !== false) { ended = true; h.onEvent?.("done"); h.onDone?.(d as never); }
+    else fail({ code: typeof d?.code === "string" ? d.code : "bad-answer", message: typeof d?.message === "string" ? d.message : `Unexpected answer (HTTP ${res.status}, ${type}).` });
+    return;
+  }
+  try {
+    for await (const { event, data } of readEvents(res.body)) {
+      const d = (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
+      h.onEvent?.(event);
+      if (event === "start") h.onStart?.(String(d.runId));
+      else if (event === "interaction") h.onInteraction?.(d as never);
+      else if (event === "progress") h.onProgress?.(Number(d.p), String(d.text ?? ""));
+      else if (event === "done") { ended = true; h.onDone?.(d as never); }
+      else if (event === "error") fail({ ...d, code: typeof d.code === "string" && d.code ? d.code : "error", message: typeof d.message === "string" && d.message ? d.message : "The function failed." });
+      if (ended) break; // the answer is in: what may follow is not read
+    }
+  } catch (err) {
+    if (isAbort(err, signal)) aborted(); else fail({ code: "network", message: (err as Error)?.message || "The connection was lost." });
+    return;
+  }
+  if (signal?.aborted) aborted();
+  else fail({ code: "incomplete", message: "The connection closed before the function answered." });
 }
 
 /** Sends the caller's answer to a running command's question. */
