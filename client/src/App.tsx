@@ -3017,6 +3017,13 @@ function ChatApp() {
     const slot = `${apk}|${pk}`;
     if (ktCheckedRef.current.has(slot)) return null;
     ktCheckedRef.current.add(slot);
+    // The log's key and head first (a peer can be ready before the first refresh is done).
+    if (kt.current().state === "unknown") await kt.refresh().catch(() => undefined);
+    if (kt.current().state === "off") {
+      const ktSlot = await ktSlotOf(apk, pk);
+      setMessages((cur) => cur.map((m) => (m.identity?.kt === "pending" && m.identity.ktSlot === ktSlot ? { ...m, identity: settleKt(m.identity, "ok") } : m)));
+      return null;
+    }
     const lookup = await hubAsk<KtLookup>("kt-lookup", ref);
     const verdict = await kt.checkDevice(lookup, apk, pk, user).catch((): KtVerdict => ({ status: "unverified" }));
     const status = verdict.status === "off" ? "ok" : verdict.status;
