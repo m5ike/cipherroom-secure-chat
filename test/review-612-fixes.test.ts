@@ -148,10 +148,15 @@ describe("REVIEW-612 P04 — the user's own entries in the key log (self-monitor
     await server.append({ t: "dev", u, apk, dpk: revoked, exp: Date.now() + 86_400_000, ts: 5 });
     await server.append({ t: "rev", u, apk, dpk: revoked, ts: 6 });
     await server.append({ t: "acct", u: await ktUser("bob"), apk: b64(new Uint8Array(32).fill(9)), ts: 7 });
-    const get = async (path: string): Promise<unknown> => {
+    // § 14.3 (review S03): the own lookup needs the account session and answers only the caller's own `u`.
+    const get = async (path: string, auth?: string): Promise<unknown> => {
       if (path === "/api/kt/key") return { key: server.key };
       if (path === "/api/kt/sth") return server.sth();
-      if (path.startsWith("/api/kt/lookup?u=")) return server.lookup(decodeURIComponent(path.slice("/api/kt/lookup?u=".length)));
+      if (path.startsWith("/api/kt/lookup")) {
+        if (auth !== "tok-alice") throw new KtHttpError(401);
+        if (path !== `/api/kt/lookup?u=${encodeURIComponent(u)}`) throw new KtHttpError(403);
+        return server.lookup(u);
+      }
       const m = /from=(\d+)&to=(\d+)/.exec(path);
       if (m) return server.consistency(Number(m[1]), Number(m[2]));
       throw new Error(path);
@@ -159,23 +164,27 @@ describe("REVIEW-612 P04 — the user's own entries in the key log (self-monitor
     const kt = new KtClient("https://chat.example", new LocalKtStore(memoryStorage()), get);
     await kt.refresh();
     const known = new Set([mine]);
-    const own = await kt.checkOwn("alice", apk, (dpk) => known.has(dpk));
+    const me = { username: "alice", token: "tok-alice" };
+    const own = await kt.checkOwn(me, apk, (dpk) => known.has(dpk));
     expect(own.status).toBe("ok");
     expect(own.unknown.map((d) => d.dpk)).toEqual([planted]);
     expect(own.foreignAccount).toBeUndefined();
     // Acknowledged as ours: no longer reported.
     known.add(planted);
-    expect((await kt.checkOwn("alice", apk, (dpk) => known.has(dpk))).unknown).toEqual([]);
+    expect((await kt.checkOwn(me, apk, (dpk) => known.has(dpk))).unknown).toEqual([]);
     // The server put another account key for us in the log.
     const other = b64(new Uint8Array(32).fill(7));
     await server.append({ t: "acct", u, apk: other, ts: 8 });
-    expect((await kt.checkOwn("alice", apk, (dpk) => known.has(dpk))).foreignAccount).toBe(other);
+    expect((await kt.checkOwn(me, apk, (dpk) => known.has(dpk))).foreignAccount).toBe(other);
+    // Without the session (or another user's `u`) there is no answer: said as "unverified", never "ok".
+    expect(await kt.checkOwn({ username: "alice" }, apk, () => false)).toEqual({ status: "unverified", unknown: [] });
+    expect(await kt.checkOwn({ username: "bob", token: "tok-alice" }, apk, () => false)).toEqual({ status: "unverified", unknown: [] });
   });
 
   it("a lookup that does not verify, or a server without a log, is said as such", async () => {
     const off = new KtClient("https://old.example", new LocalKtStore(memoryStorage()), async () => { throw new KtHttpError(503); });
     await off.refresh();
-    expect(await off.checkOwn("alice", "apk", () => false)).toEqual({ status: "off", unknown: [] });
+    expect(await off.checkOwn({ username: "alice", token: "t" }, "apk", () => false)).toEqual({ status: "off", unknown: [] });
     const server = await ktServer();
     await server.append({ t: "acct", u: await ktUser("alice"), apk: b64(new Uint8Array(32).fill(1)), ts: 1 });
     const lying = new KtClient("https://chat.example", new LocalKtStore(memoryStorage()), async (path) => {
@@ -185,7 +194,7 @@ describe("REVIEW-612 P04 — the user's own entries in the key log (self-monitor
       throw new Error(path);
     });
     await lying.refresh();
-    expect(await lying.checkOwn("alice", b64(new Uint8Array(32).fill(1)), () => false)).toEqual({ status: "unverified", unknown: [] });
+    expect(await lying.checkOwn({ username: "alice", token: "t" }, b64(new Uint8Array(32).fill(1)), () => false)).toEqual({ status: "unverified", unknown: [] });
   });
 });
 
@@ -819,7 +828,7 @@ describe("REVIEW-612 S14 — a refused room proof is not a dead end", () => {
     const { room, socket, joins } = await joining();
     expect(joins()).toHaveLength(1);
     expect(joins()[0].proof).toBeTruthy();
-    socket.onmessage!({ data: JSON.stringify({ type: "error", code: "room-proof", message: "refused" }) });
+    socket.onmessage!({ data: JSON.stringify({ type: "error", code: "room-proof", message: "refused", legacyAllowed: true }) });
     await new Promise((r) => setTimeout(r, 20));
     expect(joins()).toHaveLength(2);
     expect(joins()[1].proof).toBeUndefined();
@@ -827,20 +836,20 @@ describe("REVIEW-612 S14 — a refused room proof is not a dead end", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(room.status).toBe("joined");
     // A second refusal on the same socket does not loop.
-    socket.onmessage!({ data: JSON.stringify({ type: "error", code: "room-proof", message: "refused" }) });
+    socket.onmessage!({ data: JSON.stringify({ type: "error", code: "room-proof", message: "refused", legacyAllowed: true }) });
     await new Promise((r) => setTimeout(r, 20));
     expect(joins()).toHaveLength(2);
     room.stop();
   });
 
-  it("a server that requires a proof leaves nothing to try", async () => {
-    const { room, socket, joins } = await joining();
-    socket.onmessage!({ data: JSON.stringify({ type: "error", code: "room-proof", message: "refused" }) });
-    await new Promise((r) => setTimeout(r, 20));
-    socket.onmessage!({ data: JSON.stringify({ type: "error", code: "room-proof-required", message: "required" }) });
-    await new Promise((r) => setTimeout(r, 20));
-    expect(joins()).toHaveLength(2);
-    expect(room.status).toBe("offline");
-    room.stop();
+  it("a server that does not admit a join without proof (legacyAllowed false) leaves nothing to try", async () => {
+    for (const code of ["room-proof", "room-proof-required"]) {
+      const { room, socket, joins } = await joining();
+      socket.onmessage!({ data: JSON.stringify({ type: "error", code, message: "refused", legacyAllowed: false }) });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(joins()).toHaveLength(1);
+      expect(room.status).toBe("offline");
+      room.stop();
+    }
   });
 });

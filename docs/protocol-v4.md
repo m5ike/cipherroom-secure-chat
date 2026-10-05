@@ -512,9 +512,12 @@ A device is revoked by a `rev` entry in key transparency (§ 14); a revoked devi
 * Clients show unproven members with a badge; server-side features that reach members by room
   (telephony route audio, calls offered to a room, `user` targets) address only proven members.
 * A client whose proven join is refused (`room-proof`) does not give up (6.12 review S14: the room
-  may have been squatted while its passphrase is right): it says so, joins once more on the same
-  socket WITHOUT a proof (legacy — the others see it unproven) unless the server then answers
-  `room-proof-required`, and tells the user that the server's owner can reset the verifier.
+  may have been squatted while its passphrase is right): when the refusal says `legacyAllowed: true`
+  it says so, joins once more on the same socket WITHOUT a proof (legacy — the others see it
+  unproven; once per socket) and tells the user that the server's owner can reset the verifier;
+  without `legacyAllowed` (proofs required) it gives up as before. While its own join is unproven
+  it does not ask the hub's `kt-lookup` (the answer would be empty, § 14.3): members stay "not yet
+  checked in the key log".
 
 Server details (6.12):
 
@@ -646,7 +649,9 @@ Server details (6.12):
   that does not verify “the key log could not confirm this account” — never `account`/`verified`. A
   claimed username the log does not bear out (`u` differs) is not shown.
 * **Self-monitoring** (6.12 review P04). A signed-in client looks up its OWN `u`
-  (`GET /api/kt/lookup?u=…`) at every refresh. Every device certified for its account key
+  (`GET /api/kt/lookup?u=…` with its account session, § 14.3; the entries must carry that `u`) at
+  every refresh — a failed or refused lookup is "could not be verified", never "nothing found".
+  Every device certified for its account key
   (`dev`, not expired, not revoked) that the user does not know — not this device, not one the user
   acknowledged as theirs — is reported (“a device you do not know was certified for your account”),
   with “this is my device” to acknowledge it and the account's session list to end it; a newer

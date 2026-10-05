@@ -281,10 +281,10 @@ export class BackgroundRoom {
       case "phone-bridge": this.emit({ type: "phone", key: this.target.key, label: this.target.label, frame: f, socketUrl: this.socket?.url ?? "" }); return;
       case "error": {
         // 6.12 review S14: our proof of the room key was refused (another key registered the room — possibly a
-        // squatter): join once more without a proof (legacy, "unproven" to the others) instead of giving up;
-        // a server that then requires a proof leaves nothing to try.
+        // squatter): join once more without a proof (legacy, "unproven" to the others) instead of giving up —
+        // when the server says such a join is admitted (`legacyAllowed`); else there is nothing to try.
         const socket = this.socket;
-        if (f.code === "room-proof" && socket && !this.proofRetried.has(socket)) {
+        if ((f.code === "room-proof" || f.code === "room-proof-required") && f.legacyAllowed === true && socket && !this.proofRetried.has(socket)) {
           this.proofRetried.add(socket);
           this.joined.delete(socket);
           await this.join(socket, null);

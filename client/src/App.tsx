@@ -263,7 +263,7 @@ type SignalFrame =
   // 6.0: a phone call for this member (m5.telephony's audio bridge).
   | { type: "phone-bridge"; event: string; session: string; [k: string]: unknown }
   | { type: "admin-command"; command: { id: string; kind: string; createdAt: number; payload?: Record<string, unknown> } }
-  | { type: "error"; message: string; code?: string }
+  | { type: "error"; message: string; code?: string; legacyAllowed?: boolean }
   // Server-relayed file transfer (only when direct P2P cannot be established)
   | { type: "proxy-meta"; transferId: string; iv: string; ciphertext: string; transport: "proxy"; v?: number; from?: string }
   | { type: "proxy-chunk"; transferId: string; seq: number; iv: string; ciphertext: string; transport: "proxy"; v?: number; from?: string }
@@ -809,7 +809,10 @@ function ChatApp() {
   /** Per peer: the protocol it speaks (the trust panel, the bubbles). */
   const [p4Peers, setP4Peers] = useState<Record<string, PeerProtocol>>({});
   /** 6.12 (§ 13): our join proved the room key (null: the server did not say — before 6.12). */
-  const [hubProven, setHubProven] = useState<boolean | null>(null);
+  const [hubProven, setHubProvenState] = useState<boolean | null>(null);
+  /** The same, for code outside rendering (the key-log lookups). */
+  const hubProvenRef = useRef<boolean | null>(null);
+  const setHubProven = (v: boolean | null) => { hubProvenRef.current = v; setHubProvenState(v); };
   /** The server's join nonce per socket, and whether that socket sent its join. */
   const joinOfRef = useRef(new WeakMap<WebSocket, (nonce: string | null) => Promise<void>>());
   const joinSentRef = useRef(new WeakSet<WebSocket>());
@@ -1831,7 +1834,11 @@ function ChatApp() {
     if (!current || uploadedBundleRef.current === slot) return;
     const result = await uploadBundle(token, identity.publicKey, att, current.bundle);
     if (result.ok || result.code === "stale-bundle") uploadedBundleRef.current = slot;
-    else void sendServerLog("warn", "keys.upload-failed", { code: result.code });
+    else {
+      // 429 kt-quota: the account's key-log entries for the day are used up — not again in this session.
+      if (result.code === "kt-quota" || result.code === "429") uploadedBundleRef.current = slot;
+      void sendServerLog("warn", "keys.upload-failed", { code: result.code });
+    }
   }
 
   /** 6.12 (§ 14): this server's key log — its key pinned, its newest head checked on connect and every 10 minutes. */
@@ -1858,10 +1865,11 @@ function ChatApp() {
     const apk = identity?.attestation?.accountKey;
     const acc = accountRef.current;
     const username = acc?.username ?? acc?.id;
-    if (!kt || !identity || !apk || !username || !onHomeServer()) { setKtOwn(null); return; }
+    const token = accountToken();
+    if (!kt || !identity || !apk || !username || !token || !onHomeServer()) { setKtOwn(null); return; }
     const book = trustRef.current;
-    const serverU = (acc as { ktUser?: unknown } | null)?.ktUser;
-    const own = await kt.checkOwn({ username, ...(typeof serverU === "string" ? { u: serverU } : {}) }, apk, (dpk) => dpk === identity.publicKey || book.ownKnown(apk, dpk)).catch(() => null);
+    // § 14.3: the own-entries lookup needs the account session (the server answers only the caller's own `u`).
+    const own = await kt.checkOwn({ username, token }, apk, (dpk) => dpk === identity.publicKey || book.ownKnown(apk, dpk)).catch(() => null);
     setKtOwn(own);
     if (own?.unknown.length) warnOnce(`kt-own:${own.unknown.map((d) => d.dpk.slice(-16)).join(",")}`, tf(lang, "p4.kt.own.unknown", { n: own.unknown.length }), "error");
     if (own?.foreignAccount) warnOnce(`kt-own-acct:${own.foreignAccount}`, t(lang, "p4.kt.own.foreignAccount"), "error");
@@ -3003,6 +3011,9 @@ function ChatApp() {
   async function checkDeviceInLog(ref: string | undefined, apk: string, pk: string, name: string, user?: string): Promise<KtVerdict | null> {
     const kt = ktRef.current;
     if (!kt || !onHomeServer() || !ref) return null;
+    // Our own join did not prove the room key: in a room that proves the hub answers a lookup with nothing
+    // (§ 14.3, review S06) — that is no answer about the member, so do not ask (it stays "not yet checked").
+    if (hubProvenRef.current === false) return null;
     const slot = `${apk}|${pk}`;
     if (ktCheckedRef.current.has(slot)) return null;
     ktCheckedRef.current.add(slot);
@@ -4028,9 +4039,9 @@ function ChatApp() {
         }
         // 6.12 (§ 13): the join's proof of the room key was refused. Review S14: not a dead end — someone may
         // have registered this room with another key (squatting) while our passphrase is right. Explain, and
-        // join once more WITHOUT a proof (legacy: the others see us "unproven"); only when the server then
-        // requires a proof (`room-proof-required`) is there nothing more to try.
-        if (frame.code === "room-proof" && !proofRetriedRef.current.has(socket)) {
+        // join once more WITHOUT a proof (legacy: the others see us "unproven") — when the server says such a
+        // join would be admitted (`legacyAllowed`); otherwise (proofs required) there is nothing more to try.
+        if ((frame.code === "room-proof" || frame.code === "room-proof-required") && frame.legacyAllowed === true && !proofRetriedRef.current.has(socket)) {
           proofRetriedRef.current.add(socket);
           systemMessage(t(lang, "p4.roomProofRetry"), { kind: "warning" });
           setHubProven(false);

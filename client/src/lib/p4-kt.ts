@@ -28,7 +28,8 @@ export const KT_REFRESH_MS = 10 * 60 * 1000;
 
 export type KtStatus = { state: "off" | "ok" | "alert" | "unknown"; size?: number; alert?: KtAlert | null };
 
-export type KtFetch = (path: string) => Promise<unknown>;
+/** GET a KT path; `auth`: an account session token (the own-entries lookup needs one, § 14.3). */
+export type KtFetch = (path: string, auth?: string) => Promise<unknown>;
 
 /** An HTTP answer of the KT API that is not 2xx. `transient`: 429 / 502 / 503 / 504 (busy, not a refusal). */
 export class KtHttpError extends Error {
@@ -41,8 +42,8 @@ export class KtHttpError extends Error {
 }
 
 /** The server's JSON; throws a KtHttpError for an HTTP error, the fetch's TypeError for a network failure. */
-export const fetchKtJson = (base = ""): KtFetch => async (path) => {
-  const res = await fetch(`${base}${path}`, { cache: "no-store" });
+export const fetchKtJson = (base = ""): KtFetch => async (path, auth) => {
+  const res = await fetch(`${base}${path}`, { cache: "no-store", ...(auth ? { headers: { Authorization: `Bearer ${auth}` } } : {}) });
   if (!res.ok) throw new KtHttpError(res.status);
   return res.json();
 };
@@ -200,17 +201,19 @@ export class KtClient {
 
   /**
    * Review P04 (§ 14.4, self-monitoring): the signed-in user's OWN entries
-   * (`GET /api/kt/lookup?u=…`). Every device the log certifies for our account
-   * key that `known(dpk)` does not know is returned; a newer account key than
-   * ours is `foreignAccount`.
+   * (`GET /api/kt/lookup` with the account session — the server answers only
+   * the caller's own `u`, § 14.3). The entries must be those of `u` =
+   * ktUser(username) (else "unverified"). Every device the log certifies for
+   * our account key that `known(dpk)` does not know is returned; a newer
+   * account key than ours is `foreignAccount`.
    */
-  async checkOwn(who: string | { username: string; u?: string }, apk: string, known: (dpk: string) => boolean, now = Date.now()): Promise<KtOwnCheck> {
+  async checkOwn(who: { username: string; u?: string; token?: string }, apk: string, known: (dpk: string) => boolean, now = Date.now()): Promise<KtOwnCheck> {
     if (this.off) return { status: "off", unknown: [] };
-    // `u` as the server reports it for this account when it does (a server that keys `u`, review S03), else § 14.1.
-    const u = typeof who === "object" && who.u ? who.u : await ktUser(typeof who === "string" ? who : who.username);
+    // `u` as the server reports it for this account when it does, else § 14.1.
+    const u = who.u ?? await ktUser(who.username);
     let lookup: KtLookup;
     try {
-      lookup = (await this.get(`/api/kt/lookup?u=${encodeURIComponent(u)}`)) as KtLookup;
+      lookup = (await this.get(`/api/kt/lookup?u=${encodeURIComponent(u)}`, who.token)) as KtLookup;
     } catch {
       return { status: "unverified", unknown: [] };
     }
