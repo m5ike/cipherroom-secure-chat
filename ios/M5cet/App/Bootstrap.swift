@@ -26,5 +26,7 @@ enum Bootstrap {
         ChatParts.install(into: model)
         // Parts and the app's actions — model.design.slots.register(…), model.design.actions.register(…),
         // model.design.state = … (Renderer/README.md: the three contracts).
+        // Parts/Tools — commands engine (core.fn), aiChat, voicePad, History ($log, calllog.*), ai.*, voice.dictate, voiceFx.*.
+        ToolParts.install(into: model)
     }
 }

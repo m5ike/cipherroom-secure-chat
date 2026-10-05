@@ -1,0 +1,144 @@
+{
+  "generatedBy": "ios/M5cetTests/Tools/fixtures/generate-tools-fixtures.ts",
+  "server": "server/functions/routes.ts, server/ai/routes.ts, server/client-config.ts",
+  "clientConfig": {
+    "path": "/api/client-config",
+    "request": null,
+    "status": 200,
+    "contentType": "application/json; charset=utf-8",
+    "body": "{\"ok\":true,\"config\":{\"version\":1,\"updatedAt\":0,\"connections\":{\"enabled\":true,\"maxProfiles\":30,\"logLimit\":200,\"stats\":true,\"allowCustomServers\":false,\"servers\":[],\"autoConnectDefault\":true},\"appearance\":{\"themes\":[],\"defaultTheme\":\"motorsport\",\"defaultTone\":\"auto\",\"defaultIcons\":\"theme\",\"lockTheme\":false},\"modules\":{},\"groups\":[],\"composer\":{\"triggers\":[{\"char\":\"/\",\"action\":\"functions\"},{\"char\":\"@\",\"action\":\"mentions\"},{\"char\":\"#\",\"action\":\"tags\"}],\"tags\":[]},\"map\":{\"enabled\":true,\"tiles\":\"https://tile.openstreetmap.org/{z}/{x}/{y}.png\",\"subdomains\":\"\",\"attribution\":\"© OpenStreetMap\",\"zoom\":16,\"width\":280,\"height\":160,\"pinColor\":\"#e11d48\",\"accent\":\"\",\"label\":true,\"showCoords\":true,\"grayscale\":false,\"cacheHours\":168}}}"
+  },
+  "commands": {
+    "path": "/api/functions/commands",
+    "request": null,
+    "status": 200,
+    "contentType": "application/json; charset=utf-8",
+    "body": "{\"ok\":true,\"enabled\":true,\"commands\":[{\"keyword\":\"ask\",\"name\":\"Asker\",\"summary\":\"\",\"runtime\":\"server\",\"visibility\":\"caller\",\"mine\":true,\"inputs\":[],\"events\":[],\"model\":\"tools-ask\",\"icon\":\"🙋\",\"usage\":\"\"},{\"keyword\":\"check\",\"name\":\"Checker\",\"summary\":\"\",\"runtime\":\"server\",\"visibility\":\"caller\",\"mine\":true,\"inputs\":[{\"name\":\"n\",\"type\":\"integer\",\"label\":\"Count\",\"help\":\"how many\",\"required\":true,\"min\":1,\"max\":10}],\"events\":[],\"model\":\"tools-check\",\"icon\":\"shield-check\",\"usage\":\"\"},{\"keyword\":\"report\",\"name\":\"Domain report\",\"summary\":\"A domain's DNS and TLS.\",\"runtime\":\"server\",\"visibility\":\"caller\",\"mine\":true,\"inputs\":[{\"name\":\"host\",\"type\":\"hostname\",\"required\":true}],\"events\":[\"button\"],\"model\":\"tools-report\",\"icon\":\"file-text\",\"usage\":\"/report example.org\"},{\"keyword\":\"roomy\",\"name\":\"Roomy\",\"summary\":\"\",\"runtime\":\"server\",\"visibility\":\"room\",\"mine\":true,\"inputs\":[],\"events\":[],\"model\":\"tools-roomy\",\"icon\":\"\",\"usage\":\"\"}]}"
+  },
+  "runReport": {
+    "path": "/api/functions/run",
+    "request": {
+      "keyword": "report",
+      "model": "tools-report",
+      "inputs": {
+        "host": "example.org"
+      },
+      "room": null,
+      "client": "ios-device-1",
+      "lang": "en",
+      "tz": "Europe/Prague",
+      "stream": true
+    },
+    "status": 200,
+    "contentType": "text/event-stream; charset=utf-8",
+    "body": "event: start\ndata: {\"runId\":\"run_muvg8whc42eabd820c17\",\"keyword\":\"report\",\"name\":\"Domain report\",\"icon\":\"file-text\",\"visibility\":\"caller\"}\n\nevent: progress\ndata: {\"runId\":\"run_muvg8whc42eabd820c17\",\"type\":\"progress\",\"p\":0.3,\"text\":\"Looking up DNS…\"}\n\nevent: progress\ndata: {\"runId\":\"run_muvg8whc42eabd820c17\",\"type\":\"progress\",\"p\":0.7,\"text\":\"Checking TLS…\"}\n\nevent: done\ndata: {\"ok\":true,\"runId\":\"run_muvg8whc42eabd820c17\",\"status\":\"done\",\"outputs\":[{\"type\":\"html\",\"html\":\"<div class=\\\"m5h-head\\\"><div class=\\\"m5h-title\\\">example.org</div><div class=\\\"m5h-sub\\\">Report</div></div><table class=\\\"m5h-kv\\\"><tr><th>A</th><td>93.184.216.34</td></tr><tr><th>TLS</th><td><span class=\\\"m5h-badge m5h-badge--ok\\\">valid</span></td></tr></table><a href=\\\"https://example.org/more\\\">More</a>\",\"title\":\"Domain report\"},{\"type\":\"markdown\",\"text\":\"**ok** — see [the docs](https://example.org/docs)\"},{\"type\":\"table\",\"columns\":[\"Record\",\"Value\"],\"rows\":[[\"MX\",\"mail.example.org\"],[\"TXT\",\"v=spf1 -all\"]],\"title\":\"DNS\"},{\"type\":\"button\",\"name\":\"again\",\"title\":\"Again\",\"data\":{\"host\":\"example.org\"},\"css\":\"primary\"}],\"error\":null,\"ms\":21,\"visibility\":\"caller\",\"chain\":\"chn_muvg8whdd2203a19874d199510bbccd5\",\"call\":0,\"model\":\"tools-report\",\"keyword\":\"report\",\"name\":\"Domain report\",\"icon\":\"file-text\",\"events\":[\"button\"]}\n\n"
+  },
+  "runBadInput": {
+    "path": "/api/functions/run",
+    "request": {
+      "keyword": "check",
+      "model": "tools-check",
+      "inputs": {
+        "n": "40"
+      },
+      "room": null,
+      "client": "ios-device-1",
+      "lang": "en",
+      "tz": "Europe/Prague",
+      "stream": true
+    },
+    "status": 200,
+    "contentType": "text/event-stream; charset=utf-8",
+    "body": "event: error\ndata: {\"code\":\"bad-input\",\"message\":\"Count: must be at most 10\",\"problems\":[{\"input\":\"n\",\"label\":\"Count\",\"problem\":\"range\",\"expected\":\"a whole number 1–10\",\"message\":\"must be at most 10\"}],\"command\":{\"keyword\":\"check\",\"name\":\"Checker\",\"summary\":\"\",\"runtime\":\"server\",\"visibility\":\"caller\",\"mine\":true,\"inputs\":[{\"name\":\"n\",\"type\":\"integer\",\"label\":\"Count\",\"help\":\"how many\",\"required\":true,\"min\":1,\"max\":10}],\"events\":[],\"model\":\"tools-check\",\"icon\":\"shield-check\",\"usage\":\"\"},\"usageLine\":\"/check <n>\"}\n\n"
+  },
+  "runUnknown": {
+    "path": "/api/functions/run",
+    "request": {
+      "keyword": "nope",
+      "inputs": {},
+      "room": null,
+      "client": "ios-device-1",
+      "lang": "en",
+      "tz": "Europe/Prague",
+      "stream": true
+    },
+    "status": 404,
+    "contentType": "application/json; charset=utf-8",
+    "body": "{\"ok\":false,\"code\":\"no-command\",\"message\":\"No such command, or it is not available to you.\"}"
+  },
+  "eventButton": {
+    "path": "/api/functions/event",
+    "request": {
+      "model": "tools-report",
+      "keyword": "report",
+      "chain": "chn_muvg8whdd2203a19874d199510bbccd5",
+      "call": 0,
+      "room": null,
+      "client": "ios-device-1",
+      "lang": "en",
+      "tz": "Europe/Prague",
+      "type": "button",
+      "name": "again",
+      "data": {
+        "host": "example.org"
+      },
+      "stream": true
+    },
+    "status": 200,
+    "contentType": "text/event-stream; charset=utf-8",
+    "body": "event: start\ndata: {\"runId\":\"run_muvg8wkvd864c6c08df9\",\"keyword\":\"report\",\"name\":\"Domain report\",\"icon\":\"file-text\",\"visibility\":\"caller\"}\n\nevent: done\ndata: {\"ok\":true,\"runId\":\"run_muvg8wkvd864c6c08df9\",\"status\":\"done\",\"outputs\":[{\"type\":\"text\",\"text\":\"again again example.org\"}],\"error\":null,\"ms\":22,\"visibility\":\"caller\",\"chain\":\"chn_muvg8whdd2203a19874d199510bbccd5\",\"call\":1,\"model\":\"tools-report\",\"keyword\":\"report\",\"name\":\"Domain report\",\"icon\":\"file-text\",\"events\":[\"button\"]}\n\n"
+  },
+  "runAsk": {
+    "status": 200,
+    "contentType": "text/event-stream; charset=utf-8",
+    "body": "event: start\ndata: {\"runId\":\"run_muvg8wnj47c4c5d7df60\",\"keyword\":\"ask\",\"name\":\"Asker\",\"icon\":\"🙋\",\"visibility\":\"caller\"}\n\nevent: interaction\ndata: {\"runId\":\"run_muvg8wnj47c4c5d7df60\",\"id\":\"int_muvg8wq4dbac9fcf610b\",\"kind\":\"prompt\",\"spec\":{\"text\":\"Your name?\"}}\n\nevent: done\ndata: {\"ok\":true,\"runId\":\"run_muvg8wnj47c4c5d7df60\",\"status\":\"done\",\"outputs\":[{\"type\":\"text\",\"text\":\"hi Alice\"}],\"error\":null,\"ms\":22,\"visibility\":\"caller\",\"chain\":\"chn_muvg8wnj872df5ec951bde914eb03094\",\"call\":0,\"model\":\"tools-ask\",\"keyword\":\"ask\",\"name\":\"Asker\",\"icon\":\"🙋\",\"events\":[]}\n\n",
+    "answer": {
+      "path": "/api/functions/runs/run_muvg8wnj47c4c5d7df60/events",
+      "request": {
+        "interactionId": "int_muvg8wq4dbac9fcf610b",
+        "value": "Alice"
+      },
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "body": "{\"ok\":true}"
+    }
+  },
+  "aiStatusOff": {
+    "path": "/api/ai/status",
+    "request": null,
+    "status": 200,
+    "contentType": "application/json; charset=utf-8",
+    "body": "{\"ok\":true,\"enabled\":false,\"state\":\"off\",\"models\":[],\"default\":\"\",\"limits\":{\"maxOutputTokens\":2048,\"maxInputChars\":24000},\"connectors\":[]}"
+  },
+  "aiStatus": {
+    "path": "/api/ai/status",
+    "request": null,
+    "status": 200,
+    "contentType": "application/json; charset=utf-8",
+    "body": "{\"ok\":true,\"enabled\":true,\"state\":\"ready\",\"models\":[{\"ref\":\"local-ai/m1\",\"label\":\"m1\",\"provider\":\"Local AI\",\"reasoning\":false,\"vision\":false}],\"default\":\"local-ai/m1\",\"limits\":{\"maxOutputTokens\":2048,\"maxInputChars\":24000},\"connectors\":[{\"id\":\"local-ai/m1\",\"label\":\"Local AI\",\"model\":\"m1\"}]}"
+  },
+  "aiChat": {
+    "path": "/api/ai/chat",
+    "request": {
+      "model": "local-ai/m1",
+      "reasoning": "off",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Ahoj?"
+        }
+      ],
+      "stream": true
+    },
+    "status": 200,
+    "contentType": "text/event-stream; charset=utf-8",
+    "body": "event: delta\ndata: {\"text\":\"Aho\"}\n\nevent: delta\ndata: {\"text\":\"j! \"}\n\nevent: delta\ndata: {\"text\":\"**J\"}\n\nevent: delta\ndata: {\"text\":\"ak*\"}\n\nevent: delta\ndata: {\"text\":\"* m\"}\n\nevent: delta\ndata: {\"text\":\"ohu\"}\n\nevent: delta\ndata: {\"text\":\" po\"}\n\nevent: delta\ndata: {\"text\":\"moc\"}\n\nevent: delta\ndata: {\"text\":\"i?\"}\n\nevent: done\ndata: {\"text\":\"Ahoj! **Jak** mohu pomoci?\",\"model\":\"m1\",\"ref\":\"local-ai/m1\",\"usage\":{\"input\":20,\"output\":5,\"reasoning\":2},\"cost\":null,\"ms\":28,\"finish\":\"stop\"}\n\n"
+  },
+  "speechStatus": {
+    "path": "/api/speech/status",
+    "request": null,
+    "status": 200,
+    "contentType": "application/json; charset=utf-8",
+    "body": "{\"ok\":true,\"tts\":{\"enabled\":false,\"connectors\":[]},\"stt\":{\"enabled\":false,\"connectors\":[]}}"
+  }
+}
