@@ -27,8 +27,16 @@ type Pyodide = {
 
 export type PythonEngine = { version: string; heapBytes: () => number; execute: (specJson: string) => Promise<string> };
 
-/** Pyodide's public API calls that would load code or reach the host. */
-const NEUTERED = ["loadPackage", "loadPackagesFromImports", "mountNodeFS", "mountNativeFS", "registerJsModule", "unregisterJsModule", "pyimport", "runPython", "runPythonAsync", "setStdin", "setStdout", "setStderr", "setInterruptBuffer", "checkInterrupt", "registerComlink", "unpackArchive", "loadSnapshot", "makeMemorySnapshot", "_api", "FS", "PATH", "ERRNO_CODES"];
+/** Pyodide's public API calls that would load code or reach the host — and
+ *  (6.12, F-03) its internal Emscripten module, whose FS / HEAP / ccall are
+ *  the same reach by another name. */
+export const NEUTERED = ["loadPackage", "loadPackagesFromImports", "mountNodeFS", "mountNativeFS", "registerJsModule", "unregisterJsModule", "pyimport", "runPython", "runPythonAsync", "setStdin", "setStdout", "setStderr", "setInterruptBuffer", "checkInterrupt", "registerComlink", "unpackArchive", "loadSnapshot", "makeMemorySnapshot", "_api", "_module", "FS", "PATH", "ERRNO_CODES"];
+
+/** 6.12 (F-03): the JavaScript modules Python could import. Unregistered once
+ *  the prelude holds what it needs, so `import js` / `import pyodide_js` find
+ *  nothing even when a script empties sys.meta_path (the prelude's blocker is
+ *  a Python list entry a script can remove). */
+const JS_MODULES = ["js", "pyodide_js", "_m5host"];
 
 export async function loadPython(dir: string, bridge: () => Bridge): Promise<PythonEngine> {
   const req = createRequire(join(dir, "pyodide.js"));
@@ -54,7 +62,13 @@ export async function loadPython(dir: string, bridge: () => Bridge): Promise<Pyt
   py.runPython(PRELUDE_PY);
   const execute = py.globals.get("_m5_execute");
   py.runPython("_seal()");
-  const heap = () => py._module?.HEAPU8?.buffer.byteLength ?? 0;
+  const unregister = py.unregisterJsModule as ((name: string) => void) | undefined;
+  for (const name of JS_MODULES) {
+    try { unregister?.call(py, name); } catch { /* not registered */ }
+  }
+  // The heap gauge keeps its own reference; the API object loses the module below.
+  const emscripten = py._module;
+  const heap = () => emscripten?.HEAPU8?.buffer.byteLength ?? 0;
   for (const name of NEUTERED) {
     try {
       Object.defineProperty(py, name, { value: undefined, writable: false, configurable: false });

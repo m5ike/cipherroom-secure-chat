@@ -102,6 +102,10 @@
     el.classList.toggle("fn-root--max", ideMax && document.fullscreenElement !== el);
     el.classList.toggle("fn-root--full", ideMax);
     if (!data.runtime.persistent) el.append(h("div", { class: "card warn" }, h("strong", {}, "In-memory only. "), data.runtime.reason || "The SQLite driver is missing; packages and models will not survive a restart."));
+    // 6.12: functions.db at rest (F-18) and how sandboxes are isolated (F-03).
+    if (data.runtime.persistent && data.runtime.encrypted === false && data.runtime.warning) el.append(h("div", { class: "card warn" }, h("strong", {}, "Not encrypted at rest. "), data.runtime.warning));
+    const iso = data.runtime.isolation;
+    if (iso && iso.mode !== "bwrap") el.append(h("div", { class: "card warn", "data-testid": "fn-isolation-warning" }, h("strong", {}, iso.mode === "refused" ? "Functions cannot run. " : "Sandboxes without bubblewrap. "), iso.reason));
     el.append(statbar());
     const bar = tabs();
     el.append(bar);

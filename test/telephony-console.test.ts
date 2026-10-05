@@ -330,7 +330,8 @@ describe("permissions", () => {
     await settle();
     const body = last("PUT", "/admin/telephony/permissions")!.body;
     expect(body.permissions.outbound).toMatchObject({ countries: ["CZ"], maxConcurrentCalls: 8 });
-    expect(body.permissions.log.keepRaw).toBe(false);
+    // 6.12 (G-07): raw payloads are off by default; the toggle turns them on.
+    expect(body.permissions.log.keepRaw).toBe(true);
     expect(body.permissions.defaults).toEqual(DEFAULT_PERMISSIONS.defaults);
   });
 

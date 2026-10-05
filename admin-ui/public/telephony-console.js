@@ -88,7 +88,7 @@
     inbound: { maxConcurrentCalls: 10, perCallerPerHour: 20 },
     inroute: { maxTtlSec: 86400, maxActivePerOwner: 50, maxAttemptsPerCall: 3, maxFailuresPerCallerPerHour: 10, maxFailuresPerDidPerHour: 30, maxFailuresPerMinute: 10, maxFailuresPerHour: 100 },
     tsa: { httpHosts: [], functions: true, recordingDays: 30 },
-    log: { days: 30, keepRaw: true },
+    log: { days: 14, keepRaw: false },
     defaults: { inbound: { kind: "state", state: "busy" }, outbound: { kind: "pass" } },
   };
   const INROUTE_CODE = /^\d{4,6}$/;

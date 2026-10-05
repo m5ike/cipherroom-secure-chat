@@ -65,7 +65,7 @@ import { b64urlToBuffer, SUPPORTED_ALGS, verifyAssertion, verifyRegistration, ty
 import { buildInfo } from "./build-info";
 import { audit, type AuditCategory, type AuditLevel } from "./monitor/audit";
 import { system } from "./monitor/system";
-import { traffic, type TrafficClass } from "./monitor/traffic";
+import { currentRoomHash, traffic, type TrafficClass } from "./monitor/traffic";
 import { usernameOf, type AccountStore } from "./accounts/store";
 import type { OfflineQueue } from "./accounts/mailqueue";
 import type { StorageService } from "./storage/service";
@@ -445,7 +445,8 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
 
   /* ------------------------------------------------ room registry & control (6.0) */
 
-  const roomId = (req: Request) => String(req.params.id ?? "").toLowerCase();
+  // 6.12 (F-04): a hash from before 6.12 (a stored link, a script) → the keyed hash of that room, when known.
+  const roomId = (req: Request) => currentRoomHash(String(req.params.id ?? "").toLowerCase());
   const targetOf = (b: Record<string, unknown>): MemberTarget | undefined => {
     const t: MemberTarget = {};
     if (typeof b.peerId === "string" && b.peerId) t.peerId = b.peerId.slice(0, 80);

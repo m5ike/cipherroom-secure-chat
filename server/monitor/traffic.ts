@@ -20,7 +20,8 @@
 // "what is this traffic?" at a glance: signaling, presence, relay, storage,
 // file proxy, heartbeat, account, admin, API, static.
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
+import { derivedKey } from "../storage/keys";
 
 export type TrafficChannel = "ws" | "http";
 export type TrafficDirection = "in" | "out";
@@ -116,10 +117,90 @@ export function classifyRoute(method: string, path: string): TrafficClass {
   return "other";
 }
 
-/** A room name never reaches the monitor in the clear. */
+/**
+ * What logs, the audit journal, the monitor and the console call a room: 16
+ * hex characters. 6.12 (F-04): an HMAC-SHA-256 keyed with a subkey of the
+ * storage master key (keys.ts derivedKey("room-hash")), the same in the main
+ * and the admin service and across restarts. Before 6.12 it was a plain
+ * SHA-256 of the room id (legacyRoomHash) — with a log line, anyone could
+ * test passphrase guesses offline (blind id = Argon2id(passphrase), then the
+ * hash); without the master key they cannot any more.
+ *
+ * Without the master key (storage off) the old unkeyed value is used, with a
+ * warning (roomHashKeyed() → false; the console's health shows it).
+ */
 export function hashRoom(room: string | null | undefined): string | undefined {
   if (!room) return undefined;
+  const key = roomHashKey();
+  if (memo.key !== key) { memo.key = key; memo.byRoom.clear(); memo.byLegacy.clear(); }
+  const hit = memo.byRoom.get(room);
+  if (hit) return hit;
+  const legacy = legacyRoomHash(room)!;
+  const keyed = key ? createHmac("sha256", key).update(`m5cet:room:${room}`).digest("hex").slice(0, 16) : legacy;
+  if (memo.byRoom.size >= ROOM_MEMO_MAX) { memo.byRoom.clear(); memo.byLegacy.clear(); }
+  memo.byRoom.set(room, keyed);
+  memo.byLegacy.set(legacy, keyed);
+  if (keyed !== legacy) {
+    for (const fn of migrationListeners) { try { fn(legacy, keyed); } catch { /* a listener never breaks hashing */ } }
+  }
+  return keyed;
+}
+
+/** The room hash of 6.11 and before (unkeyed SHA-256): only to recognise values stored then. */
+export function legacyRoomHash(room: string | null | undefined): string | undefined {
+  if (!room) return undefined;
   return createHash("sha256").update(`m5cet:room:${room}`).digest("hex").slice(0, 16);
+}
+
+/**
+ * A 16-character room hash from before 6.12 (a TSA's room, a bridge, a
+ * record), translated to today's hash of the same room — known once this
+ * process has hashed that room (it has, for every room someone is in). Any
+ * other value comes back as it is.
+ */
+export function currentRoomHash(hash: string): string {
+  return memo.byLegacy.get(hash) ?? hash;
+}
+
+/** Whether room hashes are keyed (false: the master key is unavailable — the old, guessable values). */
+export function roomHashKeyed(): boolean {
+  return roomHashKey() !== null;
+}
+
+/** Called once per room and process when its keyed hash replaces the legacy one (room-registry.ts moves its record). */
+export function onRoomHashMigration(fn: (legacy: string, keyed: string) => void): () => void {
+  migrationListeners.add(fn);
+  return () => { migrationListeners.delete(fn); };
+}
+
+/** Test seam: forget the memo and a remembered key failure. */
+export function _resetRoomHashForTests(): void {
+  memo.key = null; memo.byRoom.clear(); memo.byLegacy.clear();
+  keyFailure = null;
+}
+
+const ROOM_MEMO_MAX = 20_000;
+const memo: { key: Buffer | null; byRoom: Map<string, string>; byLegacy: Map<string, string> } = { key: null, byRoom: new Map(), byLegacy: new Map() };
+const migrationListeners = new Set<(legacy: string, keyed: string) => void>();
+let keyFailure: { at: number } | null = null;
+
+function roomHashKey(): Buffer | null {
+  // A missing master key is not retried on every call (each try reads the key file).
+  if (keyFailure && Date.now() - keyFailure.at < 60_000) return null;
+  try {
+    const key = derivedKey("room-hash");
+    keyFailure = null;
+    return key;
+  } catch (err) {
+    if (!keyFailure) console.warn(`[monitor] room hashes are NOT keyed (the storage master key is unavailable: ${(err as Error).message}); logs keep the old, guessable room hashes`);
+    keyFailure = { at: Date.now() };
+    return null;
+  }
+}
+
+/** An address as one string: no IPv4-mapped prefix, IPv6 in lower case. */
+export function normalizeIp(ip: string | null | undefined): string {
+  return String(ip ?? "").trim().replace(/^::ffff:/i, "").toLowerCase();
 }
 
 /** Enough of an address to tell networks apart, not enough to find a home. */
@@ -148,6 +229,9 @@ export class TrafficMonitor {
   private counters = new Map<TrafficClass, ClassCounters>();
   private series = new Map<number, RateSample>();
   private connections = new Map<string, ConnectionInfo>();
+  /** 6.12: each live connection's full address — never shown or logged; only for
+   *  "does this address hold a hub connection" (turn-gate.ts) and per-address caps (file-proxy.ts). */
+  private addresses = new Map<string, string>();
   private subscribers = new Set<Subscriber>();
   private startedAt = Date.now();
   private totals = { framesIn: 0, framesOut: 0, bytesIn: 0, bytesOut: 0, http: 0, errors: 0, connectionsOpened: 0 };
@@ -217,6 +301,8 @@ export class TrafficMonitor {
       bytesOut: 0,
     };
     this.connections.set(id, conn);
+    const full = normalizeIp(info.ip);
+    if (full) this.addresses.set(id, full);
     this.totals.connectionsOpened += 1;
     return conn;
   }
@@ -231,7 +317,21 @@ export class TrafficMonitor {
   closeConnection(id: string): ConnectionInfo | null {
     const conn = this.connections.get(id) ?? null;
     this.connections.delete(id);
+    this.addresses.delete(id);
     return conn;
+  }
+
+  /** 6.12: the full address of a live connection (null when it is gone). */
+  addressOf(id: string): string | null {
+    return this.addresses.get(id) ?? null;
+  }
+
+  /** 6.12: whether some live WebSocket connection comes from this exact address. */
+  hasLiveConnectionFrom(ip: string | null | undefined): boolean {
+    const want = normalizeIp(ip);
+    if (!want) return false;
+    for (const a of this.addresses.values()) if (a === want) return true;
+    return false;
   }
 
   liveConnections(): ConnectionInfo[] {
@@ -324,6 +424,7 @@ export class TrafficMonitor {
     this.counters.clear();
     this.series.clear();
     this.connections.clear();
+    this.addresses.clear();
     this.subscribers.clear();
     this.nextId = 1;
     this.totals = { framesIn: 0, framesOut: 0, bytesIn: 0, bytesOut: 0, http: 0, errors: 0, connectionsOpened: 0 };

@@ -181,6 +181,27 @@ export function serverSubkey(purpose: ServerKeyPurpose): Buffer {
   return derive(masterKeys().master, purpose);
 }
 
+/**
+ * 6.12: a subkey of the master key for one more purpose — the at-rest key of
+ * a service database (`service-db:functions`, `service-db:telephony`), the
+ * HMAC key of room hashes in logs (`room-hash`), the MAC of the pinned audit
+ * key (`audit-pin`). Each purpose gets its own HKDF output, so one never
+ * reveals another. Throws MasterKeyError like getMasterKey().
+ */
+export function derivedKey(purpose: string): Buffer {
+  if (!/^[a-z0-9:-]{3,64}$/.test(purpose) || ["wrap-database-keys", "seal-values", "session-id-hmac"].includes(purpose)) {
+    throw new Error(`not a derivable key purpose: ${purpose}`);
+  }
+  const keys = masterKeys();
+  let found = derivedCache.get(purpose);
+  if (!found || found.master !== keys.master) {
+    found = { master: keys.master, key: derive(keys.master, purpose) };
+    derivedCache.set(purpose, found);
+  }
+  return found.key;
+}
+const derivedCache = new Map<string, { master: Buffer; key: Buffer }>();
+
 /** Loads the master key once, for start-up: ok, or the reason storage is off. */
 export function checkMasterKey(): { ok: true; source: "env" | "file" } | { ok: false; reason: string } {
   try {
@@ -324,5 +345,7 @@ export function _resetMasterKeyForTests(): void {
   if (cached) {
     for (const buf of [cached.master, cached.wrap, cached.seal, cached.session]) buf.fill(0);
   }
+  for (const d of derivedCache.values()) d.key.fill(0);
+  derivedCache.clear();
   cached = null;
 }

@@ -328,7 +328,7 @@ status / ms, **normalizovanou** událost (`NormalizedCallEvent` bez raw, starš�
 surový payload **bez tajemství** (hlavičky `Authorization` a podpisy se
 neukládají vůbec; klíče typu token / secret / password / api_key / signature /
 jwt → `[redacted]`; JWT, `Bearer …`, `api_secret=` v URL, heslo v `sip:u:heslo@`
-a token hovoru v `/wh/tel/<token>/` se maskují). Dále: rozhodnutí pravidel
+a token hovoru v `/wh/tel/<token>/` se maskují; od 6.12 i co volající zadal — `Digits` / `digits` / `dtmf` jako `•••4`, 4–6místný `code` jako route kód, `SpeechResult` / `speech` / `transcript` jako `[speech: N chars]`; `keepRaw` je od 6.12 výchozí vypnuté a `telephony.db` je SQLCipher). Dále: rozhodnutí pravidel
 (`route`), kroky TSA (`tsa`), hovory a SMS (`call`, `sms` — i starší log
 hovorů z 6.0), testy (`test`) a změny v konzoli (`config`: metoda, cesta,
 status, kdo, jen **názvy** polí).

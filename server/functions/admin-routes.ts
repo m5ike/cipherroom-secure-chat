@@ -40,6 +40,8 @@ import { ADM_SPEC, SDK_SPEC, sdkCompletions, sdkDts } from "./sdk-spec";
 import { cronError } from "./cron";
 import { tutorialLessons } from "./tutorial";
 import { newId } from "./store";
+import { sandboxGateStats, sandboxIsolation } from "./sandbox/pool";
+import { isolationState } from "./sandbox/isolation";
 import { layoutGroups } from "../layout-catalog";
 import { switchState } from "../plugins/settings";
 import { isRole, type AdminRole } from "../admin-users";
@@ -91,7 +93,8 @@ function overview(reveal: Reveal = () => true) {
     schedules: functionsStore.schedules(),
     templates: TEMPLATES.map((t) => ({ id: t.id, name: t.name, language: t.language, description: t.description })),
     groups: layoutGroups(),
-    runtime: { persistent: store.persistent, reason: store.reason },
+    // 6.12: at rest (F-18), the sandbox isolation (F-03) and its slots (F-28).
+    runtime: { persistent: store.persistent, reason: store.reason, encrypted: store.encrypted, warning: store.warning, isolation: isolationState(), sandboxes: sandboxGateStats() },
     sdk: SDK_SPEC.map((o) => o.name),
     stats: runStats(),
     // 5.2: the service itself — off, nothing runs from the chat, webhooks or the API.
@@ -223,6 +226,8 @@ export function functionsConsoleRight(req: Request): Needs | null {
 
 export function registerFunctionsAdminRoutes(app: Express): void {
   void functionsStore.ready(); // open the store at boot; hot paths await it too
+  // 6.12 (F-03): decide how sandboxes are isolated now, so the overview says so before the first run.
+  if (!process.env.VITEST) void sandboxIsolation().catch(() => undefined);
   const r = express.Router(EXACT_ROUTER);
   r.use(express.json({ limit: "8mb" }));
 

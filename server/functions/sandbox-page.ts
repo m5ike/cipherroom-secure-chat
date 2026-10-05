@@ -10,6 +10,11 @@
 // draw in), m5.flash(text, level), m5.send(name, data) → the model's button
 // entry point, m5.submit(name, values) → its form entry point, m5.log(…),
 // m5.error(e), m5.resize(px?), m5.play(src | bytes, mime?), m5.tone, m5.lang.
+//
+// 6.12 (F-08): /fn-sandbox.html?origin=peer is the strict variant for code
+// from another member's message (SANDBOX_CSP_PEER): no network at all, media
+// only from data: / blob:. Without the parameter (the caller's own runs, a
+// model's output in the console) the page is as before.
 
 import type { Express, Request, Response } from "express";
 
@@ -27,7 +32,46 @@ export const SANDBOX_CSP = [
   "sandbox allow-scripts",
 ].join("; ");
 
-export const SANDBOX_HTML = `<!doctype html>
+/**
+ * 6.12 (F-08): the strict variant, for code that came in ANOTHER member's
+ * message (/fn-sandbox.html?origin=peer). Nothing leaves the frame on its
+ * own: no fetch / XHR / WebSocket / EventSource / beacon (connect-src
+ * 'none'), images, audio and fonts only from data: and blob: (no https:
+ * request that would carry data in its URL), no frames. The code talks to
+ * the app only through the parent's postMessage bridge (m5.send / m5.submit),
+ * which the app gates. The page also drops RTCPeerConnection before the code
+ * runs (WebRTC is not covered by connect-src in every browser).
+ */
+export const SANDBOX_CSP_PEER = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob:",
+  "media-src data: blob:",
+  "font-src data:",
+  "connect-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'none'",
+  "manifest-src 'none'",
+  "frame-ancestors 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "sandbox allow-scripts",
+].join("; ");
+
+/** Which variant a request asks for: `?origin=peer` → the strict one; anything else → the default. */
+export function sandboxVariant(query: unknown): "peer" | "own" {
+  const origin = query && typeof query === "object" ? (query as Record<string, unknown>).origin : undefined;
+  return origin === "peer" ? "peer" : "own";
+}
+
+export const SANDBOX_HTML = sandboxHtml("own");
+
+/** The page; the strict (peer) variant also refuses https: sources in m5.play and drops WebRTC. */
+export function sandboxHtml(variant: "own" | "peer"): string {
+  const peer = variant === "peer";
+  return `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>M5cet · browser code</title>
 <style>
@@ -46,10 +90,15 @@ button{font:inherit}
   function post(msg) { try { msg.m5 = true; parentWin.postMessage(msg, "*"); } catch (e) { /* the app is gone */ } }
   function toText(v) { if (typeof v === "string") return v; try { return JSON.stringify(v); } catch (e) { return String(v); } }
   function bytesUrl(src, mime) {
-    if (typeof src === "string") return /^(data:|blob:|https:)/.test(src) ? src : "data:" + (mime || "audio/wav") + ";base64," + src;
+    if (typeof src === "string") return /^(data:|blob:${peer ? "" : "|https:"})/.test(src) ? src : "data:" + (mime || "audio/wav") + ";base64," + src;
     return URL.createObjectURL(new Blob([src], { type: mime || "audio/wav" }));
   }
-  var root = document.getElementById("root");
+  var root = document.getElementById("root");${peer ? `
+  // Code from another member: no peer-to-peer channel out of the frame either.
+  ["RTCPeerConnection", "webkitRTCPeerConnection", "RTCDataChannel", "RTCSessionDescription", "RTCIceCandidate"].forEach(function (k) {
+    try { Object.defineProperty(window, k, { value: undefined, writable: false, configurable: false }); } catch (e) { /* not there */ }
+  });
+  try { Object.defineProperty(navigator, "sendBeacon", { value: function () { return false; }, writable: false, configurable: false }); } catch (e) { /* not there */ }` : ""}
   var m5 = {
     args: null, root: root, tone: "light", lang: "en",
     flash: function (text, level) { post({ kind: "flash", text: toText(text), level: level || "info" }); },
@@ -83,15 +132,20 @@ button{font:inherit}
 })();
 </script>
 </body></html>`;
+}
+
+const PAGES = { own: SANDBOX_HTML, peer: sandboxHtml("peer") } as const;
 
 export function registerSandboxPage(app: Express): void {
-  app.get("/fn-sandbox.html", (_req: Request, res: Response) => {
-    res.setHeader("Content-Security-Policy", SANDBOX_CSP);
+  app.get("/fn-sandbox.html", (req: Request, res: Response) => {
+    // 6.12 (F-08): ?origin=peer — code from another member's message runs under the strict CSP.
+    const variant = sandboxVariant(req.query);
+    res.setHeader("Content-Security-Policy", variant === "peer" ? SANDBOX_CSP_PEER : SANDBOX_CSP);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "public, max-age=3600");
     res.removeHeader("X-Frame-Options");
     // An opaque origin cannot be origin-keyed; the header only earns a console warning here.
     res.removeHeader("Origin-Agent-Cluster");
-    res.send(SANDBOX_HTML);
+    res.send(PAGES[variant]);
   });
 }

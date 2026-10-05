@@ -16,7 +16,7 @@
 //   delete(id)      → true / false
 //   stats()         → an object of numbers
 
-import { createHash } from "node:crypto";
+import { currentRoomHash, hashRoom } from "../monitor/traffic";
 import { ADM_AREAS, mintAdmToken, type AdmArea, type AdmGrant } from "./adm-token";
 import { SafeRegex } from "./safe-regex";
 
@@ -200,12 +200,12 @@ function roomMatches(room: RoomView, filters: RoomFilter[], any: boolean): boole
   return any ? filters.some(one) : filters.every(one);
 }
 
-/** A room's id: its 16-character hash, or the room id / name itself (hashed as the server does). */
+/** A room's id: its 16-character hash, or the room id / name itself (hashed as the server does — keyed since 6.12, F-04). */
 export function roomIdOf(v: unknown): string {
   const s = str(v).trim();
-  if (/^[0-9a-f]{16}$/.test(s)) return s;
+  if (/^[0-9a-f]{16}$/.test(s)) return currentRoomHash(s);
   if (!s) throw new AdmCallError("bad-argument", "a room id is required");
-  return createHash("sha256").update(`m5cet:room:${s}`).digest("hex").slice(0, 16);
+  return hashRoom(s)!;
 }
 
 async function allRooms(ctx: AdmContext): Promise<RoomView[]> {

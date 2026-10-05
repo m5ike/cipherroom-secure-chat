@@ -326,8 +326,8 @@ cest).
   `manifest.json` se SHA-256; ručně z konzole (Úložiště). Obnova: zastavit
   službu, zkopírovat obsah zálohy zpět do `$DATA_DIR`, ověřit
   `sha256sum` proti manifestu, spustit.
-- **Master klíč úložiště** (`storage.key` / `STORAGE_MASTER_KEY`) a
-  `audit-signing.key` zálohujte zvlášť — v záloze záměrně nejsou.
+- **Master klíč úložiště** (`storage.key` / `STORAGE_MASTER_KEY`) zálohujte zvlášť — v záloze
+  záměrně není. Od 6.12 z něj vzniká i klíč `functions.db` / `telephony.db`, hashů místností a podpisů auditního deníku (`audit-signing.key` už není; dřívější klíč je připnutý v `audit-signing.pin`) — bez master klíče se tyto databáze neotevřou.
 - `.env` (`ADMIN_API_TOKEN`, VAPID, `TURN_SECRET`, `CLUSTER_SECRET`).
 - Konfiguraci Nginx a TLS certifikáty.
 

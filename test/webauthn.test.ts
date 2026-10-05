@@ -58,9 +58,11 @@ describe("CBOR decoder", () => {
 });
 
 describe("origin policy", () => {
-  it("accepts https on the rpId and its subdomains, plus localhost over http", () => {
+  it("accepts https on exactly the rpId (6.12: not its subdomains), plus localhost over http", () => {
     expect(isAllowedOrigin("https://chat.example", RP)).toBe(true);
-    expect(isAllowedOrigin("https://app.chat.example", RP)).toBe(true);
+    // 6.12 (F-24): a subdomain (someone else's, perhaps) only when the operator allows them.
+    expect(isAllowedOrigin("https://app.chat.example", RP)).toBe(false);
+    expect(isAllowedOrigin("https://app.chat.example", { ...RP, subdomains: true })).toBe(true);
     expect(isAllowedOrigin("http://chat.example", RP)).toBe(false); // plain http off localhost
     expect(isAllowedOrigin("https://chat.example.evil.tld", RP)).toBe(false);
     expect(isAllowedOrigin("http://localhost:5173", { rpId: "localhost" })).toBe(true);
