@@ -31,7 +31,9 @@ final class NfcWorkbenchModelTests: XCTestCase {
         XCTAssertTrue(classic["classic-read"]!!.contains("MIFARE Classic"), "\(String(describing: classic["classic-read"]))")
         XCTAssertTrue(classic["classic-dump"]!!.contains("MIFARE Classic"))
         XCTAssertTrue(classic["write-uid"]!!.contains("MIFARE Classic") || classic["write-uid"]!!.contains("Raw"))
-        XCTAssertNil(classic["ndef-read"]!, "NDEF on a Classic tag is the tag's NDEF")
+        // Core NFC never hands a Classic tag over — not even for its NDEF.
+        XCTAssertTrue(classic["ndef-read"]!!.contains("MIFARE Classic"))
+        XCTAssertTrue(classic.values.allSatisfy { $0 != nil }, "nothing of a Classic tag runs on an iPhone")
 
         m.tech = NfcCatalog.emv
         let emv = Dictionary(uniqueKeysWithValues: m.opButtons().map { ($0.id, $0.reason) })

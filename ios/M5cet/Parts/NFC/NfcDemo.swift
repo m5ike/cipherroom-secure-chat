@@ -13,6 +13,7 @@
 
 #if DEBUG
 import Foundation
+import ImageIO
 import M5Core
 import M5NFC
 import UIKit
@@ -93,7 +94,7 @@ enum NfcDemo {
                         "surname": "SPECIMEN", "dateOfBirth": "1990-05-14", "sex": "F", "dateOfExpiry": "2034-05-13"],
             "photo": .string(face), "photoMime": "image/jpeg",
             "images": [["kind": "face", "group": "DG2", "mime": "image/jpeg", "name": "face.jpg", "data": .string(face)],
-                       ["kind": "signature", "group": "DG7", "mime": "image/jp2", "name": "signature.jp2", "data": "AAAADGpQICANCocKAAAAFGZ0eXA="]],
+                       ["kind": "signature", "group": "DG7", "mime": "image/jp2", "name": "signature.jp2", "data": .string(drawnSignature())]],
             "personal": ["fullName": "ANNA SPECIMEN", "placeOfBirth": "UTOPIA", "address": ["1 SAMPLE STREET", "UTOPIA"]],
             "document": ["issuingAuthority": "MINISTRY OF SAMPLES", "dateOfIssue": "2024-05-14"],
             "security": ["passive": "ok", "hashAlgorithm": "SHA-256", "protocols": ["PACE", "Chip Authentication"],
@@ -118,6 +119,26 @@ enum NfcDemo {
             ctx.cgContext.fillEllipse(in: CGRect(x: 20, y: 150, width: 140, height: 140))
         }
         return img.jpegData(compressionQuality: 0.8)?.base64EncodedString() ?? ""
+    }
+
+    /// A signature for the specimen, in JPEG 2000 (as many documents keep DG7), base64.
+    static func drawnSignature() -> String {
+        let size = CGSize(width: 240, height: 80)
+        let img = UIGraphicsImageRenderer(size: size).image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            let p = UIBezierPath()
+            p.move(to: CGPoint(x: 16, y: 56))
+            p.addCurve(to: CGPoint(x: 110, y: 30), controlPoint1: CGPoint(x: 40, y: 0), controlPoint2: CGPoint(x: 70, y: 80))
+            p.addCurve(to: CGPoint(x: 224, y: 40), controlPoint1: CGPoint(x: 150, y: -10), controlPoint2: CGPoint(x: 180, y: 90))
+            UIColor(red: 0.1, green: 0.15, blue: 0.4, alpha: 1).setStroke()
+            p.lineWidth = 3
+            p.stroke()
+        }
+        let out = NSMutableData()
+        guard let cg = img.cgImage, let dest = CGImageDestinationCreateWithData(out, "public.jpeg-2000" as CFString, 1, nil) else { return "" }
+        CGImageDestinationAddImage(dest, cg, nil)
+        return CGImageDestinationFinalize(dest) ? (out as Data).base64EncodedString() : ""
     }
 }
 

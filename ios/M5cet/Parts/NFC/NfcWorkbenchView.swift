@@ -64,7 +64,7 @@ struct NfcWorkbenchView: View {
                     .padding(.bottom, 8)
                     if model.working { NfcSpinner(palette: p).padding(.bottom, 6) }
                     // The PIN of an M5Cet card, or a connection tag's code (format 2) / PIN (format 1).
-                    NfcField(hint: w("nfc.work.pin"), text: $model.pin, keyboard: .numbersAndPunctuation, secret: true, palette: p, id: "nfc.pin")
+                    NfcField(hint: w("nfc.work.pin"), text: $model.pin, keyboard: .asciiCapable, secret: true, palette: p, id: "nfc.pin")
                         .padding(.top, 8)
                 }
 

@@ -176,7 +176,10 @@ final class NfcWorkbenchModel {
 
     /// Why an op is disabled: the device (no reader, the iPhone's limits), else an op no reader of the app runs.
     func reason(_ op: String, tech: String) -> String? {
-        if let r = service().reason(op: op, tech: tech) { return r }
+        let s = service()
+        if let r = s.reason(op: op, tech: tech) { return r }
+        // Core NFC never hands a MIFARE Classic tag to the app — not even its NDEF: every op of the tag says why.
+        if tech.hasPrefix("mifare-classic"), !s.capabilities.contains(.mifareClassic), let r = s.limit(op: "classic-read", tech: tech) { return r }
         return Self.handled.contains(op) ? nil : words("nfc.op.unsupported")
     }
 
