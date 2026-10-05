@@ -107,6 +107,11 @@
 	<array>
 		<string>cz.m5cet.app.checkin</string>
 	</array>
+	<!-- A call-back from the Phone app's Recents (CallKit; Platform/Calls asks before dialling). -->
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INStartCallIntent</string>
+	</array>
 
 	<!-- Navigation and ride apps a position can open (Android: <queries>, location/GeoLinks). -->
 	<key>LSApplicationQueriesSchemes</key>
