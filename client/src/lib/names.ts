@@ -81,14 +81,18 @@ function scriptOf(ch: string): Script | null {
   return "other";
 }
 
-/** Letters from more than one of Latin / Cyrillic / Greek in one name ("Аlice" with a Cyrillic А). */
+/** Letters from more than one of Latin / Cyrillic / Greek in one WORD ("Аlice" with a Cyrillic А).
+ *  Per word, as on Android (core/Names.java): "Иван Smith" is a real bilingual name, not a spoof. */
 export function hasMixedScripts(name: string): boolean {
-  const scripts = new Set<Script>();
-  for (const ch of normalizeDisplayName(name)) {
-    const s = scriptOf(ch);
-    if (s && s !== "other") scripts.add(s);
+  for (const word of normalizeDisplayName(name).split(" ")) {
+    const scripts = new Set<Script>();
+    for (const ch of word) {
+      const s = scriptOf(ch);
+      if (s && s !== "other") scripts.add(s);
+    }
+    if (scripts.size > 1) return true;
   }
-  return scripts.size > 1;
+  return false;
 }
 
 export type NameWarning =
