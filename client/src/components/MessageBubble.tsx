@@ -64,8 +64,8 @@ export type MessageBubbleProps = {
   flags?: MsgFlags;
   ownPlaintext?: string; // sender's original text for a sealed message
   sealCode?: string; // sender's code, to display so they can share it
-  /** Which key sealed it (sender key / pair key / room key) — a data attribute for tests and styling. */
-  sealedWith?: "sender-key" | "pair" | "room";
+  /** Which key sealed it (sender key / pair key / room key; 6.12 protocol 4: p4-sk / p4-pair / p4-mailbox) — a data attribute for tests and styling. */
+  sealedWith?: "sender-key" | "pair" | "room" | "p4-sk" | "p4-pair" | "p4-mailbox";
   vanished?: boolean;
   vanishedAt?: number;
   onVanish: (id: string) => void;

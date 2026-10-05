@@ -21,7 +21,8 @@
 export type WipeStep = "account" | "server" | "push" | "serviceWorker" | "caches" | "indexedDB" | "storage" | "cookies";
 export type WipeReport = Record<WipeStep, "ok" | "skipped" | "failed">;
 
-const KNOWN_DATABASES = ["m5cet-session"];
+// 6.12: "m5cet-p4" — protocol 4's mailbox keys and replay window (p4-store.ts).
+const KNOWN_DATABASES = ["m5cet-session", "m5cet-p4"];
 
 async function attempt(report: WipeReport, step: WipeStep, run: () => Promise<boolean | void>): Promise<void> {
   try { report[step] = (await run()) === false ? "skipped" : "ok"; } catch { report[step] = "failed"; }

@@ -37,8 +37,11 @@ export type MessageInfo = {
   attachment?: { name: string; mime: string; size: number; url: string };
   /** Sender identity line (crypto v2), already worded. */
   identity?: { text: string; tone: "ok" | "warn" | "muted" };
-  cryptoVersion?: 1 | 2 | 3;
-  sealedWith?: "sender-key" | "pair" | "room";
+  cryptoVersion?: 1 | 2 | 3 | 4;
+  /** Which key sealed it (6.12: "p4-sk", "p4-pair", "p4-mailbox" — protocol 4). */
+  sealedWith?: "sender-key" | "pair" | "room" | "p4-sk" | "p4-pair" | "p4-mailbox";
+  /** 6.12: my message — every way it went out, already worded (more than one). */
+  sealedHow?: string[];
   /** 6.2: every kind, already worded (text, file, location, private…). */
   kinds?: string[];
   /** 6.2: the text's bytes and the file's size. */
@@ -151,6 +154,7 @@ export function MessageInfoView({ info, lang, onForward, actions = {} }: { info:
     data: {
       sender: info.sender, recipients: info.recipients, route: info.route, ip: info.ip, created: new Date(info.createdAt).toLocaleString(lang),
       secure: info.secure, cryptoVersion: info.cryptoVersion ?? 1, sealedWith: info.sealedWith, identity: info.identity ?? null, flags: info.flags,
+      sealedHowText: (info.sealedHow ?? []).join(" · "),
       kinds: info.kinds ?? info.flags,
       sizeText: sizeParts.join(" · "),
       expiresText: info.expiresAt ? stepTime(info.expiresAt, lang, now) : "",

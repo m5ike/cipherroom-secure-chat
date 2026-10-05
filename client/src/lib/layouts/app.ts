@@ -25,6 +25,8 @@ export function headerTree(): LNode {
       id: "status", name: "Connection status",
       attrs: {
         "data-testid": "status-connection",
+        // 6.12: the server accepted our proof of the room key (hub join proof).
+        "data-proven": "{$hubProven}",
         title: "{$statusTitle}",
         class: "ml-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-colors {if $status == 'joined'}border-emerald-500/40 bg-emerald-500/10{elseif $status == 'offline'}border-amber-500/40 bg-amber-500/10{else}border-border bg-background{/if}",
       },

@@ -33,8 +33,10 @@ const KEY_ID = "device";
 const ALG = { name: "ECDSA", namedCurve: "P-256" } as const;
 const SIGN = { name: "ECDSA", hash: "SHA-256" } as const;
 
-/** This device certified by the account's key (public data). */
-export type Attestation = { accountKey: string; cert: string };
+/** This device certified by the account's key (public data). 6.12: `v2` — the
+ *  certificate with an expiry (docs/protocol-v4.md § 12.3): Ed25519 over
+ *  join("m5cet/device-cert/2", device SPKI, exp), renewed at sign-in. */
+export type Attestation = { accountKey: string; cert: string; v2?: { exp: number; sig: string } };
 
 export type Identity = {
   /** SPKI, base64. */
@@ -229,8 +231,10 @@ export async function saveAttestation(attestation: Attestation | null): Promise<
 
 async function storedAttestation(devicePublicKey: string): Promise<Attestation | null> {
   try {
-    const row = await idb<{ accountKey?: string; cert?: string; devicePublicKey?: string }>("readonly", (s) => s.get(ATTESTATION_ID));
-    return row?.accountKey && row.cert && row.devicePublicKey === devicePublicKey ? { accountKey: row.accountKey, cert: row.cert } : null;
+    const row = await idb<{ accountKey?: string; cert?: string; devicePublicKey?: string; v2?: { exp?: unknown; sig?: unknown } }>("readonly", (s) => s.get(ATTESTATION_ID));
+    if (!row?.accountKey || !row.cert || row.devicePublicKey !== devicePublicKey) return null;
+    const v2 = row.v2 && typeof row.v2.exp === "number" && typeof row.v2.sig === "string" ? { v2: { exp: row.v2.exp, sig: row.v2.sig } } : {};
+    return { accountKey: row.accountKey, cert: row.cert, ...v2 };
   } catch { return null; }
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   b64, buildHello, buildKemMessage, establishSession, hB64, kemKeygen, LABEL, MAX_SKIP, openKemMessage, Ratchet, roleOf,
-  systemRng, unb64, verifyHello, type RatchetFrame, type RatchetInner, createBundle, MAILBOX_LIFETIME_MS, ecdsaVerify, helloSig4Data,
+  systemRng, unb64, verifyHello, type RatchetFrame, type RatchetInner, createBundle, MAILBOX_LIFETIME_MS, ecdsaVerify, helloSig4Data, PairHandshake,
 } from "../client/src/lib/p4";
 import { CHECK, clone, pair, ROOM, testDevice } from "./p4-support";
 
@@ -103,6 +103,36 @@ describe("p4 handshake", () => {
     expect(b64(sa.th)).not.toBe(b64(sb.th));
     const res = await sb.ratchet.decrypt(await sa.ratchet.encrypt(text("a", 0)));
     expect(res.ok).toBe(false);
+  });
+
+  it("answers the same peer hello twice with the same KEM message (idempotent), another hello with a new one", async () => {
+    const [da, db] = await Promise.all([testDevice(), testDevice()]);
+    const start = (d: typeof da, self: string, peer: string) => PairHandshake.start({
+      roomId: ROOM, check: CHECK, selfPeerId: self, peerPeerId: peer, v3: { check: CHECK, pk: d.pk, dh: d.dh, sig: "c2ln" }, signer: d.signer, mb: null, acc: null, sth: null,
+    });
+    const ha = await start(da, "pa", "pb");
+    const hb = await start(db, "pb", "pa");
+    const first = await ha.acceptHello(hb.hello);
+    const again = await ha.acceptHello(clone(hb.hello)); // the hello arrived twice
+    expect(first.kem).not.toBeNull();
+    expect(again.verdict.ok).toBe(true);
+    expect(again.kem).toEqual(first.kem);
+    // The peer used the FIRST KEM message: the sessions still agree.
+    const fromB = await hb.acceptHello(ha.hello);
+    expect(await hb.acceptKem(first.kem)).toBe("ok");
+    expect(await ha.acceptKem(fromB.kem)).toBe("ok");
+    const [sa, sb] = await Promise.all([ha.establish(), hb.establish()]);
+    expect(b64(sa.th)).toBe(b64(sb.th));
+    expect(await open(sb.ratchet, await sa.ratchet.encrypt(text("a", 1)))).toMatchObject({ t: "msg", id: "a-1" });
+    expect(await open(sa.ratchet, await sb.ratchet.encrypt(text("b", 1)))).toMatchObject({ t: "msg", id: "b-1" });
+    // A different hello of the peer (it started over) gets a new KEM message.
+    const hc = await start(da, "pa", "pb");
+    const hb2 = await start(db, "pb", "pa");
+    const one = await hc.acceptHello(hb.hello);
+    const other = await hc.acceptHello(hb2.hello);
+    expect(other.kem).not.toBeNull();
+    expect(other.kem!.r).not.toBe(one.kem!.r);
+    expect(other.kem!.ct).not.toBe(one.kem!.ct);
   });
 
   it("signs the hello with the device key over the documented transcript", async () => {

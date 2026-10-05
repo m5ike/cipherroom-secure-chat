@@ -241,6 +241,9 @@ describe("passkey account and the away relay", () => {
         expect.stringContaining("zpráva pro nepřítomnou Alici"),
         expect.stringContaining("poznámka do trezoru"),
       ]));
+    // 6.12 (F-09): Bob sealed it to the mailbox bundle of Alice's device (from her
+    // hello v4), not with the room key — her bundle's keys survived the reload.
+    expect(await alice.page.locator('[data-testid^="message-"]', { hasText: "zpráva pro nepřítomnou Alici" }).first().getAttribute("data-sealed")).toBe("p4-mailbox");
 
     // …and Bob's copy is marked delivered.
     await expect.poll(

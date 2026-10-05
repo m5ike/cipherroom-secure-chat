@@ -8,9 +8,17 @@
 //
 // (the store never holds a readable id), for REPLAY.windowMs (31 days),
 // at most REPLAY.maxIdsPerRoom per room. A message created before the window
-// or more than REPLAY.futureMs ahead is refused outright — so forgetting ids
-// older than the window can never re-admit a replay. History the user
-// restores from their own encrypted store is exempt.
+// is refused outright — so forgetting ids older than the window can never
+// re-admit a replay of it. A message more than REPLAY.futureMs ahead comes
+// from a sender whose clock is off: it is ACCEPTED ("clamped") — the app
+// takes the time it arrived as its time and says the clock is off — and its
+// id is remembered with that time, so a far-future date neither keeps an id
+// past the window nor outlives the others when the room's cap prunes the
+// oldest. (The cost: once such an id has left the window, a copy of that very
+// message could be accepted again — only where a frame can be replayed at
+// all: the ratchets refuse a used key, so a relayed mailbox item within its
+// bundle's key retention.) History the user restores from their own
+// encrypted store is exempt.
 //
 // The store is an interface; the integrator persists it encrypted like the
 // rest of the device's data. `MemoryReplayStore` is the in-memory one.
@@ -51,7 +59,8 @@ export class MemoryReplayStore implements ReplayStore {
   size(roomId: string): number { return this.rooms.get(roomId)?.size ?? 0; }
 }
 
-export type ReplayVerdict = "ok" | "replay" | "too-old" | "future" | "malformed";
+/** "clamped": accepted and remembered, but dated more than REPLAY.futureMs ahead — use the receive time as its time. */
+export type ReplayVerdict = "ok" | "clamped" | "replay" | "too-old" | "malformed";
 
 export class ReplayGuard {
   private readonly mutex = new Mutex();
@@ -61,9 +70,11 @@ export class ReplayGuard {
   constructor(private readonly store: ReplayStore, private readonly opts: { pruneEvery?: number } = {}) {}
 
   /**
-   * One incoming message: "ok" (accepted and remembered), "replay", "too-old",
-   * "future" or "malformed". `restored`: from the user's own history — no
-   * freshness or replay check, only remembered.
+   * One incoming message: "ok" (accepted and remembered), "clamped" (accepted
+   * and remembered with the time `now`: it was dated more than
+   * REPLAY.futureMs ahead — the caller takes the receive time as its time),
+   * "replay", "too-old" or "malformed". `restored`: from the user's own
+   * history — no freshness or replay check, only remembered.
    */
   check(roomId: string, id: string, createdAt: unknown, opts: { now?: number; restored?: boolean } = {}): Promise<ReplayVerdict> {
     return this.mutex.run(async () => {
@@ -73,14 +84,16 @@ export class ReplayGuard {
       if (!opts.restored) {
         if (!isSafeCount(createdAt)) return "malformed";
         if (createdAt < now - REPLAY.windowMs) return "too-old";
-        if (createdAt > now + REPLAY.futureMs) return "future";
         if (await this.store.has(roomId, key)) return "replay";
       }
-      await this.store.add(roomId, key, isSafeCount(createdAt) ? createdAt : now);
+      // A far-future date is remembered with the receive time: it may neither keep the id past the window nor
+      // make it the last one the room's cap would prune.
+      const ahead = isSafeCount(createdAt) && createdAt > now + REPLAY.futureMs;
+      await this.store.add(roomId, key, isSafeCount(createdAt) && !ahead ? createdAt : now);
       const count = (this.added.get(roomId) ?? 0) + 1;
       this.added.set(roomId, count);
       if (count === 1 || count % (this.opts.pruneEvery ?? 256) === 0) await this.store.prune(roomId, now - REPLAY.windowMs, REPLAY.maxIdsPerRoom);
-      return "ok";
+      return ahead && !opts.restored ? "clamped" : "ok";
     });
   }
 }

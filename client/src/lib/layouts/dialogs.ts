@@ -128,6 +128,8 @@ export function messageInfoTree(): LNode {
         ]),
       },
       { id: "sealed", label: "{_'sec.sealed'}", if: "$sealedWith", value: "{$sealedWith|t:'sec.sealed.'}" },
+      // 6.12: my message that went out more than one way (protocol 4 sessions, mailboxes, the room key for older apps).
+      { id: "sealed-how", label: "{_'sec.sealedHow'}", if: "$sealedHowText", value: "{$sealedHowText}" },
       {
         id: "identity", label: "{_'sec.identity'}", if: "$identity",
         value: n("area", {
@@ -340,7 +342,8 @@ export const DIALOG_CONTRACTS: Record<DialogId, LayoutContract> = {
       { path: "$created", type: "text", description: "When (a date and time)." },
       { path: "$secure", type: "yes/no", description: "Encrypted end to end." },
       { path: "$cryptoVersion", type: "number", description: "The encryption's version." },
-      { path: "$sealedWith", type: "text", description: "sender-key, pair or room." },
+      { path: "$sealedWith", type: "text", description: "sender-key, pair or room; 6.12 protocol 4: p4-sk, p4-pair, p4-mailbox." },
+      { path: "$sealedHowText", type: "text", description: "6.12: my message — every way it went out, worded (when more than one)." },
       { path: "$identity", type: "object", description: "The sender's identity: .text, .tone (ok / warn / muted)." },
       { path: "$flags", type: "list", description: "The send options it had (hold to read, vanishing, sealed)." },
       { path: "$kinds", type: "list", description: "6.2: every kind, worded (text, file, location, private, reply…)." },
