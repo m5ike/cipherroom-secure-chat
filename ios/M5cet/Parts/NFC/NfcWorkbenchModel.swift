@@ -158,7 +158,7 @@ final class NfcWorkbenchModel {
         self.service = service
         self.words = words
         self.conn = conn ?? NfcConnTagFlow(service: service)
-        status = service().readingAvailable ? words("nfc.work.tapScan") : words("nfc.unavailable")
+        status = service().readingAvailable ? words("nfc.work.tapScan") : words.or("nfc.unavailable.device", "nfc.unavailable")
     }
 
     var available: Bool { service().readingAvailable }
@@ -166,6 +166,14 @@ final class NfcWorkbenchModel {
     var unavailableReason: String? { service().unavailableReason }
 
     private func flash(_ text: String, _ level: FlashLevel) { flashed(text, level) }
+
+    /// No reader here (an iPad, an iPhone's simulator): the iOS design's words for a device, Android's otherwise.
+    var unavailableText: String { words.or("nfc.unavailable.device", "nfc.unavailable") }
+
+    /// A report's file went to Files (the web's "Saved: <name>").
+    func reportSaved(_ name: String) {
+        flash(words.has("nfc.report.saved") ? words("nfc.report.saved").replacingOccurrences(of: "{name}", with: name) : name, .success)
+    }
 
     /* ------------------------------------------------------------ the ops */
 
@@ -279,7 +287,7 @@ final class NfcWorkbenchModel {
     /// Scan: the card's identity and public record (Android startScan + onTag with no armed op). A connection tag
     /// whose code was typed already opens its join card at once.
     func scan() {
-        guard available else { flash(words("nfc.unavailable"), .warn); return }
+        guard available else { flash(words.or("nfc.unavailable.device", "nfc.unavailable"), .warn); return }
         let s = service()
         s.stopEmulation()
         emulating = false
@@ -307,12 +315,12 @@ final class NfcWorkbenchModel {
         s.stopEmulation()
         emulating = false
         working = false
-        status = available ? words("nfc.work.tapScan") : words("nfc.unavailable")
+        status = available ? words("nfc.work.tapScan") : words.or("nfc.unavailable.device", "nfc.unavailable")
     }
 
     /// Runs an op on the next card (Android arm + runOp) and shows its result.
     func run(_ op: String, _ input: NfcOpInput) {
-        guard available else { flash(words("nfc.unavailable"), .warn); return }
+        guard available else { flash(words.or("nfc.unavailable.device", "nfc.unavailable"), .warn); return }
         let s = service()
         s.stopEmulation()
         emulating = false
@@ -370,7 +378,7 @@ final class NfcWorkbenchModel {
     /// A failure's words on the status line; closing the sheet is no failure.
     private func failed(_ error: any Error) {
         if let e = error as? NfcError, e.code == .cancelled {
-            status = available ? words("nfc.work.tapScan") : words("nfc.unavailable")
+            status = available ? words("nfc.work.tapScan") : words.or("nfc.unavailable.device", "nfc.unavailable")
             return
         }
         if error is CancellationError { return }
@@ -547,7 +555,7 @@ final class NfcWorkbenchModel {
 
     /// Runs every step on the next card with the progress on the screen; Cancel keeps what was read.
     func startTemplate(_ t: ApduTemplates.Template, _ mrtd: MrtdReader.Options?) {
-        guard available else { flash(words("nfc.unavailable"), .warn); return }
+        guard available else { flash(words.or("nfc.unavailable.device", "nfc.unavailable"), .warn); return }
         let s = service()
         s.stopEmulation()
         content = .progress(t.label)

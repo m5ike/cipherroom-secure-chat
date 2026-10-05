@@ -65,7 +65,7 @@ final class NfcPanelModel {
     /// and format 1 with its PIN. `secret`: what was typed (the panel's field, else $form.nfcPin).
     func action(_ what: String, secret: String? = nil) {
         if what == "stop" { stop(); return }
-        guard available else { flash(words("nfc.unavailable"), .warn); return }
+        guard available else { flash(words.or("nfc.unavailable.device", "nfc.unavailable"), .warn); return }
         let typed = (secret ?? pin).trimmingCharacters(in: .whitespaces)
         if what == "read" { read(typed); return }
         guard let card = activeCard() else { flash(words("rooms.empty"), .warn); return }
@@ -186,7 +186,7 @@ final class NfcPanelModel {
     /// The status line (Android NfcPanel.refresh).
     var status: String {
         let connErr = lastConn.map { NfcConnTagFlow.error($0, words: words) } ?? ""
-        if !available { return words("nfc.unavailable") }
+        if !available { return words.or("nfc.unavailable.device", "nfc.unavailable") }
         switch mode {
         case "emulate": return words("nfc.emulating")
         case "read", "write": return words("nfc.hold")

@@ -156,7 +156,7 @@ final class NfcCardBuilderModel {
         case .empty: flash(words("nfc.builder.empty"), .info); return
         case .badPin: flash(words("nfc.builder.pin"), .warn); return
         case .needAccount: flash(words("nfc.builder.needAccount"), .warn); return
-        case .noReader: flash(writeReason ?? words("nfc.unavailable"), .warn); return
+        case .noReader: flash(writeReason ?? words.or("nfc.unavailable.device", "nfc.unavailable"), .warn); return
         case .ok: break
         }
         let p = pinText
@@ -218,7 +218,7 @@ struct NfcCardBuilderView: View {
                 }
                 if model.writing { NfcSpinner(palette: p).padding(.top, 8) }
                 if let why {
-                    NfcText(text: w("nfc.unavailable") + " " + why, size: 12, color: p.muted, family: p.family)
+                    NfcText(text: w.or("nfc.unavailable.device", "nfc.unavailable") + " " + why, size: 12, color: p.muted, family: p.family)
                         .padding(.top, 6)
                         .accessibilityIdentifier("nfc.builder.why")
                 }
@@ -288,7 +288,7 @@ struct NfcRecordEditor: View {
                 HStack(spacing: 10) {
                     Spacer()
                     NfcPillButton(label: w("nav.close"), icon: "x", palette: p, id: "nfc.editor.close") { model.editing = nil }
-                    NfcPillButton(label: w("nfc.model.done"), icon: "check", primary: true, palette: p, id: "nfc.editor.ok") {
+                    NfcPillButton(label: w.or("nfc.ok", "nfc.model.done"), icon: "check", primary: true, palette: p, id: "nfc.editor.ok") {
                         model.save(values: values, oneTime: oneTime, isInternal: isInternal)
                     }
                 }

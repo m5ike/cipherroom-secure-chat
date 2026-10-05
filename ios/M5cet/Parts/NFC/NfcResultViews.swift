@@ -442,33 +442,72 @@ struct NfcTextBox: View {
     }
 }
 
-/// The report's export (the web's CardReportView): each format and the card's own files, through the share sheet.
+/// The report's export (the web's CardReportView): "Full report" — the formats ("Export"), then the card's own files
+/// ("Files to download"), each through the share sheet; Save to Files says "Saved: <name>" as the web's download does.
 struct NfcReportExportView: View {
     let files: [NfcExportFile]
     let words: NfcWords
     let palette: NfcPalette
+    /// A file went to Files ("nfc.report.saved").
+    var saved: @MainActor (String) -> Void = { _ in }
 
     var body: some View {
         if !files.isEmpty {
+            let formats = files.filter { !$0.format.isEmpty }, own = files.filter { $0.format.isEmpty }
             NfcCardBox(palette: palette) {
-                NfcText(text: words.or("nfc.report.export", "nfc.out.share"), size: 13, color: palette.muted, bold: true, family: palette.family)
-                NfcFlow(spacing: 8) {
-                    ForEach(files) { f in
-                        ShareLink(item: f, preview: SharePreview(Text(verbatim: f.name))) {
-                            HStack(spacing: 6) {
-                                DesignIcon(name: "download", size: 14, color: palette.primary)
-                                NfcText(text: f.format.isEmpty ? f.name : NfcReportExport.label(f.format, words: words), size: 13, color: palette.primary, bold: true, family: palette.family)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Capsule().fill(palette.primary.opacity(0.12)))
-                        }
-                        .accessibilityIdentifier("nfc.report." + f.name)
-                    }
-                }
-                .padding(.top, 4)
+                NfcText(text: words.or("nfc.report.full", "nfc.out.share"), size: 15, color: palette.fg, bold: true, family: palette.family)
+                    .accessibilityAddTraits(.isHeader)
+                group(words.or("nfc.report.export", "nfc.out.share"), formats)
+                if !own.isEmpty { group(words.or("nfc.report.files", "nfc.out.share"), own) }
             }
         }
+    }
+
+    @ViewBuilder
+    private func group(_ title: String, _ items: [NfcExportFile]) -> some View {
+        NfcText(text: title, size: 13, color: palette.muted, bold: true, family: palette.family)
+            .padding(.top, 4)
+        NfcFlow(spacing: 8) {
+            ForEach(items) { f in
+                Button { NfcFileShare.present(f) { saved($0) } } label: {
+                    HStack(spacing: 6) {
+                        DesignIcon(name: "download", size: 14, color: palette.primary)
+                        NfcText(text: f.format.isEmpty ? f.name : NfcReportExport.label(f.format, words: words), size: 13, color: palette.primary, bold: true, family: palette.family)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(palette.primary.opacity(0.12)))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("nfc.report." + f.name)
+            }
+        }
+    }
+}
+
+/// A file in memory through the share sheet (never written to the disk — NSItemProvider hands the bytes over),
+/// reporting Save to Files back.
+@MainActor
+enum NfcFileShare {
+    static func present(_ f: NfcExportFile, saved: @escaping @MainActor (String) -> Void) {
+        let provider = NSItemProvider()
+        provider.suggestedName = f.name
+        let data = f.data
+        provider.registerDataRepresentation(for: f.type, visibility: .all) { done in
+            done(data, nil)
+            return nil
+        }
+        let name = f.name
+        SharePresenter.present([provider]) { type, completed in
+            if completed, Self.savesToFiles(type) { saved(name) }
+        }
+    }
+
+    /// The share sheet's Save to Files (or into Photos).
+    static func savesToFiles(_ type: UIActivity.ActivityType?) -> Bool {
+        guard let type else { return false }
+        return type == .saveToCameraRoll || type.rawValue.contains("SaveToFiles")
     }
 }
 

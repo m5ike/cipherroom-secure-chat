@@ -48,7 +48,7 @@ struct NfcWorkbenchView: View {
                     NfcCardBox(palette: p) {
                         HStack(spacing: 10) {
                             DesignIcon(name: "nfc", size: 22, color: p.muted)
-                            NfcText(text: w("nfc.unavailable"), size: 15, color: p.fg, bold: true, family: p.family)
+                            NfcText(text: w.or("nfc.unavailable.device", "nfc.unavailable"), size: 15, color: p.fg, bold: true, family: p.family)
                         }
                         NfcText(text: why, size: 13, color: p.muted, family: p.family)
                     }
@@ -189,11 +189,11 @@ struct NfcWorkbenchView: View {
             case .emv(let e):
                 if let c = model.card { NfcCardInfoView(card: c, palette: p) }
                 NfcEmvView(emv: e, words: w, palette: p)
-                NfcReportExportView(files: model.reportFiles(), words: w, palette: p)
+                NfcReportExportView(files: model.reportFiles(), words: w, palette: p, saved: model.reportSaved)
             case .mrtd(let m):
                 if let c = model.card { NfcCardInfoView(card: c, palette: p) }
                 NfcMrtdView(mrtd: m, words: w, palette: p)
-                NfcReportExportView(files: model.reportFiles(), words: w, palette: p)
+                NfcReportExportView(files: model.reportFiles(), words: w, palette: p, saved: model.reportSaved)
             case .records(let rs):
                 NfcRecordsView(records: rs, words: w, palette: p, emulateReason: model.reason("m5-emulate", tech: NfcCatalog.m5cetCard),
                                open: { model.openRecord($0) }, emulate: { if let c = model.lastContainer { model.emulateM5(c) } })
@@ -286,7 +286,7 @@ struct NfcRunView: View {
             if let m = run.mrtd { NfcMrtdView(mrtd: m, words: w, palette: p) }
             NfcTextBox(text: model.readableText(), words: w, palette: p)
         }
-        NfcReportExportView(files: model.reportFiles(), words: w, palette: p)
+        NfcReportExportView(files: model.reportFiles(), words: w, palette: p, saved: model.reportSaved)
     }
 
     @ViewBuilder
@@ -378,7 +378,7 @@ struct NfcPromptSheet: View {
         HStack(spacing: 10) {
             Spacer()
             NfcPillButton(label: model.words("nav.close"), icon: "x", palette: palette, id: "nfc.prompt.close") { model.cancelPrompt() }
-            NfcPillButton(label: okLabel ?? model.words("nfc.model.done"), icon: "check", primary: true, palette: palette, id: "nfc.prompt.ok", action: ok)
+            NfcPillButton(label: okLabel ?? model.words.or("nfc.ok", "nfc.model.done"), icon: "check", primary: true, palette: palette, id: "nfc.prompt.ok", action: ok)
         }
         .padding(.top, 8)
     }
