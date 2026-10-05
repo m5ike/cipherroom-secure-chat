@@ -13,5 +13,7 @@ enum Bootstrap {
         // Platform/Calls — model.voip = … (CallKit + PushKit; reports every VoIP push).
         // Platform/Notifications — UNUserNotificationCenter delegate, categories, neutral texts.
         // Platform/NFC, Voice, Location, Contacts, Files — on demand from the screens.
+        // Parts and the app's actions — model.design.slots.register(…), model.design.actions.register(…),
+        // model.design.state = … (Renderer/README.md: the three contracts).
     }
 }

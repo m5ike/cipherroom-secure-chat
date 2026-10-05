@@ -19,6 +19,11 @@ final class AppModel {
     /// The PushKit (VoIP) token (hex), while a VoIP handler is installed.
     private(set) var voipToken: String?
 
+    /// The design's side shared by every window (Renderer/README.md): the design, settings, language, and the
+    /// contracts the other code installs into — `design.slots` (parts), `design.actions` (the app's actions),
+    /// `design.state` (where the app is, each screen's variables).
+    @ObservationIgnored let design = DesignServices()
+
     /// Silent pushes and the APNs token — installed by Platform/Push.
     @ObservationIgnored var push: (any RemotePushHandling)?
     /// VoIP pushes — installed by Platform/Calls. PushKit is registered only while one is set
