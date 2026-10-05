@@ -5,9 +5,15 @@
 // and gives back the outputs to show and, when the model posts to the room,
 // to send as an ordinary end-to-end-encrypted message.
 
-export type CommandInput = { name: string; type: string; label?: string; help?: string; required: boolean; default?: unknown; values?: string[] };
+export type CommandInput = { name: string; type: string; label?: string; help?: string; required: boolean; default?: unknown; values?: string[]; /** 6.11 */ pattern?: string; min?: number; max?: number };
 /** events (5.3): what a reply, a click or a form of the command's messages reaches (response, button, form, error). */
-export type Command = { keyword: string; name: string; summary: string; runtime: string; visibility: "room" | "caller"; mine: boolean; inputs: CommandInput[]; events?: string[]; model?: string };
+export type Command = {
+  keyword: string; name: string; summary: string; runtime: string; visibility: "room" | "caller"; mine: boolean; inputs: CommandInput[]; events?: string[]; model?: string;
+  /** 6.11: the model's icon (lucide name or one emoji) — its avatar as the sender of its answers (system-messenger.ts). */
+  icon?: string;
+  /** 6.11: the model's own short guide (examples), shown with a wrong call and in the suggester. */
+  usage?: string;
+};
 
 import type { FnOutput } from "./fn-outputs";
 export type { FnOutput } from "./fn-outputs";
