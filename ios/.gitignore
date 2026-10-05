@@ -1,0 +1,10 @@
+# Build outputs of the iOS apps — never committed.
+M5Kit/.build/
+.build/
+DerivedData/
+build/
+xcuserdata/
+*.xcuserstate
+*.ipa
+*.xcarchive/
+.swiftpm/
