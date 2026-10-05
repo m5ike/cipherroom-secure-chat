@@ -48,6 +48,9 @@ import type { M5Record } from "../lib/nfc/m5card";
 import { runTemplate, type EidKey, type TemplateProgress, type TemplateRun } from "../lib/nfc/template-runner";
 import { TemplateMenu, TemplateRunView, type NfcChatBridge } from "./NfcTemplatePanel";
 import { formatDateTime } from "../lib/format";
+import { osFamily, readerErrorText } from "../lib/nfc/reader-guide";
+import { isDesktopApp } from "../lib/desktop-bridge";
+import type { DesktopPcscTransport } from "../lib/nfc/transports/desktop-pcsc";
 
 export type NfcWorkbenchProps = {
   lang: Lang;
@@ -59,29 +62,33 @@ export type NfcWorkbenchProps = {
   chat?: NfcChatBridge | null;
 };
 
-const READER_TRANSPORT: Record<ReaderKind, TransportId> = {
-  internal: "webnfc", usb: "webusb-ccid", serial: "webserial-pn532", bluetooth: "webbluetooth-pn532",
+/** 6.13.1: the picker's choices — the catalogue's readers, plus the system reader (PC/SC) of M5cet Desktop. */
+type PickerKind = ReaderKind | "system";
+const READER_TRANSPORT: Record<PickerKind, TransportId> = {
+  system: "desktop-pcsc", internal: "webnfc", usb: "webusb-ccid", serial: "webserial-pn532", bluetooth: "webbluetooth-pn532",
 };
-const KIND_KEY: Record<ReaderKind, string> = {
-  internal: "nfc.reader.internal", usb: "nfc.reader.usb", bluetooth: "nfc.reader.bluetooth", serial: "nfc.reader.serial",
+const KIND_KEY: Record<PickerKind, string> = {
+  system: "nfc.reader.system", internal: "nfc.reader.internal", usb: "nfc.reader.usb", bluetooth: "nfc.reader.bluetooth", serial: "nfc.reader.serial",
 };
+const PICKER_KINDS: PickerKind[] = ["system", ...NFC_READERS.map((r) => r.kind)];
 const READER_STORE = "m5cet:nfc:reader";
 const KEYS_STORE = "m5cet:nfc:keys";
 
+/** A reader error in words: never only the browser's raw DOMException (6.13.1). */
 function errText(lang: Lang, err: unknown): string {
   if (NfcError.is(err)) {
-    const byCode: Partial<Record<string, string>> = {
-      unsupported: "nfc.apdu.unsupported", "permission-denied": "nfc.reader.unavailable",
-      "not-connected": "nfc.connectFirst", "no-card": "nfc.scan.tap", aborted: "nfc.cancelled",
-    };
-    const key = byCode[err.code];
-    return key ? translate(lang, key) : err.message;
+    const text = readerErrorText(err, { os: osFamily(), desktop: isDesktopApp() });
+    if (!text) return err.message;
+    const main = translate(lang, text.key) + (text.also ? ` ${translate(lang, text.also)}` : "");
+    // The browser's own words stay visible after the explanation, for a bug report.
+    return err.code === "reader-owned-by-os" || err.code === "no-answer" ? `${main}${err.detail ? ` (${err.detail})` : ""}` : main;
   }
   return err instanceof Error ? err.message : String(err);
 }
 
-function ReaderIcon({ kind }: { kind: ReaderKind }) {
+function ReaderIcon({ kind }: { kind: PickerKind }) {
   const p = { width: 16, height: 16 } as const;
+  if (kind === "system") return <CreditCard {...p} />;
   if (kind === "internal") return <Smartphone {...p} />;
   if (kind === "usb") return <Usb {...p} />;
   if (kind === "serial") return <Radio {...p} />;
@@ -102,15 +109,18 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
 
   const transports = useMemo<TransportInfo[]>(() => listTransports(), []);
   const byId = useMemo(() => new Map(transports.map((x) => [x.id, x])), [transports]);
-  const initialKind = useMemo<ReaderKind>(() => {
+  // The system reader is listed only where it exists (M5cet Desktop), and first.
+  const pickerKinds = useMemo<PickerKind[]>(() => PICKER_KINDS.filter((k) => k !== "system" || byId.has(READER_TRANSPORT.system)), [byId]);
+  const initialKind = useMemo<PickerKind>(() => {
     let stored: string | null = null;
     try { stored = localStorage.getItem(READER_STORE); } catch { /* ignore */ }
-    const kinds = Object.keys(READER_TRANSPORT) as ReaderKind[];
-    if (stored && (kinds as string[]).includes(stored)) return stored as ReaderKind;
-    return kinds.find((k) => byId.get(READER_TRANSPORT[k])?.supported) ?? "internal";
-  }, [byId]);
+    if (stored && (pickerKinds as string[]).includes(stored)) return stored as PickerKind;
+    return pickerKinds.find((k) => byId.get(READER_TRANSPORT[k])?.supported) ?? "internal";
+  }, [byId, pickerKinds]);
 
-  const [reader, setReader] = useState<ReaderKind>(initialKind);
+  const [reader, setReader] = useState<PickerKind>(initialKind);
+  /** 6.13.1: the serial reader's port chooser shows every port (other adapters), not just PN532 adapters + Bluetooth SPP. */
+  const [serialAllPorts, setSerialAllPorts] = useState(false);
   const [tab, setTab] = useState<Tab>("card");
   const [busy, setBusy] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -173,15 +183,18 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
 
   const doConnect = useCallback(() => runTask("connect", async () => {
     if (transportRef.current) await transportRef.current.disconnect().catch(() => {});
-    const tr = createTransport(READER_TRANSPORT[reader]);
+    const tr = createTransport(READER_TRANSPORT[reader], { serialAllPorts });
     tr.onTrace?.((dir, bytes, note) => addLog(dir, `${dir === "tx" ? "→" : "←"} ${hex(bytes, " ")}${note ? `  ; ${note}` : ""}`));
     tr.onDisconnect(() => { setConnected(false); addLog("err", t("nfc.deviceLost")); onSystem(`NFC: ${t("nfc.deviceLost")}`); });
     await tr.connect();
     transportRef.current = tr;
     setConnected(true);
     try { localStorage.setItem(READER_STORE, reader); } catch { /* ignore */ }
-    addLog("info", `${t("nfc.connected")}: ${tr.label}`);
-  }), [runTask, reader, addLog, onSystem, t]);
+    // The system reader says which reader (and slot) the user picked in the app.
+    const picked = tr.id === "desktop-pcsc" ? (tr as DesktopPcscTransport).pickedReader : null;
+    const where = picked ? ` — ${picked.name} (${t(`nfc.pcsc.slot.${picked.slot}`)})` : "";
+    addLog("info", `${t("nfc.connected")}: ${tr.label}${where}`);
+  }), [runTask, reader, serialAllPorts, addLog, onSystem, t]);
 
   const doDisconnect = useCallback(() => runTask("disconnect", async () => {
     scanAbort.current?.abort(); setScanning(false);
@@ -662,18 +675,37 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
           {connected ? <span className="nfcwb__badge nfcwb__badge--ok">{selectedTransport?.label}</span> : <span className="nfcwb__badge nfcwb__badge--no">{t("nfc.notConnected")}</span>}
         </div>
         <div className="nfcwb__transports">
-          {NFC_READERS.map((r) => {
-            const info = byId.get(READER_TRANSPORT[r.kind]);
+          {pickerKinds.map((kind) => {
+            const info = byId.get(READER_TRANSPORT[kind]);
             const supported = !!info?.supported;
             return (
-              <button key={r.kind} type="button" className="nfcwb__transport" aria-pressed={reader === r.kind} disabled={connected || !supported} onClick={() => setReader(r.kind)}>
-                <ReaderIcon kind={r.kind} />
-                <span style={{ flex: 1 }}><span className="nfcwb__transport-name">{t(KIND_KEY[r.kind])}</span> <span className="nfcwb__hint">{info?.label}</span></span>
+              <button key={kind} type="button" className="nfcwb__transport" aria-pressed={reader === kind} disabled={connected || !supported} onClick={() => setReader(kind)} data-testid={`nfc-reader-${kind}`}>
+                <ReaderIcon kind={kind} />
+                <span style={{ flex: 1 }}>
+                  <span className="nfcwb__transport-name">{t(KIND_KEY[kind])}</span> <span className="nfcwb__hint">{info?.label}</span>
+                  {/* 6.13.1: which reader this choice is for */}
+                  <span className="nfcwb__transport-caps" style={{ display: "block" }}>{t(`nfc.reader.help.${kind}`)}</span>
+                </span>
                 <span className={`nfcwb__badge ${supported ? "nfcwb__badge--ok" : "nfcwb__badge--no"}`}>{supported ? t("nfc.reader.available") : t("nfc.reader.unavailable")}</span>
               </button>
             );
           })}
         </div>
+        {reader === "serial" && !connected ? (
+          <label className="nfcwb__hint" style={{ display: "flex", gap: "0.375rem", alignItems: "center" }}>
+            <input type="checkbox" checked={serialAllPorts} onChange={(e) => setSerialAllPorts(e.target.checked)} data-testid="nfc-serial-all" />
+            {t("nfc.serial.allPorts")}
+          </label>
+        ) : null}
+        <details className="nfcwb__hint" data-testid="nfc-reader-guide">
+          <summary>{t("nfc.reader.guide")}</summary>
+          <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.1rem" }}>
+            <li>{t("nfc.reader.guide.ccid")}</li>
+            <li>{t("nfc.reader.guide.serial")}</li>
+            <li>{t("nfc.reader.guide.ble")}</li>
+            <li>{t("nfc.reader.guide.phone")}</li>
+          </ul>
+        </details>
         <div className="nfcwb__row">
           {!connected
             ? <button type="button" className="nfcwb__btn nfcwb__btn--primary" onClick={doConnect} disabled={!!busy || !selectedTransport?.supported}>{busy === "connect" ? busyIcon : <Plug width={14} height={14} />} {t("nfc.connect")}</button>

@@ -1,12 +1,13 @@
 // Common transport contract for every reader backend (Web NFC, WebUSB
-// CCID, Web Serial PN532, Web Bluetooth PN532).
+// CCID, Web Serial PN532, Web Bluetooth PN532, and — in M5cet Desktop —
+// the system smart-card reader over PC/SC).
 //
 // A transport only moves bytes; card semantics (NDEF, Mifare, DESFire,
 // EMV, ...) live in lib/nfc/cards and are transport-agnostic.
 
 import type { NdefRecord } from "./cards/ndef";
 
-export type TransportId = "webnfc" | "webusb-ccid" | "webserial-pn532" | "webbluetooth-pn532";
+export type TransportId = "webnfc" | "webusb-ccid" | "webserial-pn532" | "webbluetooth-pn532" | "desktop-pcsc";
 
 /** Everything a transport learns about a card at activation time. */
 export type CardIdentity = {

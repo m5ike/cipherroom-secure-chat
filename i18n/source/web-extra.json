@@ -259,6 +259,156 @@
   "cs": "strategie",
   "de": "Strategie"
  },
+ "nfc.err.noAnswer": {
+  "en": "The reader does not answer — is it switched on and, over Bluetooth, paired with this computer?",
+  "cs": "Čtečka neodpovídá — je zapnutá a u Bluetooth spárovaná s tímto počítačem?",
+  "de": "Der Leser antwortet nicht – ist er eingeschaltet und, über Bluetooth, mit diesem Computer gekoppelt?"
+ },
+ "nfc.err.osOwned.desktop": {
+  "en": "In this app choose System reader (PC/SC) — it reaches this reader through the system.",
+  "cs": "V této aplikaci zvolte Systémovou čtečku (PC/SC) — ke čtečce se dostane přes systém.",
+  "de": "Wählen Sie in dieser App Systemleser (PC/SC) – er erreicht diesen Leser über das System."
+ },
+ "nfc.err.osOwned.linux": {
+  "en": "The smart-card service (pcscd) is holding this reader. Stop pcscd to use it in the browser, or use M5cet Desktop with System reader (PC/SC).",
+  "cs": "Tuto čtečku drží služba čipových karet (pcscd). Pro prohlížeč pcscd zastavte, nebo použijte M5cet Desktop se Systémovou čtečkou (PC/SC).",
+  "de": "Der Chipkartendienst (pcscd) hält diesen Leser. Beenden Sie pcscd für den Browser, oder verwenden Sie M5cet Desktop mit Systemleser (PC/SC)."
+ },
+ "nfc.err.osOwned.mac": {
+  "en": "macOS's smart-card service is using this reader, so the browser cannot open it (WebUSB). Use M5cet Desktop with System reader (PC/SC), a PN532 over Bluetooth or serial, or the Android app.",
+  "cs": "Tuto čtečku používá služba čipových karet macOS, a proto ji prohlížeč nemůže otevřít (WebUSB). Použijte M5cet Desktop se Systémovou čtečkou (PC/SC), PN532 přes Bluetooth nebo sériovou linku, nebo aplikaci pro Android.",
+  "de": "Der Chipkartendienst von macOS verwendet diesen Leser, daher kann der Browser ihn nicht öffnen (WebUSB). Verwenden Sie M5cet Desktop mit Systemleser (PC/SC), einen PN532 über Bluetooth oder seriell, oder die Android-App."
+ },
+ "nfc.err.osOwned.other": {
+  "en": "The system is using this reader, so the browser cannot open it. Use M5cet Desktop with System reader (PC/SC) or the Android app.",
+  "cs": "Tuto čtečku používá systém, a proto ji prohlížeč nemůže otevřít. Použijte M5cet Desktop se Systémovou čtečkou (PC/SC) nebo aplikaci pro Android.",
+  "de": "Das System verwendet diesen Leser, daher kann der Browser ihn nicht öffnen. Verwenden Sie M5cet Desktop mit Systemleser (PC/SC) oder die Android-App."
+ },
+ "nfc.err.osOwned.win": {
+  "en": "Windows' smart-card driver is using this reader. The browser can open it only with the WinUSB driver (Zadig) — or use M5cet Desktop with System reader (PC/SC).",
+  "cs": "Tuto čtečku používá ovladač čipových karet Windows. Prohlížeč ji otevře jen s ovladačem WinUSB (Zadig) — nebo použijte M5cet Desktop se Systémovou čtečkou (PC/SC).",
+  "de": "Der Chipkartentreiber von Windows verwendet diesen Leser. Der Browser kann ihn nur mit dem WinUSB-Treiber (Zadig) öffnen – oder verwenden Sie M5cet Desktop mit Systemleser (PC/SC)."
+ },
+ "nfc.err.portBusy": {
+  "en": "The serial port is in use by another program.",
+  "cs": "Sériový port používá jiný program.",
+  "de": "Der serielle Anschluss wird von einem anderen Programm verwendet."
+ },
+ "nfc.pcsc.busy": {
+  "en": "Another program is using the card (for example an e-ID or token app). Close it or try again.",
+  "cs": "Kartu používá jiný program (třeba aplikace pro e-ID nebo token). Zavřete ho nebo to zkuste znovu.",
+  "de": "Ein anderes Programm verwendet die Karte (etwa eine e-ID- oder Token-App). Schließen Sie es oder versuchen Sie es erneut."
+ },
+ "nfc.pcsc.denied": {
+  "en": "Smart-card readers are not allowed for this server. Allow them when the app asks, or in the menu Server › Allow Smart-Card Readers.",
+  "cs": "Čtečky čipových karet nejsou pro tento server povolené. Povolte je, až se aplikace zeptá, nebo v nabídce Server › Povolit čtečky čipových karet.",
+  "de": "Chipkartenleser sind für diesen Server nicht erlaubt. Erlauben Sie sie, wenn die App fragt, oder im Menü Server › Chipkartenleser erlauben."
+ },
+ "nfc.pcsc.locked": {
+  "en": "Card readers are not available while the screen is locked.",
+  "cs": "Při zamčené obrazovce nejsou čtečky karet dostupné.",
+  "de": "Bei gesperrtem Bildschirm sind Kartenleser nicht verfügbar."
+ },
+ "nfc.pcsc.noReader": {
+  "en": "No smart-card reader is connected.",
+  "cs": "Není připojena žádná čtečka čipových karet.",
+  "de": "Kein Chipkartenleser angeschlossen."
+ },
+ "nfc.pcsc.removed": {
+  "en": "The card was removed or reset — put it back and read again.",
+  "cs": "Karta byla vyjmuta nebo resetována — vložte ji znovu a načtěte ji.",
+  "de": "Die Karte wurde entfernt oder zurückgesetzt – legen Sie sie wieder ein und lesen Sie erneut."
+ },
+ "nfc.pcsc.slot.contact": {
+  "en": "contact",
+  "cs": "kontaktní",
+  "de": "kontaktbehaftet"
+ },
+ "nfc.pcsc.slot.contactless": {
+  "en": "contactless",
+  "cs": "bezkontaktní",
+  "de": "kontaktlos"
+ },
+ "nfc.pcsc.slot.sam": {
+  "en": "SAM",
+  "cs": "SAM",
+  "de": "SAM"
+ },
+ "nfc.pcsc.slot.unknown": {
+  "en": "slot",
+  "cs": "slot",
+  "de": "Steckplatz"
+ },
+ "nfc.pcsc.timeout": {
+  "en": "The card did not answer in time.",
+  "cs": "Karta neodpověděla včas.",
+  "de": "Die Karte hat nicht rechtzeitig geantwortet."
+ },
+ "nfc.pcsc.unavailable": {
+  "en": "The computer's smart-card service is not available.",
+  "cs": "Služba čipových karet počítače není dostupná.",
+  "de": "Der Chipkartendienst des Computers ist nicht verfügbar."
+ },
+ "nfc.reader.guide": {
+  "en": "Which choice fits my reader?",
+  "cs": "Kterou volbu zvolit pro moji čtečku?",
+  "de": "Welche Auswahl passt zu meinem Leser?"
+ },
+ "nfc.reader.guide.ble": {
+  "en": "PN532 on a Bluetooth Low Energy module (Nordic UART, HM-10) → Bluetooth reader.",
+  "cs": "PN532 na modulu Bluetooth Low Energy (Nordic UART, HM-10) → Bluetooth čtečka.",
+  "de": "PN532 an einem Bluetooth-Low-Energy-Modul (Nordic UART, HM-10) → Bluetooth-Leser."
+ },
+ "nfc.reader.guide.ccid": {
+  "en": "USB smart-card reader (CCID: ACR122U, ACR1252U, ACR1281) → System reader (PC/SC) in M5cet Desktop. In a browser, USB reader works only on Windows with WinUSB or on Linux without pcscd.",
+  "cs": "Čtečka čipových karet na USB (CCID: ACR122U, ACR1252U, ACR1281) → Systémová čtečka (PC/SC) v M5cet Desktop. V prohlížeči funguje USB čtečka jen ve Windows s WinUSB nebo v Linuxu bez pcscd.",
+  "de": "USB-Chipkartenleser (CCID: ACR122U, ACR1252U, ACR1281) → Systemleser (PC/SC) in M5cet Desktop. Im Browser funktioniert USB-Leser nur unter Windows mit WinUSB oder unter Linux ohne pcscd."
+ },
+ "nfc.reader.guide.phone": {
+  "en": "A phone → This device (Chrome on Android) or the M5cet Android app.",
+  "cs": "Telefon → Toto zařízení (Chrome v Androidu) nebo aplikace M5cet pro Android.",
+  "de": "Ein Telefon → Dieses Gerät (Chrome unter Android) oder die M5cet-App für Android."
+ },
+ "nfc.reader.guide.serial": {
+  "en": "PN532 on a USB-serial adapter or on a Bluetooth SPP module (HC-05, HC-06) → Serial reader.",
+  "cs": "PN532 na převodníku USB–sériová linka nebo na modulu Bluetooth SPP (HC-05, HC-06) → Sériová čtečka.",
+  "de": "PN532 an einem USB-Seriell-Adapter oder an einem Bluetooth-SPP-Modul (HC-05, HC-06) → Serieller Leser."
+ },
+ "nfc.reader.help.bluetooth": {
+  "en": "A PN532 on a Bluetooth Low Energy module (Nordic UART, HM-10).",
+  "cs": "PN532 na modulu Bluetooth Low Energy (Nordic UART, HM-10).",
+  "de": "Ein PN532 an einem Bluetooth-Low-Energy-Modul (Nordic UART, HM-10)."
+ },
+ "nfc.reader.help.internal": {
+  "en": "This phone's own NFC (Chrome on Android). The M5cet Android app reads cards too.",
+  "cs": "Vlastní NFC tohoto telefonu (Chrome v Androidu). Karty čte i aplikace M5cet pro Android.",
+  "de": "Das eigene NFC dieses Telefons (Chrome unter Android). Auch die M5cet-App für Android liest Karten."
+ },
+ "nfc.reader.help.serial": {
+  "en": "A PN532 on a USB-serial adapter (FTDI, CP210x, CH340, PL2303) or on a Bluetooth SPP module (pair it in the system first).",
+  "cs": "PN532 na převodníku USB–sériová linka (FTDI, CP210x, CH340, PL2303) nebo na modulu Bluetooth SPP (nejdřív ho spárujte v systému).",
+  "de": "Ein PN532 an einem USB-Seriell-Adapter (FTDI, CP210x, CH340, PL2303) oder an einem Bluetooth-SPP-Modul (zuerst im System koppeln)."
+ },
+ "nfc.reader.help.system": {
+  "en": "A USB smart-card reader (ACR122U, ACR1252U, ACR1281…) through the computer's smart-card service. Each slot of a dual reader is listed separately.",
+  "cs": "Čtečka čipových karet na USB (ACR122U, ACR1252U, ACR1281…) přes službu čipových karet počítače. Každý slot duální čtečky je uveden zvlášť.",
+  "de": "Ein USB-Chipkartenleser (ACR122U, ACR1252U, ACR1281…) über den Chipkartendienst des Computers. Jeder Steckplatz eines Doppellesers wird einzeln aufgeführt."
+ },
+ "nfc.reader.help.usb": {
+  "en": "A USB smart-card reader directly over WebUSB — only where the system does not use it itself (Windows with the WinUSB driver, Linux without pcscd). Not on macOS.",
+  "cs": "Čtečka čipových karet na USB přímo přes WebUSB — jen tam, kde ji nepoužívá sám systém (Windows s ovladačem WinUSB, Linux bez pcscd). Na macOS ne.",
+  "de": "Ein USB-Chipkartenleser direkt über WebUSB – nur dort, wo das System ihn nicht selbst verwendet (Windows mit dem WinUSB-Treiber, Linux ohne pcscd). Nicht unter macOS."
+ },
+ "nfc.reader.system": {
+  "en": "System reader (PC/SC)",
+  "cs": "Systémová čtečka (PC/SC)",
+  "de": "Systemleser (PC/SC)"
+ },
+ "nfc.serial.allPorts": {
+  "en": "Show all serial ports (other adapters)",
+  "cs": "Ukázat všechny sériové porty (jiné převodníky)",
+  "de": "Alle seriellen Anschlüsse zeigen (andere Adapter)"
+ },
  "nfc.tpl.steps#one": {
   "en": "{n} step",
   "cs": "{n} krok",
