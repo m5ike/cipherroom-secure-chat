@@ -30,7 +30,8 @@
     "release:web-manifest": "tsx script/release-manifest.ts web-manifest",
     "release:keygen": "tsx script/release-manifest.ts keygen",
     "release:sign": "tsx script/release-manifest.ts sign",
-    "release:verify": "tsx script/release-manifest.ts verify"
+    "release:verify": "tsx script/release-manifest.ts verify",
+    "docs:summary-pdf": "node scripts/security-summary-pdf.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-ng-wasmfile-release-sync": "^0.32.0",

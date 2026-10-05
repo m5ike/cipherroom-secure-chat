@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>M5cet 6.12 — bezpečnostní shrnutí</title>
+<style>
+  :root { --ink: #16181d; --muted: #5b6474; --line: #d6dbe3; --soft: #f3f5f8; --acc: #2b59c3; --hi: #b42318; --mid: #b54708; --ok: #067647; }
+  @page { size: A4; margin: 11mm 11mm 12mm 11mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #fff; color: var(--ink); }
+  body { font: 8.1pt/1.32 "Helvetica Neue", Arial, system-ui, sans-serif; }
+  h1 { font-size: 15pt; margin: 0 0 1mm; letter-spacing: -.01em; }
+  h2 { font-size: 10pt; margin: 3.2mm 0 1.2mm; color: var(--acc); border-bottom: .3mm solid var(--line); padding-bottom: .6mm; }
+  p { margin: 0 0 1.4mm; }
+  .meta { color: var(--muted); font-size: 7.4pt; margin-bottom: 2mm; }
+  .verdict { border: .35mm solid var(--acc); background: #eef3fd; border-radius: 2mm; padding: 2mm 3mm; margin: 1mm 0 1mm; }
+  .verdict b.big { font-size: 10.5pt; }
+  ul { margin: .6mm 0 1.2mm 4.2mm; padding: 0; }
+  li { margin: 0 0 .5mm; }
+  table { width: 100%; border-collapse: collapse; margin: .8mm 0 1.4mm; font-size: 7.05pt; line-height: 1.24; }
+  th, td { border: .2mm solid var(--line); padding: .7mm 1mm; vertical-align: top; text-align: left; }
+  th { background: var(--soft); font-weight: 700; }
+  td.k { font-weight: 700; white-space: nowrap; background: #fafbfc; }
+  .m5 { background: #eef3fd; }
+  .sev-h { color: var(--hi); font-weight: 700; white-space: nowrap; }
+  .sev-m { color: var(--mid); font-weight: 700; white-space: nowrap; }
+  .sev-l { color: var(--muted); font-weight: 700; white-space: nowrap; }
+  .ok { color: var(--ok); font-weight: 700; }
+  .no { color: var(--hi); font-weight: 700; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+  .small { font-size: 6.6pt; color: var(--muted); line-height: 1.25; }
+  .page { break-after: page; }
+  .page:last-child { break-after: auto; }
+  code { font-size: 7pt; }
+  @media screen { body { max-width: 190mm; margin: 8mm auto; } .page { border-bottom: 1px dashed var(--line); padding-bottom: 6mm; margin-bottom: 6mm; } }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ strana 1 -->
+<section class="page">
+  <h1>M5cet 6.12 — bezpečnostní analýza a srovnání (shrnutí)</h1>
+  <div class="meta">Stav kódu: verze 6.12.0, commit <code>2ec130fa</code> (master) · analýza ke dni 2026-10-05 · revize zdrojového kódu
+  (server, web, Android) pěti nezávislými průchody s doložením <code>soubor:řádek</code> · údaje o konkurenci z veřejných zdrojů k 10/2026 ·
+  podrobně <code>docs/security-analysis.md</code>, <code>docs/protocol-v4.md</code>, <code>docs/review-612.md</code>; zdroje: <code>docs/security-summary-6.12-zdroje.md</code></div>
+
+  <div class="verdict">
+    <b class="big">Verdikt: ≈ 5,5 / 10 vůči Signalu</b> (10 = Signal v dané oblasti; kap. 13 analýzy uváděla 6,5 — tato revize je přísnější, viz níže).
+    <ul>
+      <li><b>Kryptografický protokol pro zprávy je silný</b>: hybridní post-kvantové ustavení klíče, Double Ratchet s post-kvantovým ratchetem, průhlednost klíčů — na papíře úroveň Signalu a před Threemou, WhatsAppem a Telegramem.</li>
+      <li><b>Celkovou bezpečností nepředčí Signal ani Threemu</b>: kód webu doručuje server, hovory nejsou plně E2EE (Android, starší prohlížeče), server zná a ukládá hodně metadat, kořenem důvěry místnosti je sdílené heslo a nic nebylo nezávisle auditováno.</li>
+      <li><b>Unikátní</b>: bez telefonního čísla, jen na vlastním serveru, bohaté serverové moduly (funkce, AI, telefonie, NFC) — za cenu velké plochy útoku, kde server pracuje s čitelnými daty.</li>
+    </ul>
+  </div>
+
+  <h2>1. Co je v kódu dobře (ověřeno)</h2>
+  <table>
+    <tr><th style="width:24%">Oblast</th><th>Implementace (web <code>client/src/lib/p4</code>, Android <code>cz.m5cet.app.p4</code>)</th></tr>
+    <tr><td class="k">Ustavení klíče</td><td>Hello v4: efemérní ECDH P-256 + ML-KEM-768 (noble 0.7.1 / Bouncy Castle 1.86), obě strany zapouzdří, kořen = HKDF přes přepis podepsaný klíčem zařízení — bezpečné, pokud vydrží P-256 <i>nebo</i> ML-KEM.</td></tr>
+    <tr><td class="k">Ratchet</td><td>Double Ratchet; každý krok DH přimíchá nový klíč ML-KEM (ověřeno, že běží i na Androidu). FS + PCS + PQ pro dvojice; stav se mění až po AEAD; sezení jen v paměti, každé připojení = nový handshake.</td></tr>
+    <tr><td class="k">Skupiny</td><td>Sender keys s vlastním podpisovým klíčem řetězu (držitel řetězu nemůže psát za odesílatele), certifikát vázaný na vlastníka, rotace po 100 zprávách / 15 min a při odchodu člena. Obsah není podepsán dlouhodobým klíčem (popiratelnost).</td></tr>
+    <tr><td class="k">Nepřítomní, soubory</td><td>Schránky pro každé <i>ověřené</i> zařízení (ECDH + ML-KEM, FS omezená ≈ 38 dny), náhodný klíč pro každý soubor, padding do tříd, trvalé okno proti přehrání (31 dní), ochrana proti downgrade.</td></tr>
+    <tr><td class="k">Identita</td><td>Stavy nový / ověřený / změněný (zadržení zpráv), bezpečnostní čísla a QR, certifikáty zařízení v2 (90 dní, odvolání), log průhlednosti klíčů (RFC 9162) s gossipem a sledováním vlastních zařízení.</td></tr>
+    <tr><td class="k">Android</td><td>Zámek zahodí datový klíč (zprávy do zapečetěné schránky zámku), PIN přes Keystore StrongBox/TEE, čítač odolný návratu zálohy, nouzový PIN, FLAG_SECURE, zálohy vypnuté, design bez JavaScriptu s podepsanými balíčky, ověřená aktualizace APK.</td></tr>
+    <tr><td class="k">Server</td><td>SQLCipher pro <code>functions.db</code>, <code>telephony.db</code> a uživatelské DB; sandbox funkcí v bubblewrap (je-li nainstalován), přísná CSP bez <code>unsafe-inline</code>, ověřování podpisů webhooků, auditní řetěz s podpisy, <code>check.sh</code>.</td></tr>
+  </table>
+
+  <h2>2. Hlavní slabiny (aktuální kód)</h2>
+  <table>
+    <tr><th style="width:7%">Váha</th><th>Nález</th><th style="width:26%">Kde / důsledek</th></tr>
+    <tr><td class="sev-h">Vysoká</td><td><b>Web doručuje server (F-02)</b>; kontrola podepsaného vydání je ve výchozím nasazení nečinná — instalátor i Docker staví web na hostiteli, manifest je nepodepsaný, klíč nepřipnutý; kontrolu navíc provádí sám kontrolovaný kód.</td><td><code>integrity.ts</code>, <code>script/build.ts</code> — zlý provozovatel podvrhne klienta.</td></tr>
+    <tr><td class="sev-h">Vysoká</td><td><b>Hovory</b>: otisky DTLS chrání jen klíč místnosti a nejsou vázané na identitu; E2EE rámců jen na webu s <code>RTCRtpScriptTransform</code>, <b>Android ji nemá</b> (jen DTLS-SRTP).</td><td><code>envelope.ts</code>, <code>Calls.java</code> — kdo zná heslo a ovládá hub, odposlechne hovor.</td></tr>
+    <tr><td class="sev-m">Střední</td><td><b>Sdílené heslo jako kořen důvěry</b>: náhodný klíč je jen nabídnutý, slabý klíč projde po potvrzení, přidání místnosti (víc místností) a Android sílu nekontrolují; slepé ID i ověřovací klíč hubu jsou offline orákulum hesla.</td><td><code>RoomDialog.tsx</code>, <code>App.tsx</code>, <code>proof.ts</code></td></tr>
+    <tr><td class="sev-m">Střední</td><td><b>Metadata na serveru</b>: slepá ID místností nešifrovaně v <code>m5cet.db</code> (fronta relay, „pryč“), účty a e-maily upozornění v JSON, hash místnosti v hlavičkách push (FCM collapse key, Web Push Topic), čísla a těla příchozích SMS v <code>telephony-events.json</code>, polohy telefonů v <code>android.db</code>; master klíč leží ve výchozím stavu vedle databáze; peeři vidí své IP (ICE „all“, záloha Google STUN).</td><td>nešifrované: <code>m5cet.db</code>, <code>ai/journal.db</code>, <code>android.db</code>, soubory JSON</td></tr>
+    <tr><td class="sev-m">Střední</td><td><b>Důkaz členství na hubu není ve výchozím stavu vynucen</b> (<code>HUB_REQUIRE_ROOM_PROOF</code>): kdo zná slepé ID, vidí seznam členů, jména a přítomnost.</td><td><code>proof.ts</code>, <code>hub.ts</code></td></tr>
+    <tr><td class="sev-m">Střední</td><td><b>Cesty pod klíčem místnosti</b> (bez FS, podepsané klíčem zařízení): neznámý peer po 2,5 s, klienti protokolu 3, nikdy neověřené účty v relay; signalizace SDP/ICE.</td><td><code>App.tsx</code>, <code>p4-away.ts</code></td></tr>
+    <tr><td class="sev-m">Střední</td><td><b>Sandbox funkcí</b>: instalátor ani Docker neinstalují bubblewrap → výchozí je jen permission model Node (síť blokují stuby v JS); bez seccomp.</td><td><code>isolation.ts</code>, <code>Dockerfile</code></td></tr>
+    <tr><td class="sev-m">Střední</td><td><b>Konzole</b>: dlouhodobé bearer tokeny bez 2FA a minimální délky, blokování jen podle IP; CSP <code>connect-src ws: wss:</code> na libovolný host.</td><td><code>admin-users.ts</code>, <code>server/index.ts</code></td></tr>
+    <tr><td class="sev-m">Střední</td><td><b>Ověřitelnost</b>: žádný nezávislý audit ani formální model; ML-KEM knihovna pre-1.0 bez auditu, chybí známé vektory FIPS 203; testovací vektory generuje sám web; Android testy nejsou v CI; build není reprodukovatelný.</td><td><code>test/vectors/p4.json</code>, <code>.github/workflows</code></td></tr>
+    <tr><td class="sev-l">Nízká</td><td>Web dál přijímá přenosy souborů v1 (PBKDF2, bez AAD); hello protokolu 3 podepisuje čitelný název místnosti; značky downgrade a piny v <code>localStorage</code>; zámek Androidu měří čekání časem zařízení; bez TLS pinningu na Androidu; KCI u schránek; log klíčů vede tentýž provozovatel (bez svědků, hash uživatele bez soli).</td><td>více míst</td></tr>
+  </table>
+  <p class="small">Kde dokumentace 6.12 přeceňuje: „výchozí náhodný klíč místnosti“ (jen nabídka), „klíč médií pro každý hovor“ (jen web), výčet nešifrovaných úložišť a metadat (neúplný), kontrola podepsaného vydání (ve výchozím nasazení neběží), hodnocení 6,5 → zde 5,5.</p>
+</section>
+
+<!-- ============================================================ strana 2 -->
+<section class="page">
+  <h2>3. Srovnání bezpečnosti a protokolu (k 10/2026)</h2>
+  <table>
+    <tr><th style="width:11%"></th><th class="m5" style="width:15%">M5cet 6.12</th><th style="width:15%">Signal</th><th style="width:15%">WhatsApp</th><th style="width:14%">Threema</th><th style="width:15%">Telegram</th><th style="width:15%">iMessage</th></tr>
+    <tr><td class="k">E2EE výchozí</td><td class="m5">chat, soubory, schránky; hovory jen web + DTLS; <b>mimo E2EE</b>: funkce, AI, řeč, telefonie</td><td>vše vč. záloh (klíč obnovy)</td><td>chaty a hovory; mimo: firemní Cloud API, Meta AI, zálohy jen volitelně</td><td>vše (zálohy Safe bez chatů)</td><td><b class="no">ne</b> — cloudové chaty a skupiny čte server; tajné chaty jen 1:1</td><td>iMessage ano; iCloud bez ADP klíč u Applu; RCS E2EE beta</td></tr>
+    <tr><td class="k">FS / PCS 1:1</td><td class="m5"><span class="ok">ano / ano</span> (Double Ratchet + KEM)</td><td><span class="ok">ano / ano</span> (Triple Ratchet)</td><td><span class="ok">ano / ano</span> (Signal Protocol)</td><td>FS (Ibex; s multi-device ne) / PCS neuvedeno</td><td>tajné chaty: FS (rekey) / ne</td><td><span class="ok">ano / ano</span> (PQ3)</td></tr>
+    <tr><td class="k">Post-kvantová</td><td class="m5"><span class="ok">ano</span> — ustavení i ratchet (ML-KEM-768)</td><td><span class="ok">ano</span> — PQXDH + SPQR (zavádí se)</td><td><span class="no">nedokumentováno</span></td><td>plán s IBM, nenasazeno</td><td>neohlášeno</td><td><span class="ok">ano</span> — PQ3</td></tr>
+    <tr><td class="k">Skupiny</td><td class="m5">sender keys v4, rotace 100 zpráv / 15 min; heslo místnosti</td><td>sender keys, privátní skupiny (server nezná členy)</td><td>sender keys</td><td>párově každému členovi</td><td>bez E2EE (jen hovory)</td><td>fan-out na zařízení</td></tr>
+    <tr><td class="k">Ověření / KT</td><td class="m5">čísla + QR, stavy identity; <b>vlastní KT log</b> (provozovatel, bez svědků)</td><td>čísla + QR; automatické ověření přes KT (2026)</td><td>čísla + QR; KT (AKD, audit Cloudflare)</td><td>3 úrovně, QR; bez KT</td><td>emoji v tajných chatech</td><td>Contact Key Verification (KT, volitelné)</td></tr>
+    <tr><td class="k">Tel. číslo</td><td class="m5"><span class="ok">ne</span> (passkey účet)</td><td>zatím ano; bez čísla v betě</td><td><span class="no">ano</span> (jména od 2026)</td><td><span class="ok">ne</span></td><td><span class="no">ano</span></td><td>Apple ID</td></tr>
+    <tr><td class="k">Metadata</td><td class="m5">server zná členství, jména, účty, časy, IP; ukládá slepá ID, polohy, čísla telefonie; peeři vidí IP</td><td>sealed sender, SGX kontakty; vydává jen datum registrace a připojení</td><td>IP, zařízení, kontakty, sdílení v Meta</td><td>minimum (datum ID, poslední přihlášení)</td><td>server drží obsah i kontakty; IP a číslo soudům od 2024</td><td>Apple vidí vyhledání klíčů; zálohy bez ADP</td></tr>
+    <tr><td class="k">Hosting</td><td class="m5"><b>jen vlastní server</b> (instalátor, Docker)</td><td>centrální (kód serveru veřejný)</td><td>centrální; EU interoperabilita</td><td>centrální; OnPrem</td><td>centrální</td><td>centrální</td></tr>
+    <tr><td class="k">Kód / buildy</td><td class="m5">open source; web doručuje server; build není reprodukovatelný</td><td>open; reprodukovatelný Android</td><td>uzavřený</td><td>aplikace AGPL; repro. build Android experimentálně</td><td>klienti open, ověřitelné buildy; server uzavřený</td><td>uzavřený</td></tr>
+    <tr><td class="k">Audity / formální</td><td class="m5"><span class="no">žádné</span> (revize s pomocí AI)</td><td>formální analýzy PQXDH, SPQR (ProVerif, hax/F*)</td><td>NCC; audit KT; CCS 2026 našel odchylky od libsignal</td><td>Cure53, důkaz Ibex (2023)</td><td>analýzy MTProto (Eurocrypt 2025)</td><td>Tamarin pro PQ3; ověřená corecrypto</td></tr>
+    <tr><td class="k">Incidenty 2025–26</td><td class="m5">neznámé (nenasazené ve velkém)</td><td>phishing propojených zařízení (2025)</td><td>zero-click CVE-2025-55177; výčet 3,5 mld. účtů</td><td>DDoS výpadek 08/2026</td><td>hromadné předávání dat</td><td>zero-click (Graphite, 2025)</td></tr>
+  </table>
+  <p><b>Další aplikace.</b> <b>Wire</b>: MLS (FS + PCS) od 04/2025, self-hosting a federace, bez PQ (jen otevřený PR), bez KT. <b>Element / Matrix</b>: federace a self-hosting, Olm FS + PCS, Megolm jen FS, stav místností (část metadat) čitelný serverem, PQ jen plánováno. <b>Session</b>: onion routing a bez čísla, ale protokol v1 bez FS i PCS, V2 s ML-KEM nevydána, nadace v roce 2026 bez financí. <b>SimpleX</b>: bez identifikátorů uživatele, jednosměrné fronty, Double Ratchet s hybridním PQ (sntrup761) v přímých chatech (ne ve skupinách), self-hosting relé, audity Trail of Bits 2022 a 2024.</p>
+  <p><b>Rozbor.</b> V <b>protokolu</b> pro zprávy je M5cet 6.12 srovnatelný se Signalem a iMessage PQ3 (FS, PCS, PQ v ustavení i ratchetu) a <b>před</b> WhatsAppem (bez PQ), Threemou (bez PQ, bez PCS), Wire (bez PQ), Telegramem (výchozí chaty bez E2EE) a Session (bez FS). Silnou stránkou je <b>nezávislost na telefonním čísle a vlastní hosting</b> — žádný centrální provozovatel, jurisdikce ani sběr dat výrobcem. Zaostává v tom, co rozhoduje v praxi: <b>ověřitelnost</b> (žádný audit ani formální důkaz, Signal a iMessage mají formální analýzy, Threema audity), <b>doručení kódu</b> (web od serveru vs. podepsané aplikace z obchodu), <b>metadata</b> (server ví a ukládá víc než Signal i Threema; Telegram a WhatsApp jsou na tom ještě hůř), <b>hovory</b> (Signal, WhatsApp, iMessage, Threema mají E2EE hovorů na všech platformách) a <b>zralost</b> (protokol 4 neběžel v provozu ani mezi webem a Androidem). Celá důvěra se přesouvá na provozovatele instance: pro firmu, která server provozuje sama a nedůvěřuje cloudovým službám, je to výhoda; proti zlému nebo kompromitovanému provozovateli chrání M5cet méně než Signal.</p>
+</section>
+
+<!-- ============================================================ strana 3 -->
+<section class="page">
+  <h2>4. Srovnání funkcí</h2>
+  <table>
+    <tr><th style="width:12%"></th><th class="m5" style="width:20%">M5cet 6.12</th><th style="width:14%">Signal</th><th style="width:14%">WhatsApp</th><th style="width:13%">Threema</th><th style="width:14%">Telegram</th><th style="width:13%">iMessage</th></tr>
+    <tr><td class="k">Platformy</td><td class="m5">web (PWA), Android; iOS jen web; desktop ne</td><td>iOS, Android, desktop</td><td>vše vč. webu</td><td>vše vč. webu</td><td>vše vč. webu</td><td>jen Apple</td></tr>
+    <tr><td class="k">Model chatu</td><td class="m5">místnosti s heslem, víc místností naráz; soukromé zprávy vybraným členům (bez samostatných 1:1)</td><td>1:1, skupiny</td><td>1:1, skupiny, komunity</td><td>1:1, skupiny</td><td>1:1, skupiny, kanály</td><td>1:1, skupiny</td></tr>
+    <tr><td class="k">Velikost skupin / hovorů</td><td class="m5">bez limitu (provozovatel do 10 000); hovory P2P mesh bez SFU (prakticky 4–5)</td><td>1 000? / 75?</td><td>1 024 / 32</td><td>256 / 16 (32)</td><td>200 000 / 200</td><td>? / 33</td></tr>
+    <tr><td class="k">Soubory</td><td class="m5">P2P bez limitu (Android 2 GiB), přes server do 10 GiB</td><td>100 MB?</td><td>2 GB</td><td>100 MB</td><td>2 GB (4 GB)</td><td>—</td></tr>
+    <tr><td class="k">Zprávy</td><td class="m5">mizející (4 s–2 h, TTL), „podržet a číst“, zapečetěné kódem, odpověď, přeposlání, poloha, potvrzení; <b>chybí</b> úpravy, reakce, ankety, smazání u ostatních</td><td>vše standardní</td><td>vše standardní</td><td>bez časovače mizení</td><td>vše standardní</td><td>vše standardní</td></tr>
+    <tr><td class="k">Účty, zařízení</td><td class="m5">passkey účet, generované jméno, bez čísla; až 10 zařízení přes přihlášení</td><td>číslo; propojená zařízení</td><td>číslo; 4 propojená zařízení</td><td>náhodné ID</td><td>číslo, passkeys</td><td>Apple ID</td></tr>
+    <tr><td class="k">Zálohy</td><td class="m5">trezor historie pod passkey (500 zpráv), zálohy serveru; export chatu ne</td><td>zabezpečené zálohy</td><td>E2EE záloha volitelně</td><td>Threema Safe</td><td>cloud</td><td>iCloud (ADP)</td></tr>
+    <tr><td class="k">Boti, AI, integrace</td><td class="m5">funkce v JS / Pythonu (sandbox), webhooky, plánování; AI asistenti (Claude, OpenAI, lokální modely); řeč TTS / STT</td><td>ne</td><td>Meta AI, Business API</td><td>Work API</td><td>boti, mini aplikace, AI</td><td>Apple Intelligence</td></tr>
+    <tr><td class="k">Telefonie, NFC</td><td class="m5">PSTN / SIP most, SMS, WhatsApp / Viber přes poskytovatele, vizuální call flow (TSA); NFC čtení EMV a e-ID</td><td>ne</td><td>ne</td><td>ne</td><td>ne</td><td>ne</td></tr>
+    <tr><td class="k">Správa</td><td class="m5">vlastní server, konzole (role, audit, metriky), MDM-like design Androidu, instalátor + <code>check.sh</code></td><td>—</td><td>—</td><td>Threema Work / OnPrem</td><td>—</td><td>—</td></tr>
+  </table>
+
+  <div class="cols">
+  <div>
+  <h2>5. Hodnocení po oblastech</h2>
+  <table>
+    <tr><th>Oblast (10 = Signal)</th><th>6.12</th><th>Proč</th></tr>
+    <tr><td>Zprávy (protokol)</td><td>7,5</td><td>hybridní PQ + ratchet; nová, neauditovaná implementace</td></tr>
+    <tr><td>Nepřítomní, soubory</td><td>6</td><td>schránky pro zařízení; záloha klíčem místnosti</td></tr>
+    <tr><td>Hovory</td><td>4</td><td>E2EE rámců jen web; DTLS kotvené heslem</td></tr>
+    <tr><td>Klíče, kořen důvěry</td><td>5</td><td>sdílené heslo, náhodný klíč jen volitelný</td></tr>
+    <tr><td>Identita, ověřování</td><td>6</td><td>stavy, KT, gossip; log vede provozovatel</td></tr>
+    <tr><td>Metadata</td><td>3</td><td>server zná a ukládá hodně, IP mezi peery</td></tr>
+    <tr><td>Webový klient</td><td>5</td><td>F-02, kontrola vydání ve výchozím stavu neběží</td></tr>
+    <tr><td>Android</td><td>6,5</td><td>silný zámek a trezor; bez E2EE hovorů a pinningu</td></tr>
+    <tr><td>Server a provoz</td><td>6</td><td>část úložišť šifrovaná; sandbox bez bwrap ve výchozím stavu</td></tr>
+    <tr><td>Ověřitelnost</td><td>2</td><td>bez auditu, formálního modelu, repro buildu</td></tr>
+    <tr><td><b>Celkově</b></td><td><b>≈ 5,5</b></td><td>Signal 10, Threema ≈ 8, WhatsApp ≈ 7, Telegram (výchozí chaty) ≈ 3*</td></tr>
+  </table>
+  <p class="small">* orientační odhad pro kontext, ne výsledek revize kódu těchto aplikací.</p>
+  </div>
+  <div>
+  <h2>6. Doporučení (pořadí)</h2>
+  <ul>
+    <li><b>Hovory</b>: E2EE rámců i na Androidu (WebRTC FrameEncryptor), otisky DTLS svázat s přepisem protokolu 4; bez E2EE rámců hovor označit.</li>
+    <li><b>Doručení webu</b>: podepisovat vydání mimo server a <code>M5_RELEASE_KEY</code> v buildu; dlouhodobě reprodukovatelný build, rozšíření prohlížeče nebo desktopová aplikace.</li>
+    <li><b>Kořen důvěry</b>: náhodný klíč místnosti vynutit pro nové místnosti (web i Android), <code>HUB_REQUIRE_ROOM_PROOF=1</code> jako výchozí po přechodu klientů.</li>
+    <li><b>Metadata</b>: šifrovat <code>m5cet.db</code>, <code>android.db</code>, <code>ai/journal.db</code> a JSON úložiště, klíčovat slepá ID ve frontě relay, odstranit hash místnosti z hlaviček push, nepsat těla SMS, master klíč mimo datový adresář (KMS / TPM).</li>
+    <li><b>Provoz</b>: instalátor a Docker s bubblewrap + seccomp; 2FA a expirace tokenů konzole; spouštět <code>check.sh</code>.</li>
+    <li><b>Ověřitelnost</b>: nezávislý audit a formální model (ProVerif / Tamarin) hello v4 a ratchetu, vektory FIPS 203, Android testy v CI, svědci logu klíčů; test web ↔ Android na zařízeních.</li>
+  </ul>
+  <h2>7. Co nebylo ověřeno</h2>
+  <p class="small">Provoz na zařízeních a živě mezi webem a Androidem; skutečný Linux s bubblewrap pod systemd; aktuální údaje konkurence mimo uvedené veřejné zdroje (vč. velikostí skupin a limitů souborů u Signalu a iMessage, „?“ = neověřeno). Analýza je revize kódu s pomocí AI (Claude) a <b>nenahrazuje nezávislý audit</b>.</p>
+  </div>
+  </div>
+</section>
+
+</body>
+</html>
