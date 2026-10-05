@@ -65,7 +65,8 @@ afterAll(async () => {
 });
 
 async function tab(withPasskey: boolean): Promise<{ page: Page; errors: string[] }> {
-  const ctx = await browser!.newContext({ viewport: { width: 1280, height: 900 } });
+  // 6.13: the first visit speaks the browser's language — these tests read the Czech texts.
+  const ctx = await browser!.newContext({ viewport: { width: 1280, height: 900 }, locale: "cs-CZ" });
   contexts.push(ctx);
   const page = await ctx.newPage();
   const errors: string[] = [];

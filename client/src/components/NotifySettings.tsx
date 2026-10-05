@@ -7,7 +7,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { t, tf, tp, type Lang } from "../lib/i18n";
-import { notifyLangOf } from "../lib/i18n-notify";
 import {
   NOTIFY_CHANNELS, NOTIFY_PRIVACY, privacyRank,
   type NotifyChannel, type NotifyKind, type NotifyLang, type NotifyPrivacy, type UserNotifyPrefs,
@@ -24,8 +23,8 @@ const BTN = "inline-flex min-h-9 items-center gap-2 rounded-xl border border-bor
 const INPUT = "min-h-9 rounded-lg border border-border bg-background px-2 text-sm";
 
 const zone = (): string => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } };
-/** 6.13: the notification texts' language — the app's, or its nearest fallback they have (lib/i18n-notify.ts). */
-const asLang = (lang: Lang): NotifyLang => notifyLangOf(lang);
+/** 6.13: notifications speak the nine languages too (NotifyLang = Locale): the user's own, not the nearest of cs / en / de. */
+const asLang = (lang: Lang): NotifyLang => lang;
 
 /** What the layout builder's preview shows (it never touches the network). */
 const SAMPLE_ENDPOINTS: NotifyEndpoints = {

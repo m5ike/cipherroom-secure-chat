@@ -1481,9 +1481,52 @@ const dicts: Partial<Record<Lang, Dict>> = {
 
 /** Where each language looks a text up (computed once: t() is hot). */
 const CHAINS = Object.fromEntries(LOCALES.map((l) => [l, localeChain(l)])) as unknown as Record<Lang, readonly Lang[]>;
-const chainOf = (lang: Lang): readonly Lang[] => CHAINS[lang] ?? CHAINS.en;
-
 const listeners = new Set<(lang: Lang) => void>();
+
+/** The JSON files of a language the web client reads, in the order they are merged (a later file wins a shared key). */
+export const LOCALE_FILE_NAMES = ["web-sysmsg", "web", "web-extra", "web-nfc-fn"] as const;
+
+type NodeProcess = { getBuiltinModule?: (id: string) => unknown; cwd?: () => string; env?: Record<string, string | undefined> };
+const diskTried = new Set<Lang>();
+
+/**
+ * Plain Node (the server's tsx and dist bundle, where t() is called
+ * synchronously and nothing calls loadLocale): a language that is not here
+ * yet is read from i18n/locales/<lang>/ once, on first use — $M5_I18N_DIR,
+ * <cwd>/i18n/locales or <dist>/../i18n/locales. The browser has no
+ * `process` and loads its chunk instead (lib/i18n-load.ts).
+ */
+function readFromDiskOnce(lang: Lang): void {
+  if (diskTried.has(lang) || dicts[lang] || !isLocale(lang) || isBuiltinLang(lang)) return;
+  diskTried.add(lang);
+  const proc = (globalThis as { process?: NodeProcess }).process;
+  if (!proc || typeof proc.getBuiltinModule !== "function") return;
+  try {
+    const fs = proc.getBuiltinModule("node:fs") as typeof import("node:fs");
+    const path = proc.getBuiltinModule("node:path") as typeof import("node:path");
+    const dirs = [
+      proc.env?.M5_I18N_DIR?.trim() ?? "",
+      typeof proc.cwd === "function" ? path.join(proc.cwd(), "i18n", "locales") : "",
+      typeof __dirname === "string" ? path.join(__dirname, "..", "i18n", "locales") : "",
+    ].filter(Boolean);
+    for (const dir of dirs) {
+      const at = path.join(dir, lang);
+      if (!fs.existsSync(path.join(at, "web.json"))) continue;
+      const merged: Dict = {};
+      for (const name of LOCALE_FILE_NAMES) {
+        try { Object.assign(merged, JSON.parse(fs.readFileSync(path.join(at, `${name}.json`), "utf8")) as Dict); } catch { /* absent */ }
+      }
+      registerLocale(lang, merged);
+      return;
+    }
+  } catch { /* not Node after all */ }
+}
+
+const chainOf = (lang: Lang): readonly Lang[] => {
+  const chain = CHAINS[lang] ?? CHAINS.en;
+  for (const l of chain) if (!dicts[l]) readFromDiskOnce(l);
+  return chain;
+};
 
 /**
  * Hands over a lazily loaded language's texts (lib/i18n-load.ts). The built-in
@@ -1529,6 +1572,7 @@ export function t(lang: Lang, key: string): string {
 
 /** Every string of one language (tests: all languages have all keys). Lazily loaded ones: what has been registered. */
 export function dictionary(lang: Lang): Readonly<Dict> {
+  readFromDiskOnce(lang);
   return dicts[lang] ?? {};
 }
 

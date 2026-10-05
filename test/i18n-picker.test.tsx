@@ -9,7 +9,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { useState } from "react";
 import { SUPPORTED_LANGS, detectLang, langLabel, langTag, t, type Lang } from "../client/src/lib/i18n";
 import { applyDocumentLang, useLoadedLang } from "../client/src/lib/i18n-react";
-import { notifyLangOf } from "../client/src/lib/i18n-notify";
+import { NOTIFY_LANGS, renderNotification, DEFAULT_TEMPLATES } from "../client/src/lib/notify-template";
 import { browserLang, loadPreferences } from "../client/src/lib/preferences";
 import { LOCALES, LOCALE_INFO, localeChain, pickLocale } from "../client/src/lib/locales";
 import { StartScreen, LANGUAGE_CHOICES } from "../client/src/components/StartScreen";
@@ -59,10 +59,10 @@ describe("the fallback chain", () => {
     expect(localeChain("en")).toEqual(["en"]);
   });
 
-  it("notifications are written in the nearest language their texts have", () => {
-    expect(notifyLangOf("de")).toBe("de");
-    expect(notifyLangOf("sk")).toMatch(/^(sk|cs)$/);
-    expect(notifyLangOf("fi")).toMatch(/^(fi|en)$/);
+  it("notifications speak the user's own language (NotifyLang = the nine)", () => {
+    expect([...NOTIFY_LANGS].sort()).toEqual([...LOCALES].sort());
+    expect(renderNotification(DEFAULT_TEMPLATES.call, "sk", { app: "M5cet" }, "neutral").body).toBe("Niekto vám volá");
+    expect(renderNotification(DEFAULT_TEMPLATES.call, "fi", { app: "M5cet" }, "neutral").body).toBe("Joku soittaa");
   });
 });
 

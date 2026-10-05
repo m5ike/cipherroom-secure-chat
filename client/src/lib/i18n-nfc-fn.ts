@@ -7,7 +7,7 @@
 // nfcFnText(lang, key, vars?) mirrors i18n.tf: it fills {placeholders} and falls
 // back to English, then to the key itself.
 
-import type { Lang } from "./i18n";
+import { dictionary, type Lang } from "./i18n";
 import type { NfcResultStatus } from "./nfc/command";
 import { isLocale, localeChain } from "./locales";
 
@@ -64,7 +64,7 @@ export function registerNfcFnStrings(lang: Lang, texts: Readonly<Dict>): void {
 /** t()/tf() for the NFC-in-Functions strings: fills {placeholders}, falls back along the language's chain (sk → cs → en), then the key. */
 export function nfcFnText(lang: Lang, key: string, vars: Record<string, string | number> = {}): string {
   let raw: string | undefined;
-  for (const l of localeChain(isLocale(lang) ? lang : "en")) { raw = NFC_FN_STRINGS[l]?.[key]; if (raw !== undefined) break; }
+  for (const l of localeChain(isLocale(lang) ? lang : "en")) { raw = NFC_FN_STRINGS[l]?.[key] ?? dictionary(l)[key]; if (raw !== undefined) break; }
   return (raw ?? key).replace(/\{(\w+)\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
 }
 

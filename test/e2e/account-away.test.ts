@@ -78,7 +78,8 @@ afterAll(async () => {
 /** A browser tab with a virtual passkey that supports the PRF extension. */
 async function newTab(): Promise<{ page: Page; cdp: CDPSession; authenticatorId: string }> {
   if (!browser) throw new Error("browser not initialised");
-  const ctx = await browser.newContext({ baseURL: BASE, viewport: { width: 1280, height: 900 } });
+  // 6.13: the first visit speaks the browser's language — these tests read the Czech texts.
+  const ctx = await browser.newContext({ baseURL: BASE, viewport: { width: 1280, height: 900 }, locale: "cs-CZ" });
   contexts.push(ctx);
   // System notices flash at the top by default (2.11.0); this test is
   // about what the app *says*, so ask for them in the conversation too.

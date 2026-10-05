@@ -135,14 +135,17 @@ describe("the loader", () => {
     const script = [
       "import { loadLocale } from './client/src/lib/i18n-load.ts';",
       "import { t, tp } from './client/src/lib/i18n.ts';",
+      // Server code calls t() synchronously and never loadLocale(): the first use reads the disk.
+      "const sync = t('sl', 'common.close');",
       "const ok = await loadLocale('fi');",
-      "console.log(JSON.stringify({ ok, close: t('fi', 'common.close'), call: t('fi', 'tel.call'), two: tp('fi', 'acc.loaded', 2) }));",
+      "console.log(JSON.stringify({ ok, sync, close: t('fi', 'common.close'), call: t('fi', 'tel.call'), two: tp('fi', 'acc.loaded', 2) }));",
     ].join("\n");
     const out = execFileSync(join(root, "node_modules", ".bin", "tsx"), ["--input-type=module", "-e", script], { cwd: root, encoding: "utf8", timeout: 60_000 });
-    const got = JSON.parse(out.trim().split("\n").pop()!) as { ok: boolean; close: string; call: string; two: string };
+    const got = JSON.parse(out.trim().split("\n").pop()!) as { ok: boolean; sync: string; close: string; call: string; two: string };
     expect(got.ok).toBe(existsSync(fileOf("fi", "web")));
     if (got.ok) {
       expect(got.close).toBe(read("fi", "web")["common.close"]);
+      expect(got.sync).toBe(read("sl", "web")["common.close"]);
       expect(got.call).toBe(read("fi", "web-extra")["tel.call"]);
       expect(got.two).toBe(read("fi", "web-extra")["acc.loaded#other"].replace("{n}", "2"));
     }

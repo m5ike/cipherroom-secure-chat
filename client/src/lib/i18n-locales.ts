@@ -7,8 +7,8 @@ import type { Locale } from "./locales";
 /** The files of one language, by name without ".json" (web, web-sysmsg, web-nfc-fn, web-extra). */
 export type LocaleFiles = Partial<Record<string, Record<string, string>>>;
 
-/** The JSON files the web client reads, in the order they are merged (a later file wins a shared key). */
-export const LOCALE_FILE_NAMES = ["web-sysmsg", "web", "web-extra", "web-nfc-fn"] as const;
+/** The JSON files the web client reads, in the order they are merged (lib/i18n.ts). */
+export { LOCALE_FILE_NAMES } from "./i18n";
 
 /**
  * import.meta.glob's result → { web: {...}, "web-extra": {...} }. Null when

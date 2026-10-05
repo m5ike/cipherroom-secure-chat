@@ -66,7 +66,6 @@ const InvitePrompt = lazy(() => import("./components/SharePanel").then((m) => ({
 const AiPanel = lazy(() => import("./components/AiPanel").then((m) => ({ default: m.AiPanel })));
 const ConnectionsPanel = lazy(() => import("./components/ConnectionsPanel").then((m) => ({ default: m.ConnectionsPanel })));
 import { detectLang, t, tf, tp, type Lang } from "./lib/i18n";
-import { notifyLangOf } from "./lib/i18n-notify";
 import { useLoadedLang } from "./lib/i18n-react";
 import { isLocale } from "./lib/locales";
 import type { ConnectionStatus } from "./lib/connection-keeper";
@@ -2049,7 +2048,7 @@ function ChatApp() {
     if (!notificationsEnabledRef.current) return;
     // 6.12 review P06/P14: a message held for a changed key never shows its text in a notification.
     const heldText = e.message.identity?.state === "changed" ? tf(lang, "p4.held.title", { name: e.message.senderName }) : null;
-    const note = showLocalNotification({ kind: "message", room: e.label, sender: e.message.senderName, text: heldText ?? (e.message.flags?.sealed ? "🔒" : e.message.text || "📎"), tag: `m5cet-room-${e.key}` }, { lang: notifyLangOf(lang) });
+    const note = showLocalNotification({ kind: "message", room: e.label, sender: e.message.senderName, text: heldText ?? (e.message.flags?.sealed ? "🔒" : e.message.text || "📎"), tag: `m5cet-room-${e.key}` }, { lang });
     if (note) note.onclick = () => { window.focus(); note.close(); void switchRoomRef.current(e.key); };
   }), [hub, lang]);
   // 6.7: local notifications follow the account's choice once signed in, this browser's otherwise.
@@ -3217,7 +3216,7 @@ function ChatApp() {
       // 6.12 review P14: not the text of a message held for a changed key.
       showLocalNotification(
         { kind: "message", room: roomRef.current || undefined, sender: plaintext.senderName, text: held ? tf(lang, "p4.held.title", { name: plaintext.senderName }) : plaintext.flags?.sealed ? "🔒" : plaintext.text || "📎", tag: "m5cet" },
-        { lang: notifyLangOf(lang) },
+        { lang },
       );
     }
   }
