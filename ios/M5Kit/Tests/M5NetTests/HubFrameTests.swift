@@ -7,6 +7,7 @@
 import Foundation
 import Testing
 @testable import M5Net
+import M5Core
 
 /// A Swift frame built through the public API from a client frame's JSON.
 func swiftFrame(_ j: NetJSON) -> HubClientFrame? {
@@ -185,10 +186,10 @@ func swiftFrame(_ j: NetJSON) -> HubClientFrame? {
     @Test func refusalsAndTheOperator() throws {
         guard case .error(let proof) = try frame("errorRoomProof") else { Issue.record("error"); return }
         #expect(proof.code == "room-proof" && proof.legacyAllowed == true)
-        #expect(HubProof.refusal(code: proof.code, legacyAllowed: proof.legacyAllowed, retried: false) == .legacy)
-        #expect(HubProof.refusal(code: proof.code, legacyAllowed: proof.legacyAllowed, retried: true) == .refuse)
-        #expect(HubProof.refusal(code: "room-proof-required", legacyAllowed: false, retried: false) == .refuse)
-        #expect(HubProof.refusal(code: "room-full", legacyAllowed: nil, retried: false) == .none)
+        #expect(HubProofFrames.refusal(code: proof.code, legacyAllowed: proof.legacyAllowed, retried: false) == .legacy)
+        #expect(HubProofFrames.refusal(code: proof.code, legacyAllowed: proof.legacyAllowed, retried: true) == .refuse)
+        #expect(HubProofFrames.refusal(code: "room-proof-required", legacyAllowed: false, retried: false) == .refuse)
+        #expect(HubProofFrames.refusal(code: "room-full", legacyAllowed: nil, retried: false) == .none)
         guard case .error(let invalid) = try frame("errorInvalid") else { Issue.record("error"); return }
         #expect(invalid.code == "invalid-frame")
         guard case .rateLimited(let type, let ms) = try frame("rateLimited") else { Issue.record("rate-limited"); return }

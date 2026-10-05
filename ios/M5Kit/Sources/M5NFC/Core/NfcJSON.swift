@@ -5,6 +5,7 @@
 // printed as JSON.stringify prints them, strings escape as JSON.stringify does.
 
 import Foundation
+import M5Core
 
 public enum NfcJSON: Sendable, Hashable {
     case null

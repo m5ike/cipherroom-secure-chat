@@ -14,6 +14,7 @@
 // raw / json transcript — unless the user asks for the full data (`full: true`).
 
 import Foundation
+import M5Core
 
 public enum TemplateViews {
     public static let io = "io", raw = "raw", json = "json", readable = "readable"
@@ -512,11 +513,11 @@ public enum TemplateViews {
 
     static func tlvLines(_ nodes: [Tlv], _ depth: Int, _ out: inout [String], _ m: Mask) {
         for n in nodes {
-            let tag = Hex.encode(n.tagBytes)
+            let tag = Hex.upper(n.tagBytes)
             let name = tagName(tag)
             let head = String(repeating: " ", count: depth * 2) + tag + (name.isEmpty ? "" : " " + name)
             if n.constructed, let c = n.children, !c.isEmpty { out.append(head); tlvLines(c, depth + 1, &out, m); continue }
-            let hx = Hex.encode(n.value)
+            let hx = Hex.upper(n.value)
             let shown: String
             if m.on && PanMask.sensitive.contains(tag) { shown = PanMask.maskValue(tag, hx) } else {
                 let info = EmvTags.info(tag)
@@ -536,7 +537,7 @@ public enum TemplateViews {
             s.row(l.t("nfc.tpl.r.response"), m.hex(x.data))
             if let k = x.noteKey { s.row(l.t("nfc.tpl.r.status"), sym(x.status) + " " + l.f(k, x.noteArgs)) }
             else { s.row(l.t("nfc.tpl.r.status"), x.sw.isEmpty ? StatusWords.describe("") : sym(x.status) + " " + x.sw + " — " + StatusWords.describe(x.sw)) }
-            let data = Hex.decode(x.data)
+            let data = Hex.decodeLenient(x.data)
             if !data.isEmpty {
                 if isTlv(data) { s.pre = tlvText(data, m) } else if printable(data) { s.row(l.t("nfc.tpl.r.text"), m.text(Bytes.asciiString(data))) }
             }
@@ -560,7 +561,7 @@ public enum TemplateViews {
     static func desfire(_ l: L, _ r: TemplateRunResult) -> Section? {
         let st = r.steps
         guard let v = byCommand(st, 0, "9060000000") else { return nil }
-        let hw = Hex.decode(st[v].data)
+        let hw = Hex.decodeLenient(st[v].data)
         guard hw.count >= 7 else { return nil }
         var s = Section(l.t("nfc.tpl.r.desfire"))
         s.row(l.t("nfc.tpl.r.vendor"), hw[0] == 0x04 ? "NXP" : String(format: "%02X", hw[0]))
@@ -569,24 +570,24 @@ public enum TemplateViews {
         s.row(l.t("nfc.tpl.r.storage"), storage(Int(hw[5])))
         s.row(l.t("nfc.tpl.r.protocol"), String(format: "%02X", hw[6]) + (hw[6] == 0x05 ? " (ISO/IEC 14443-2 / -3)" : ""))
         if let swStep = byCommand(st, v + 1, "90AF000000") {
-            let sw = Hex.decode(st[swStep].data)
+            let sw = Hex.decodeLenient(st[swStep].data)
             if sw.count >= 7 { s.row(l.t("nfc.tpl.r.sw"), "\(sw[3]).\(sw[4])") }
-            let id = byCommand(st, swStep + 1, "90AF000000").map { Hex.decode(st[$0].data) } ?? []
+            let id = byCommand(st, swStep + 1, "90AF000000").map { Hex.decodeLenient(st[$0].data) } ?? []
             if id.count >= 14 {
-                s.row("UID", Hex.encode(id[0..<7]))
-                s.row(l.t("nfc.tpl.r.batch"), Hex.encode(id[7..<12]))
+                s.row("UID", Hex.upper(id[0..<7]))
+                s.row(l.t("nfc.tpl.r.batch"), Hex.upper(id[7..<12]))
                 let week = Desfire.bcd(Int(id[12])), year = Desfire.bcd(Int(id[13]))
                 if week > 0 || year > 0 { s.row(l.t("nfc.tpl.r.produced"), l.f("nfc.tpl.r.week", [String(week), String(2000 + year)])) }
             }
         }
         if let apps = byCommand(st, 0, "906A000000"), st[apps].sw.hasPrefix("91") {
-            let aids = Desfire.applicationIds(Hex.decode(st[apps].data))
+            let aids = Desfire.applicationIds(Hex.decodeLenient(st[apps].data))
             s.row(l.t("nfc.tpl.r.apps"), aids.isEmpty ? l.t("nfc.tpl.r.none") : aids.joined(separator: ", ") + (st[apps].sw == "91AF" ? ", …" : ""))
         }
-        if let free = byCommand(st, 0, "906E000000"), st[free].sw == "9100", let bytes = Desfire.freeMemory(Hex.decode(st[free].data)) {
+        if let free = byCommand(st, 0, "906E000000"), st[free].sw == "9100", let bytes = Desfire.freeMemory(Hex.decodeLenient(st[free].data)) {
             s.row(l.t("nfc.tpl.r.free"), "\(bytes) B")
         }
-        if let keys = byCommand(st, 0, "9045000000"), st[keys].sw == "9100", let ks = Desfire.KeySettings(Hex.decode(st[keys].data)) {
+        if let keys = byCommand(st, 0, "9045000000"), st[keys].sw == "9100", let ks = Desfire.KeySettings(Hex.decodeLenient(st[keys].data)) {
             var flags = [String]()
             if ks.masterKeyChangeable { flags.append(l.t("nfc.tpl.r.ks.change")) }
             if ks.freeDirectoryList { flags.append(l.t("nfc.tpl.r.ks.list")) }

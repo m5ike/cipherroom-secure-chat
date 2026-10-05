@@ -162,6 +162,49 @@ func msg(_ id: String, _ at: Int64, mine: Bool, _ sender: String, _ text: String
         #expect(CallHistory.from(nil).isEmpty)
     }
 
+    /// The record as Android writes it (org.json, the vault's user tier record "calls") reads here and is written
+    /// back byte for byte: the same keys in Android's order.
+    @Test func readsAndroidsRecordAndWritesItBackByteForByte() {
+        let android = #"{"c":[{"id":"a1","key":"team","room":"Team","kind":"out","at":1760000000000,"sec":62,"video":false,"people":["Alice"]}]}"#
+        let read = CallHistory.from(j(android))
+        #expect(read.count == 1)
+        #expect(read.first?.callKind == .outgoing)
+        #expect(read.first?.at == 1_760_000_000_000)
+        #expect(read.first?.seconds == 62)
+        #expect(read.first?.people == ["Alice"])
+        #expect(CallHistory.json(read).stringify() == android)
+        var e = read[0]
+        e.sysUri = "content://call_log/calls/42"
+        #expect(CallHistory.json([e]).stringify() == #"{"c":[{"id":"a1","key":"team","room":"Team","kind":"out","at":1760000000000,"sec":62,"video":false,"people":["Alice"],"sys":"content://call_log/calls/42"}]}"#)
+    }
+
+    /// As org.json's opt* read it (the app's reader did too): numbers and booleans where text belongs, numeric
+    /// strings where numbers belong, "TRUE" — and null / arrays / objects as nothing.
+    @Test func readsAsTolerantlyAsOrgJson() {
+        let list = CallHistory.from(j(#"{"c":[{"id":5,"key":true,"room":null,"kind":"declined","at":"1760000000000","sec":"62.9","video":"TRUE","people":["A",7,null,"",false,[1]],"sys":{}}]}"#))
+        #expect(list.count == 1)
+        let e = list[0]
+        #expect(e.id == "5" && e.roomKey == "true" && e.room == "")
+        #expect(e.callKind == .declined)
+        #expect(e.at == 1_760_000_000_000 && e.seconds == 62)
+        #expect(e.video)
+        #expect(e.people == ["A", "7", "false"])
+        #expect(e.sysUri == "")
+        let odd = CallHistory.from(j(#"{"c":[{"at":"x","sec":-1.5,"video":"yes"},{"at":1e30,"sec":"1e30"}]}"#))
+        #expect(odd.map(\.at) == [0, 0] && odd.map(\.seconds) == [0, 0] && odd.map(\.video) == [false, false])
+    }
+
+    @Test func theKindsAsATypeAndTheClock() {
+        #expect(CallTrack.Kind.allCases.map(\.rawValue) == [CallTrack.out, CallTrack.incoming, CallTrack.missed, CallTrack.declined])
+        let r = CallTrack.Record(kind: .incoming, at: 5, seconds: -3, video: true, people: ["Bob"])
+        #expect(r == CallTrack.Record(kind: CallTrack.incoming, at: 5, seconds: 0, video: true, people: ["Bob"]))
+        #expect(r.callKind == .incoming)
+        #expect(CallTrack.Record(kind: "weird", at: 0, seconds: 0, video: false, people: []).callKind == .missed)
+        #expect(CallTrack.millis(Date(timeIntervalSince1970: 1.0006)) == 1001)
+        let e = CallHistory.Entry.of(id: "x", roomKey: "k", room: "R", r)
+        #expect(e.id == "x" && e.callKind == .incoming)
+    }
+
     @Test func theStoreKeepsCallsAndWaitsWhileLocked() {
         let vault = MemoryRecordVault()
         let clock = ManualClock(1_000 * Self.day)
@@ -170,8 +213,10 @@ func msg(_ id: String, _ at: Int64, mine: Bool, _ sender: String, _ text: String
         vault.setLocked(true)
         store.add(entry("b", clock.now() - 500))
         #expect(store.load().isEmpty)
+        #expect(store.waiting.map(\.id) == ["b"])
         vault.setLocked(false)
         #expect(store.load().map(\.id) == ["a", "b"])
+        #expect(store.waiting.isEmpty)
         store.addOnce(entry("a", 1))
         #expect(store.load().count == 2)
         store.setSysUri("b", "callkit://b")

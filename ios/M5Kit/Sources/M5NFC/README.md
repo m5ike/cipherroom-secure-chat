@@ -99,7 +99,7 @@ Documents first (Core NFC tries them in order); the payment AIDs are listed for 
 
 | Android (`A/nfc/…`) / web | Swift | What |
 |---|---|---|
-| `Apdu` (Transceiver, transmitSmart, BER-TLV) | `Apdu`, `Tlv`, `BerTlv`, `ApduChannel` | APDUs, 61xx / 6Cxx, TLV (depth-bounded), `Hex`, `Bytes` |
+| `Apdu` (Transceiver, transmitSmart, BER-TLV) | `Apdu`, `Tlv`, `BerTlv`, `ApduChannel` | APDUs, 61xx / 6Cxx, TLV (depth-bounded); the byte helpers are M5Core's (`Hex.upper` = `Apdu.hex`, `Hex.decodeLenient` = `Apdu.unhex`, `Bytes.u8` / `slice` / `concat`) |
 | `StatusWords` | `StatusWords` | describe("6A82") — the web's words |
 | `Des`, `Aes`, `AesSm`, `Bac`, `SmChannel` | `Des`, `Aes`, `AesSm`, `Bac`, `BacChannel`, `SecureMessagingChannel` | 3DES-CBC, retail MAC, AES-CBC, AES-CMAC, BAC + 3DES / AES secure messaging |
 | `EcCurve`, `Pace`, `PaceProtocol` | `BigUInt`, `EcCurve`, `Pace`, `PaceSession`, `PaceError` | PACE generic mapping on the six standard curves, CAN or MRZ |
@@ -113,15 +113,14 @@ Documents first (Core NFC tries them in order); the payment AIDs are listed for 
 | `CardOps` (pure parts) | `CardOps`, `Desfire`, `MifareClassicLayout`, `Ndef` | public EMV / e-ID, DESFire info, Ultralight pages, NDEF codec, T2T / T4T layouts |
 | `NfcCatalog`, `TagTech` | `NfcCatalog`, `TagTech`, `NfcPlatform`, `NfcCapabilities` | the op catalogue, detection (Android + Core NFC), the iOS limits |
 | `M5Card`, `Records` | `M5Card`, `M5Records` | the M5Cet card container (PIN / account keys) |
-| `TagV2`, `ConnTag`, `ShareInvite`, `Nfc` (v1) | `TagV2`, `ConnTag`, `ShareInvite`, `ConnectionCard` | connection tag v2 (invite / offline), v1 read (weak) |
+| `TagV2`, `ConnTag`, `ShareInvite`, `Nfc` (v1) | `NfcTagV2`, `NfcConnTag`, `NfcShareInvite`, `ConnectionCard` | connection tag v2 (invite / offline), v1 read (weak): the records, the `TagKdf` / `ShareInviteHTTP` seams and the writer here — the format and its crypto are M5Crypto's `TagV2`, `ShareInvite`, `ConnTag`, `ConnTagV1` (one implementation; `NfcTagV2.Tag` / `Room` / `TagError` are its types) |
 | `CardService` | `Type4TagEmulator` | the Type 4 tag APDU logic for HCE |
 | `cz.m5cet.app.core.Texts` | `NfcTexts.install(_:plural:)` | the app's design strings for the readers' own texts |
 
 ### What the app wires
 
-* **`TagKdf`** — Argon2id for offline connection tags: implement it with M5Crypto (CArgon2), e.g.
-  `struct M5TagKdf: TagKdf { func argon2id(...) throws -> [UInt8] { try M5Crypto.argon2id(...) } }`.
-  The tests use the vectors' precomputed keys; a real Argon2id run is integration-tested in the app.
+* **`TagKdf`** — Argon2id for offline connection tags: `Argon2TagKdf()` is M5Crypto's (CArgon2).
+  The tests use the vectors' precomputed keys, and `Argon2TagKdf` on the cheap (64 KiB) vector.
 * **`ShareInviteHTTP`** — the two POSTs of an invitation tag (`/api/share/create`, `/api/share/redeem`), M5Net.
 * **`NfcTexts.install`** — the design strings (`nfc.eid.*`, `nfc.emv.sum.*`, `nfc.tpl.*`, `nfc.m5.*`).
 * **`TemplateViews` labels** — a `(key) -> String?` lookup into the design strings.

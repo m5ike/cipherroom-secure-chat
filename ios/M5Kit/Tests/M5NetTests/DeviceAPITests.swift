@@ -7,6 +7,8 @@
 import Foundation
 import Testing
 @testable import M5Net
+import M5Core
+import M5Crypto
 
 private let iosBase = "http://127.0.0.1:5000"
 

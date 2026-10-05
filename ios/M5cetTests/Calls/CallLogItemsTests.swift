@@ -11,7 +11,7 @@ final class CallLogItemsTests: XCTestCase {
 
     private func call(_ id: String, _ kind: CallTrack.Kind, _ at: Int64, _ room: String, _ people: String...) -> CallLogItems.Item {
         CallLogItems.call(.of(id: id, roomKey: room.lowercased(), room: room,
-                              record: CallTrack.Record(kind: kind, at: at, seconds: 61, video: false, people: people)), saved: true)
+                              CallTrack.Record(kind: kind, at: at, seconds: 61, video: false, people: people)), saved: true)
     }
 
     private func m(_ x: CallLogItems.Message, hidden: Bool = false) -> CallLogItems.Item {
@@ -102,7 +102,7 @@ final class CallLogItemsTests: XCTestCase {
 
     func testCallsOfARoomNoLongerSavedCannotBeCalled() {
         let it = CallLogItems.call(.of(id: "z", roomKey: "gone", room: "Gone",
-                                       record: CallTrack.Record(kind: .outgoing, at: 1, seconds: 0, video: true, people: [])), saved: false)
+                                       CallTrack.Record(kind: .outgoing, at: 1, seconds: 0, video: true, people: [])), saved: false)
         XCTAssertFalse(it.saved)
         XCTAssertEqual(it.what, "video")
         XCTAssertEqual(it.dir, "out")
@@ -130,7 +130,7 @@ final class CallLogItemsTests: XCTestCase {
                                     hidden: false)]
             }
         }
-        let store = CallHistoryStore(vault: FakeVault())
+        let store = AppCallHistory(vault: FakeVault())
         store.record(CallTrack.Record(kind: .missed, at: CallTrack.millis() - 5, seconds: 0, video: false, people: ["Bob"]), roomKey: "team", room: "Team")
         store.record(CallTrack.Record(kind: .outgoing, at: CallTrack.millis() - 20, seconds: 9, video: false, people: []), roomKey: "gone", room: "Gone")
         let source = Source()

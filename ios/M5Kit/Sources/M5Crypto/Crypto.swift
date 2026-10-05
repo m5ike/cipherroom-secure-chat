@@ -132,3 +132,13 @@ public enum Crypto {
     public static func concat(_ parts: Bytes...) -> Bytes { ByteOps.concat(parts) }
     public static func wipe(_ b: inout Bytes) { ByteOps.wipe(&b) }
 }
+
+/// `Bytes.sha256(data)` and `Bytes.random(n)` for the wire's `Data` (M5Net) — this
+/// module's SHA-256 and CSPRNG; the other `Bytes.…` helpers are M5Core's.
+public extension Array where Element == UInt8 {
+    static func sha256(_ data: Data) -> Data { Data(Crypto.sha256(Array(data))) }
+    static func sha256(_ text: String) -> Data { Data(Crypto.sha256(Array(text.utf8))) }
+
+    /// Cryptographically random bytes (SecRandomCopyBytes), as `Data`.
+    static func random(_ count: Int) -> Data { Data(Crypto.random(count)) }
+}

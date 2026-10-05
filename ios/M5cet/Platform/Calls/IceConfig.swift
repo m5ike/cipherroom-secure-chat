@@ -26,7 +26,7 @@ struct IceServerSpec: Equatable, Sendable {
 }
 
 /// An /api/turn answer.
-struct TurnAnswer: Equatable, Sendable {
+struct IceTurnAnswer: Equatable, Sendable {
     var servers: [IceServerSpec]
     /// STUN only until this device's hub socket is up (never cached).
     var pending = false
@@ -48,12 +48,12 @@ enum IceConfig {
     /// shorter wait lets TURN come as soon as the server answers again).
     static let failureCacheMs: Int64 = 30_000
 
-    static func parse(_ data: Data) -> TurnAnswer? {
+    static func parse(_ data: Data) -> IceTurnAnswer? {
         guard let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         return parse(json: o)
     }
 
-    static func parse(json o: [String: Any]) -> TurnAnswer {
+    static func parse(json o: [String: Any]) -> IceTurnAnswer {
         var out: [IceServerSpec] = []
         for case let s as [String: Any] in (o["iceServers"] as? [Any]) ?? [] {
             var urls: [String] = []
@@ -66,11 +66,11 @@ enum IceConfig {
             if urls.isEmpty { continue }
             out.append(IceServerSpec(urls: urls, username: s["username"] as? String, credential: s["credential"] as? String))
         }
-        return TurnAnswer(servers: out, pending: CallJSON.bool(o["pending"]), ttlSeconds: CallJSON.int64(o["ttlSeconds"]))
+        return IceTurnAnswer(servers: out, pending: CallJSON.bool(o["pending"]), ttlSeconds: CallJSON.int64(o["ttlSeconds"]))
     }
 
     /// How long an answer may be reused (ms since 1970); 0 = never (pending, or no answer).
-    static func cacheUntil(_ answer: TurnAnswer?, now: Int64) -> Int64 {
+    static func cacheUntil(_ answer: IceTurnAnswer?, now: Int64) -> Int64 {
         guard let answer, !answer.pending else { return 0 }
         return answer.ttlSeconds > 120 ? now + (answer.ttlSeconds - 60) * 1000 : now + defaultCacheMs
     }

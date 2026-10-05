@@ -14,6 +14,7 @@
 // command again before it goes. Pure.
 
 import Foundation
+import M5Core
 
 public enum ApduTemplates {
     /// The card types a template reads (they group the menu and pick the readable report).
@@ -141,7 +142,7 @@ public enum ApduTemplates {
     public static func commandProblem(_ hex: String) -> String? {
         let h = clean(hex)
         guard h.utf8.count >= 4, h.fullMatch("[0-9A-F]+") else { return "not a read command: \(h)" }
-        let b = Hex.decode(String(h.prefix(4)))
+        let b = Hex.decodeLenient(String(h.prefix(4)))
         let cla = Int(b[0]), ins = Int(b[1])
         if readCommand(cla, ins) { return nil }
         let name = cla == 0x90 ? desfireNames[ins] : insNames[ins]

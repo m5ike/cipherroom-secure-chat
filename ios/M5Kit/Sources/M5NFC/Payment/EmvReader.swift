@@ -11,6 +11,7 @@
 // iPhone this runs only over a transport that has them (an external reader).
 
 import Foundation
+import M5Core
 
 public enum EmvReader {
     static let ppse = Array("2PAY.SYS.DDF01".utf8)
@@ -121,7 +122,7 @@ public enum EmvReader {
                 if has(records, e.sfi, rec) { continue }
                 guard let r = try? await s.send(Apdu.readRecord(rec, sfi: e.sfi)) else { continue }
                 if !Apdu.isOk(r.sw) || r.data.isEmpty { continue }
-                records.append(Rec(sfi: e.sfi, record: rec, hex: Hex.encode(r.data), log: false))
+                records.append(Rec(sfi: e.sfi, record: rec, hex: Hex.upper(r.data), log: false))
                 keepTlv(r.data, into: &into)
             }
         }
@@ -142,7 +143,7 @@ public enum EmvReader {
                 budget -= 1
                 guard let r = try? await s.send(Apdu.readRecord(rec, sfi: sfi)) else { break }
                 if !Apdu.isOk(r.sw) || r.data.isEmpty { break }
-                records.append(Rec(sfi: sfi, record: rec, hex: Hex.encode(r.data), log: false))
+                records.append(Rec(sfi: sfi, record: rec, hex: Hex.upper(r.data), log: false))
                 keepTlv(r.data, into: &into)
             }
         }
@@ -213,14 +214,14 @@ public enum EmvReader {
         var currencyCode: String? = nil
         var off = 0
         for d in dol {
-            if d.tag == "5F2A" { currencyCode = pad4(Hex.encode(Bytes.slice(rec, off, off + d.len))); break }
+            if d.tag == "5F2A" { currencyCode = pad4(Hex.upper(Bytes.slice(rec, off, off + d.len))); break }
             off += d.len
         }
         var i = 0
         for d in dol {
             let v = Bytes.slice(rec, i, i + d.len)
             i += d.len
-            let h = Hex.encode(v)
+            let h = Hex.upper(v)
             switch d.tag {
             case "9A": e["date"] = .string(h.count >= 6 ? "20\(sub(h, 0, 2))-\(sub(h, 2, 4))-\(sub(h, 4, 6))" : h)
             case "9F21": e["time"] = .string(h.count >= 6 ? "\(sub(h, 0, 2)):\(sub(h, 2, 4)):\(sub(h, 4, 6))" : h)
@@ -237,7 +238,7 @@ public enum EmvReader {
             default: e[d.tag] = .string(h)
             }
         }
-        e["raw"] = .string(Hex.encode(rec))
+        e["raw"] = .string(Hex.upper(rec))
         return e
     }
 
@@ -263,9 +264,9 @@ public enum EmvReader {
             defer { rec += 1 }
             guard let r = try? await s.send(Apdu.readRecord(rec, sfi: sfi)) else { break }
             if !Apdu.isOk(r.sw) { break }
-            records.append(Rec(sfi: sfi, record: rec, hex: Hex.encode(r.data), log: true))
+            records.append(Rec(sfi: sfi, record: rec, hex: Hex.upper(r.data), log: true))
             var e: NfcJSONObject? = nil
-            if !dol.isEmpty { e = parseLogRecord(r.data, dol) } else if !r.data.isEmpty { e = ["raw": .string(Hex.encode(r.data))] }
+            if !dol.isEmpty { e = parseLogRecord(r.data, dol) } else if !r.data.isEmpty { e = ["raw": .string(Hex.upper(r.data))] }
             if let e { out.append(e) }
         }
         return out
@@ -278,7 +279,7 @@ public enum EmvReader {
     }
 
     static func formatValue(_ tag: String, _ value: [UInt8], _ format: EmvTags.Format) -> String {
-        let h = Hex.encode(value)
+        let h = Hex.upper(value)
         switch format {
         case .ans, .an: let a = asciiOf(value); return a.isEmpty ? h : a
         case .cn: return h.replacingRegex("F+$", with: "")
@@ -313,7 +314,7 @@ public enum EmvReader {
 
     static func tagJson(_ tag: String, _ value: [UInt8]) -> NfcJSON {
         let info = EmvTags.info(tag)
-        return ["tag": .string(tag), "name": .string(info.name), "value": .string(formatValue(tag, value, info.format)), "hex": .string(Hex.encode(value))]
+        return ["tag": .string(tag), "name": .string(info.name), "value": .string(formatValue(tag, value, info.format)), "hex": .string(Hex.upper(value))]
     }
 
     /// What one application gave besides its records' tags (emv.ts AppExtras).
@@ -336,8 +337,8 @@ public enum EmvReader {
         if let label { app["label"] = .string(label) } else if let lbl = tags["50"] ?? tags["9F12"] { app["label"] = .string(asciiOf(lbl)) }
         // PAN: tag 5A, else from Track 2.
         let t2 = tags["57"] ?? tags["9F6B"]
-        let fromT2: (pan: String?, expiry: String?) = t2.map { fromTrack2(Hex.encode($0)) } ?? (nil, nil)
-        let pan = tags["5A"].map { Hex.encode($0).replacingRegex("F+$", with: "") } ?? fromT2.pan
+        let fromT2: (pan: String?, expiry: String?) = t2.map { fromTrack2(Hex.upper($0)) } ?? (nil, nil)
+        let pan = tags["5A"].map { Hex.upper($0).replacingRegex("F+$", with: "") } ?? fromT2.pan
         if let pan, pan.fullMatch("\\d{8,19}") { app["pan"] = .string(pan); app["panMasked"] = .string(maskPan(pan)) }
         var expiry = tags["5F24"].map { formatValue("5F24", $0, .month) } ?? fromT2.expiry
         if let e = expiry, e.count > 7 { expiry = String(e.prefix(7)) }
@@ -352,10 +353,10 @@ public enum EmvReader {
         if let atc = num(tags["9F36"]) { app["atc"] = .number(Double(atc)) }
         if let lastOnline = num(tags["9F13"]) { app["lastOnlineAtc"] = .number(Double(lastOnline)) }
         if let ptc = num(tags["9F17"]) { app["pinTryCounter"] = .number(Double(ptc)) }
-        if let aip = x.aip, !aip.isEmpty { app["aip"] = .string(Hex.encode(aip)) }
-        if let afl = x.afl, !afl.isEmpty { app["afl"] = .string(Hex.encode(afl)) }
+        if let aip = x.aip, !aip.isEmpty { app["aip"] = .string(Hex.upper(aip)) }
+        if let afl = x.afl, !afl.isEmpty { app["afl"] = .string(Hex.upper(afl)) }
         if !x.getData.isEmpty { app["getData"] = .array(x.getData.entries.map { tagJson($0.0, $0.1) }) }
-        if let f = x.logFormat, !f.isEmpty { app["logFormat"] = .string(Hex.encode(f)) }
+        if let f = x.logFormat, !f.isEmpty { app["logFormat"] = .string(Hex.upper(f)) }
         if let sfi = x.logSfi { app["logSfi"] = NfcJSON(sfi) }
         if let log = x.log { app["log"] = .array(log.map { .object($0) }) }
         if !x.records.isEmpty {
@@ -376,7 +377,7 @@ public enum EmvReader {
         for (i, a) in BerTlv.findAll(nodes, 0x61).enumerated() {
             guard let aid = BerTlv.find(a.children, 0x4f) else { continue }
             let prio = BerTlv.find(a.children, 0x87).map { $0.value.first.map(Int.init) ?? 0xff } ?? 0xff
-            found.append((Hex.encode(aid.value), prio, i))
+            found.append((Hex.upper(aid.value), prio, i))
         }
         found.sort { $0.prio != $1.prio ? $0.prio < $1.prio : $0.order < $1.order }
         var out = [String]()
@@ -389,7 +390,7 @@ public enum EmvReader {
     /// SELECT an application by its AID; keeps its FCI (the label, the PDOL).
     static func selectAid(_ s: Sender, _ aidHex: String) async -> Fci {
         var out = Fci()
-        guard let r = try? await s.send(Apdu.selectByAid(Hex.decode(aidHex))), Apdu.isOk(r.sw) else { return out }
+        guard let r = try? await s.send(Apdu.selectByAid(Hex.decodeLenient(aidHex))), Apdu.isOk(r.sw) else { return out }
         out.ok = true
         out.fci = BerTlv.decode(r.data, recurse: true)
         let label = BerTlv.find(out.fci, 0x50) ?? BerTlv.find(out.fci, 0x9f12)

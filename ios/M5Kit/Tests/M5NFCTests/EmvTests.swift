@@ -5,6 +5,7 @@
 import Testing
 import Foundation
 @testable import M5NFC
+import M5Core
 
 @Suite struct EmvReaderTests {
     static let aidVisa = "A0000000031010", aidMc = "A0000000041010"
