@@ -1,37 +1,86 @@
 // Web Serial PN532 transport. A PN532 breakout on a USB-UART bridge
-// (FTDI / CP2102 / CH340) exposed through the Web Serial API. Shares the
-// frame codec in pn532.ts. This is the ONLY browser transport that can
+// (FTDI / CP2102 / CH340 / PL2303) or on a Bluetooth Classic SPP module
+// (HC-05 / HC-06, "PN532_SPP"), exposed through the Web Serial API. Shares
+// the frame codec in pn532.ts. This is the ONLY browser transport that can
 // emulate a tag: emulateNdef() runs the PN532 as an ISO 7816 NDEF Type 4
 // target so a phone can read an emulated tag.
+//
+// 6.13.1: the port chooser also shows Bluetooth SPP ports (Chromium hides an
+// RFCOMM port unless its service class is allowed and a filter matches it),
+// "all serial ports" is a choice of its own (other adapters, a port the OS
+// exposes without USB ids — /dev/cu.PN532_SPP on macOS), and the first
+// contact wakes the PN532 and retries while a Bluetooth link comes up.
 
 import { NfcError, fromDomError } from "../errors";
 import type { CardTransport, CardIdentity, WaitOpts, TransportCapabilities, RawOpts, EmulationEvent } from "../transport";
 import { concat, u8, splitResponse, apdu as buildApdu, bytesEqual, hex } from "../cards/apdu";
 import { encodeNdefMessage, buildT4NdefFile, T4T, type NdefRecord } from "../cards/ndef";
 import {
-  Pn532, PN532, getFirmwareVersion, samConfigure, listPassiveTargetTypeA,
-  inDataExchange, inCommunicateThru, inRelease, mifareReadBlockPn532, mifareWriteBlockPn532, type Duplex,
+  Pn532, PN532, handshake, HANDSHAKE_WIRED, HANDSHAKE_WIRELESS, listPassiveTargetTypeA,
+  inDataExchange, inCommunicateThru, inRelease, mifareReadBlockPn532, mifareWriteBlockPn532, type Duplex, type HandshakeTiming,
 } from "./pn532";
 
 /* ---------- Web Serial typings (subset) ---------- */
 type SerialOptions = { baudRate: number; dataBits?: number; stopBits?: number; parity?: string; bufferSize?: number; flowControl?: string };
-type SerialPortLike = {
+export type SerialPortInfo = { usbVendorId?: number; usbProductId?: number; bluetoothServiceClassId?: string | number };
+export type SerialPortLike = {
   open(opts: SerialOptions): Promise<void>;
   close(): Promise<void>;
   readable: ReadableStream<Uint8Array> | null;
   writable: WritableStream<Uint8Array> | null;
-  getInfo?: () => { usbVendorId?: number; usbProductId?: number };
+  getInfo?: () => SerialPortInfo;
   addEventListener?: (t: string, cb: () => void) => void;
 };
-type SerialLike = {
-  requestPort(opts?: { filters?: Array<{ usbVendorId?: number }> }): Promise<SerialPortLike>;
+export type SerialPortFilter = { usbVendorId?: number; usbProductId?: number; bluetoothServiceClassId?: string };
+export type SerialRequestOptions = { filters?: SerialPortFilter[]; allowedBluetoothServiceClassIds?: string[] };
+export type SerialLike = {
+  requestPort(opts?: SerialRequestOptions): Promise<SerialPortLike>;
   getPorts(): Promise<SerialPortLike[]>;
   addEventListener?: (t: string, cb: () => void) => void;
 };
 
+/** Bluetooth Serial Port Profile (RFCOMM) service class. */
+export const SPP_SERVICE_CLASS = "00001101-0000-1000-8000-00805f9b34fb";
+/** USB-UART bridges PN532 boards ship with: FTDI, Silicon Labs CP210x, WCH CH340, Prolific PL2303. */
+export const USB_SERIAL_VENDORS = [0x0403, 0x10c4, 0x1a86, 0x067b] as const;
+
 function serial(): SerialLike | null {
   return typeof navigator !== "undefined" && "serial" in navigator ? (navigator as unknown as { serial: SerialLike }).serial : null;
 }
+
+/** What the port chooser offers: PN532 adapters (USB-UART bridges + Bluetooth SPP), or every serial port. */
+export function serialRequestOptions(allPorts: boolean): SerialRequestOptions {
+  if (allPorts) return { allowedBluetoothServiceClassIds: [SPP_SERVICE_CLASS] };
+  return {
+    filters: [...USB_SERIAL_VENDORS.map((usbVendorId) => ({ usbVendorId })), { bluetoothServiceClassId: SPP_SERVICE_CLASS }],
+    allowedBluetoothServiceClassIds: [SPP_SERVICE_CLASS],
+  };
+}
+
+/** Opens the browser's port chooser; an older browser that rejects the Bluetooth filter gets the USB filters alone. */
+export async function requestSerialPort(s: SerialLike, allPorts: boolean): Promise<SerialPortLike> {
+  try {
+    return await s.requestPort(serialRequestOptions(allPorts));
+  } catch (err) {
+    // Chrome < 117 does not know bluetoothServiceClassId: the filter looks empty → TypeError.
+    if ((err as { name?: string })?.name !== "TypeError" || allPorts) throw err;
+    return s.requestPort({ filters: USB_SERIAL_VENDORS.map((usbVendorId) => ({ usbVendorId })) });
+  }
+}
+
+/** A Bluetooth (or unknown, OS-provided) port: no USB ids. Such links need time after open(). */
+export function isWirelessPort(info: SerialPortInfo | undefined): boolean {
+  if (!info) return true;
+  if (info.bluetoothServiceClassId !== undefined && info.bluetoothServiceClassId !== null) return true;
+  return info.usbVendorId === undefined;
+}
+
+export type WebSerialOptions = {
+  /** Offer every serial port, not just the known USB-UART bridges and Bluetooth SPP. */
+  allPorts?: boolean;
+  /** Tests: shorter handshake timing. */
+  timing?: { wired?: HandshakeTiming; wireless?: HandshakeTiming };
+};
 
 /** Build a Duplex over a Web Serial port. */
 function serialDuplex(port: SerialPortLike): Duplex & { detachReader(): void } {
@@ -60,7 +109,7 @@ function serialDuplex(port: SerialPortLike): Duplex & { detachReader(): void } {
 
 export class WebSerialPn532Transport implements CardTransport {
   readonly id = "webserial-pn532" as const;
-  readonly label = "Web Serial PN532";
+  readonly label = "Web Serial PN532 (USB-serial, Bluetooth SPP)";
   readonly capabilities: TransportCapabilities = { apdu: true, raw: true, mifareAuth: false, ndefOnly: false, emulate: true, write: true };
 
   private port: SerialPortLike | null = null;
@@ -70,6 +119,12 @@ export class WebSerialPn532Transport implements CardTransport {
   private currentTg = 0x01;
   private disconnectCbs = new Set<() => void>();
   private traceCbs = new Set<(dir: "tx" | "rx", bytes: Uint8Array, note?: string) => void>();
+  /** The opened port was a Bluetooth / OS-provided one (slow first contact). */
+  wireless = false;
+  /** "PN532 v1.6" after a successful connect. */
+  firmware = "";
+
+  constructor(private readonly opts: WebSerialOptions = {}) {}
 
   isSupported(): boolean { return serial() !== null; }
   isConnected(): boolean { return this.connected; }
@@ -79,21 +134,36 @@ export class WebSerialPn532Transport implements CardTransport {
     if (!s) throw new NfcError("unsupported", "Web Serial (navigator.serial) is not available");
     let port: SerialPortLike;
     try {
-      port = await s.requestPort({ filters: [{ usbVendorId: 0x0403 }, { usbVendorId: 0x10c4 }, { usbVendorId: 0x1a86 }, { usbVendorId: 0x067b }] });
+      port = await requestSerialPort(s, this.opts.allPorts === true);
     } catch (err) {
       throw fromDomError(err, "no-device");
     }
     if (!port) throw new NfcError("no-device", "No serial port selected");
-    this.port = port;
+    this.wireless = isWirelessPort(port.getInfo?.());
     try {
       await port.open({ baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" });
+    } catch (err) {
+      // A Bluetooth port that cannot be opened: the module is off, out of range or not paired.
+      // A wired one: another program has the port open.
+      const name = (err as { name?: string })?.name ?? "";
+      const detail = `${name}: ${(err as Error)?.message ?? String(err)}`;
+      if (name === "NetworkError" || name === "InvalidStateError") {
+        throw this.wireless
+          ? new NfcError("no-answer", "The Bluetooth serial port cannot be opened — is the reader switched on and paired?", detail)
+          : new NfcError("busy", "The serial port is in use by another program", detail);
+      }
+      throw fromDomError(err, "protocol");
+    }
+    this.port = port;
+    try {
       port.addEventListener?.("disconnect", () => this.handleLost());
       this.duplex = serialDuplex(port);
       this.dev = new Pn532(this.duplex);
       this.dev.onTrace = (dir, bytes, note) => this.trace(dir, bytes, note);
       this.dev.start();
-      await getFirmwareVersion(this.dev);
-      await samConfigure(this.dev);
+      const timing = this.wireless ? (this.opts.timing?.wireless ?? HANDSHAKE_WIRELESS) : (this.opts.timing?.wired ?? HANDSHAKE_WIRED);
+      const fw = await handshake(this.dev, timing);
+      this.firmware = fw.text;
     } catch (err) {
       await this.disconnect();
       throw err instanceof NfcError ? err : fromDomError(err, "protocol");

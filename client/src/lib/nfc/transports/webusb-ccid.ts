@@ -31,6 +31,7 @@
 import { NfcError, fromDomError, withTimeout } from "../errors";
 import type { CardTransport, CardIdentity, WaitOpts, TransportCapabilities, RawOpts } from "../transport";
 import { concat, u8, hex, splitResponse } from "../cards/apdu";
+import { parsePcscAtr } from "../pcsc-atr";
 
 /* ---------- WebUSB typings (subset) ---------- */
 type USBEndpoint = { endpointNumber: number; direction: "in" | "out"; type: string; packetSize: number };
@@ -118,7 +119,11 @@ export class WebUsbCcidTransport implements CardTransport {
       u.addEventListener?.("disconnect", (e) => { if (e.device === this.device) this.handleLost(); });
       device.addEventListener?.("disconnect", () => this.handleLost());
     } catch (err) {
-      throw fromDomError(err, "protocol");
+      // 6.13.1: a reader the system's smart-card service holds (macOS CryptoTokenKit, Windows
+      // usbccid.sys, Linux pcscd) — say so, not "Unable to claim interface".
+      this.device = null;
+      try { if (device.opened) await device.close(); } catch { /* ignore */ }
+      throw mapUsbOpenError(err);
     }
     this.connected = true;
   }
@@ -253,13 +258,15 @@ export class WebUsbCcidTransport implements CardTransport {
           const atr = await this.powerOn();
           const uid = await this.tryGetUid();
           const atqaSak = parseAcrAtr(atr);
+          // 6.13.1: an ISO-DEP (or contact) card's ATR means APDUs — it used to read as "no ISO-DEP".
+          const info = parsePcscAtr(atr);
           return {
             uid: uid ?? new Uint8Array(0),
             atr,
             sak: atqaSak?.sak,
             atqa: atqaSak?.atqa,
-            tech: "iso14443a",
-            isoDep: !!atqaSak && (atqaSak.sak & 0x20) !== 0,
+            tech: info && info.tech !== "unknown" ? info.tech : "iso14443a",
+            isoDep: atqaSak ? (atqaSak.sak & 0x20) !== 0 : info?.apdu ?? false,
             hints: ["ccid", this.isAcr122 ? "acr122" : "generic-ccid"],
           };
         } catch (err) {
@@ -359,6 +366,29 @@ export class WebUsbCcidTransport implements CardTransport {
 
 /* ---------- helpers ---------- */
 
+/**
+ * 6.13.1: why opening a USB reader failed. `open()` / `claimInterface()` of a
+ * CCID reader fail when the operating system's smart-card stack owns it —
+ * Chrome says "NetworkError: Unable to claim interface." (macOS, Linux with
+ * pcscd), "SecurityError: Access denied." (Windows with usbccid.sys) or
+ * "InvalidStateError". That is not a broken reader: it is
+ * "reader-owned-by-os", and the workbench explains what to use instead.
+ * The browser's own text stays in `detail`.
+ */
+export function mapUsbOpenError(err: unknown): NfcError {
+  if (err instanceof NfcError) return err;
+  const e = err as { name?: string; message?: string };
+  const name = e?.name ?? "";
+  const msg = e?.message ?? String(err);
+  const detail = name ? `${name}: ${msg}` : msg;
+  if (name === "NotFoundError") return new NfcError("disconnected", "The reader was unplugged", detail);
+  if (name === "NotAllowedError" || name === "AbortError") return fromDomError(err, "permission-denied");
+  if (name === "NetworkError" || name === "InvalidStateError" || name === "SecurityError" || /claim|access denied|busy|in use/i.test(msg)) {
+    return new NfcError("reader-owned-by-os", "The system's smart-card service is using this reader, so the browser cannot open it over WebUSB", detail);
+  }
+  return fromDomError(err, "protocol");
+}
+
 function bufferOf(a: Uint8Array): ArrayBuffer {
   return a.buffer.slice(a.byteOffset, a.byteOffset + a.byteLength) as ArrayBuffer;
 }
@@ -372,25 +402,11 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * ACS storage-card ATR carries ATQA/SAK in a proprietary layout:
- *   3B 8F 80 01 80 4F 0C A0 00 00 03 06 <SS> <NN NN> <..> TCK
- * where SS = card standard, NNNN = card name (~ SAK-derived). This maps
- * the common values; unknown ATRs return null and detection falls back to
- * the UID length.
+ * A PC/SC storage-card ATR names the card (3B 8F 80 01 80 4F 0C A0 00 00 03 06
+ * SS C0 C1 …, pcsc-atr.ts); the SAK / ATQA that name implies feed the card
+ * detection. Other ATRs return null and detection reads the ATR itself.
  */
 function parseAcrAtr(atr: Uint8Array): { sak: number; atqa: Uint8Array } | null {
-  if (atr.length >= 15 && atr[0] === 0x3b && atr[4] === 0x80 && atr[5] === 0x4f) {
-    const name = (atr[13] << 8) | atr[14];
-    const map: Record<number, { sak: number; atqa: number }> = {
-      0x0001: { sak: 0x08, atqa: 0x0004 }, // Mifare 1K
-      0x0002: { sak: 0x18, atqa: 0x0002 }, // Mifare 4K
-      0x0003: { sak: 0x00, atqa: 0x0044 }, // Ultralight
-      0x0026: { sak: 0x09, atqa: 0x0004 }, // Mifare Mini
-      0x003a: { sak: 0x00, atqa: 0x0044 }, // Ultralight C
-      0x0036: { sak: 0x20, atqa: 0x0344 }, // DESFire-ish
-    };
-    const m = map[name];
-    if (m) return { sak: m.sak, atqa: u8(m.atqa & 0xff, (m.atqa >> 8) & 0xff) };
-  }
-  return null;
+  const info = parsePcscAtr(atr);
+  return info?.sak !== undefined && info.atqa ? { sak: info.sak, atqa: info.atqa } : null;
 }

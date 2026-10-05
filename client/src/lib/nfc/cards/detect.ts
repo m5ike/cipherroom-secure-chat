@@ -7,6 +7,7 @@
 import type { CardIdentity } from "../transport";
 import { hex } from "./apdu";
 import { hasConnectionRecord } from "./connection-card";
+import { parsePcscAtr, storageCardLabel } from "../pcsc-atr";
 
 export type CardType =
   | "mifare-classic-1k"
@@ -102,14 +103,29 @@ export function detectCard(id: CardIdentity): Candidate[] {
     }
   }
 
-  // 4. ATR-only (contact / CCID without SAK). Historical bytes may hint.
+  // 4. ATR-only (PC/SC: CCID or the system reader, without SAK). 6.13.1: the
+  // storage-card name (C0 C1 of 3B 8F 80 01 80 4F 0C A0 00 00 03 06 SS C0 C1 …)
+  // is read where it is — an ISO-DEP card's ATR is no longer taken for an Ultralight.
   if (sak === undefined && atr && atr.length) {
-    // PC/SC storage-card ATR: 3B 8F 80 01 ... identifies the PICC type in the historical bytes.
-    if (atr.length >= 15 && atr[0] === 0x3b && atr[13] !== undefined) {
-      const ss = atr[13];
-      if (ss === 0x08) push(out, "mifare-classic-1k", 0.75, "PC/SC ATR historical byte 08 → Mifare 1K");
-      else if (ss === 0x18) push(out, "mifare-classic-4k", 0.75, "PC/SC ATR historical byte 18 → Mifare 4K");
-      else if (ss === 0x00) push(out, "mifare-ultralight", 0.6, "PC/SC ATR historical byte 00 → Ultralight", "get-version");
+    const info = parsePcscAtr(atr);
+    if (info?.storage) {
+      const name = info.cardName ?? -1;
+      const label = storageCardLabel(info.cardName);
+      if (name === 0x0001 || name === 0x0036) push(out, "mifare-classic-1k", 0.85, `PC/SC ATR card name ${hex([name >> 8, name & 0xff])} → ${label}`);
+      else if (name === 0x0002 || name === 0x0037) push(out, "mifare-classic-4k", 0.85, `PC/SC ATR card name ${hex([name >> 8, name & 0xff])} → ${label}`);
+      else if (name === 0x0026) push(out, "mifare-classic-mini", 0.8, "PC/SC ATR card name 0026 → MIFARE Mini");
+      else if (name === 0x0003 || name === 0x003a) push(out, "mifare-ultralight", 0.7, `PC/SC ATR card name ${hex([name >> 8, name & 0xff])} → ${label}`, "get-version");
+      else if (name === 0x003d) push(out, "ntag21x", 0.7, "PC/SC ATR card name 003D → Ultralight EV1 / NTAG", "get-version");
+      else if (info.tech === "felica") push(out, "felica", 0.8, "PC/SC ATR standard 11 → FeliCa");
+      else if (info.tech === "iso15693") push(out, "iso15693", 0.8, "PC/SC ATR standard → ISO 15693");
+      else push(out, "unknown", 0.3, `PC/SC storage card ${hex([name >> 8, name & 0xff])}`);
+    } else if (info?.contactless) {
+      // ISO 14443-4: the historical bytes are the ATS's (Type A). DESFire's ATS carries just 80.
+      const h = info.historical;
+      if (h.length === 1 && h[0] === 0x80) push(out, "mifare-desfire", 0.6, "PC/SC ATR historical bytes 80 → DESFire", "get-version");
+      push(out, "iso-dep-generic", 0.55, `Contactless ISO-DEP card, ATR ${hex(atr)}`, "select-ppse");
+      push(out, "emv", 0.3, "ISO-DEP card may be EMV — try SELECT PPSE (2PAY.SYS.DDF01)", "select-ppse");
+      push(out, "mrtd", 0.2, "ISO-DEP card may be an ePassport / e-ID — try SELECT AID A0000002471001", "select-mrtd");
     }
     if (out.length === 0) push(out, "iso-dep-generic", 0.4, `Contact/CCID ATR ${hex(atr)}`, "select-ppse");
   }

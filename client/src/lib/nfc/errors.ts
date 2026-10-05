@@ -21,7 +21,10 @@ export type NfcErrorCode =
   | "too-small" // the data does not fit the tag (detail = "needed/available")
   | "no-key" // no key in the dictionary opens a sector (detail = sector number)
   | "invalid-argument"
-  | "busy";
+  | "busy"
+  // 6.13.1:
+  | "reader-owned-by-os" // the OS smart-card service / driver holds the USB reader (WebUSB claimInterface / open failed)
+  | "no-answer"; // the port opened but the reader never answered (switched off, not paired, wrong adapter)
 
 export class NfcError extends Error {
   readonly code: NfcErrorCode;

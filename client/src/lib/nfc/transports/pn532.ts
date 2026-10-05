@@ -11,7 +11,7 @@
 // NACK frame:  00 00 FF FF 00 00
 // Extended frames (LEN 0xFF 0xFF LENh LENl LCS) are supported on parse.
 
-import { NfcError, withTimeout } from "../errors";
+import { NfcError, withTimeout, abortableDelay } from "../errors";
 import { hex, concat, u8 } from "../cards/apdu";
 
 export const PN532 = {
@@ -35,6 +35,8 @@ export const PN532 = {
 const PREAMBLE = u8(0x00, 0x00, 0xff);
 export const ACK = u8(0x00, 0x00, 0xff, 0x00, 0xff, 0x00);
 export const NACK = u8(0x00, 0x00, 0xff, 0xff, 0x00, 0x00);
+/** HSU wake-up preamble (PN532 user manual § 6.2.2; libnfc sends the same 16 bytes). */
+export const WAKEUP = u8(0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
 
 /** The byte pipe a transport provides to the codec. */
 export interface Duplex {
@@ -138,6 +140,8 @@ export class FrameParser {
 export class Pn532 {
   private parser = new FrameParser();
   private pending: Array<(f: ParsedFrame | null) => void> = [];
+  /** Frames that arrived while no command was waiting. */
+  private frames: ParsedFrame[] = [];
   private reading = false;
   private closed = false;
   private iterator?: AsyncIterator<Uint8Array>;
@@ -172,6 +176,12 @@ export class Pn532 {
     while ((f = this.parser.next()) !== null) {
       const waiter = this.pending.shift();
       if (waiter) waiter(f);
+      else {
+        // 6.13.1: a frame with nobody waiting yet (the response right behind its ACK, in the
+        // same read or before the command's next await) is kept, not dropped.
+        this.frames.push(f);
+        if (this.frames.length > 32) this.frames.shift();
+      }
     }
   }
 
@@ -180,11 +190,37 @@ export class Pn532 {
   }
 
   private awaitFrame(timeoutMs: number, signal?: AbortSignal): Promise<ParsedFrame> {
+    const queued = this.frames.shift();
+    if (queued) return Promise.resolve(queued);
+    let waiter: ((f: ParsedFrame | null) => void) | null = null;
     const wait = new Promise<ParsedFrame>((resolve) => {
-      this.pending.push((f) => { if (f) resolve(f); });
+      waiter = (f) => { if (f) resolve(f); };
+      this.pending.push(waiter);
       this.drain();
     });
-    return withTimeout(wait, timeoutMs, signal, "PN532 frame");
+    // 6.13.1: a waiter that timed out leaves the queue — otherwise it would swallow
+    // the next frame (the late answer of a slow Bluetooth link, or the next command's ACK).
+    return withTimeout(wait, timeoutMs, signal, "PN532 frame").catch((e: unknown) => {
+      this.pending = this.pending.filter((w) => w !== waiter);
+      throw e;
+    });
+  }
+
+  /** Drops bytes and waiters left over from an unanswered command (before a retry). */
+  flush(): void {
+    this.parser = new FrameParser();
+    this.pending = [];
+    this.frames = [];
+  }
+
+  /**
+   * HSU wake-up: 55 55 and a run of zeros bring a PN532 out of power-down
+   * (LowVbat after power-on, or after sleeping). Harmless when it is awake.
+   */
+  async wake(): Promise<void> {
+    if (this.closed) throw new NfcError("not-connected", "PN532 closed");
+    this.onTrace?.("tx", WAKEUP, "wake-up");
+    await this.duplex.write(WAKEUP);
   }
 
   /** Send a command, wait for ACK, then wait for and return the response payload (after the response code byte). */
@@ -192,6 +228,8 @@ export class Pn532 {
     if (this.closed) throw new NfcError("not-connected", "PN532 closed");
     const timeoutMs = opts.timeoutMs ?? 1500;
     const frame = buildCommand(cmd, params);
+    // Whatever arrived before this command cannot be its answer (a late reply to an earlier one).
+    this.frames = [];
     this.onTrace?.("tx", frame, `cmd ${cmd.toString(16)}`);
     await this.duplex.write(frame);
     // Await ACK (skip stray frames).
@@ -232,15 +270,67 @@ export class Pn532 {
 
 export type FirmwareVersion = { ic: number; ver: number; rev: number; support: number; text: string };
 
-export async function getFirmwareVersion(dev: Pn532): Promise<FirmwareVersion> {
-  const r = await dev.command(PN532.GetFirmwareVersion);
+type CommandOpts = { timeoutMs?: number; signal?: AbortSignal };
+
+export async function getFirmwareVersion(dev: Pn532, opts: CommandOpts = {}): Promise<FirmwareVersion> {
+  const r = await dev.command(PN532.GetFirmwareVersion, new Uint8Array(0), opts);
   if (r.length < 4) throw new NfcError("protocol", "GetFirmwareVersion short response");
   return { ic: r[0], ver: r[1], rev: r[2], support: r[3], text: `PN5${r[0].toString(16)} v${r[1]}.${r[2]}` };
 }
 
 /** Normal mode SAM configuration (mode 0x01, no timeout, no IRQ). Required before RF ops on many boards. */
-export async function samConfigure(dev: Pn532): Promise<void> {
-  await dev.command(PN532.SAMConfiguration, u8(0x01, 0x00, 0x01));
+export async function samConfigure(dev: Pn532, opts: CommandOpts = {}): Promise<void> {
+  await dev.command(PN532.SAMConfiguration, u8(0x01, 0x00, 0x01), opts);
+}
+
+/** How patient the first contact with a reader is. */
+export type HandshakeTiming = {
+  /** Wake-up + SAMConfiguration + GetFirmwareVersion rounds before giving up. */
+  attempts: number;
+  /** How long one command may take to be answered. */
+  answerMs: number;
+  /** Pause between rounds (a Bluetooth SPP link is still coming up). */
+  gapMs: number;
+};
+
+/** USB-serial adapters answer at once; a Bluetooth link (SPP, BLE) needs a few seconds after it opens. */
+export const HANDSHAKE_WIRED: HandshakeTiming = { attempts: 2, answerMs: 1000, gapMs: 200 };
+export const HANDSHAKE_WIRELESS: HandshakeTiming = { attempts: 3, answerMs: 1500, gapMs: 750 };
+
+/**
+ * 6.13.1: the first contact with a PN532 — wake it up (HSU), put the SAM in
+ * normal mode (the first command a PN532 in LowVbat accepts, as libnfc does)
+ * and read the firmware version; retried while the link comes up. A reader
+ * that never answers is "no-answer" (switched off, not paired, another device
+ * on the port), not a bare timeout.
+ */
+export async function handshake(dev: Pn532, timing: HandshakeTiming, signal?: AbortSignal): Promise<FirmwareVersion> {
+  let last: unknown = null;
+  for (let attempt = 0; attempt < Math.max(1, timing.attempts); attempt++) {
+    if (attempt > 0) {
+      await abortableDelay(timing.gapMs, signal);
+      dev.flush();
+    }
+    try {
+      await dev.wake();
+      let samDone = true;
+      try { await samConfigure(dev, { timeoutMs: timing.answerMs, signal }); }
+      catch (e) {
+        // A board that is awake may refuse SAMConfiguration before GetFirmwareVersion; silence fails the round.
+        if (!NfcError.is(e, "protocol")) throw e;
+        samDone = false;
+      }
+      const fw = await getFirmwareVersion(dev, { timeoutMs: timing.answerMs, signal });
+      if (!samDone) await samConfigure(dev, { timeoutMs: timing.answerMs, signal });
+      return fw;
+    } catch (e) {
+      if (NfcError.is(e, "aborted") || NfcError.is(e, "not-connected") || NfcError.is(e, "disconnected")) throw e;
+      if (!NfcError.is(e, "timeout") && !NfcError.is(e, "protocol")) throw e;
+      last = e;
+    }
+  }
+  const why = last instanceof Error ? last.message : "no answer";
+  throw new NfcError("no-answer", "The reader does not answer — is it switched on (and, over Bluetooth, paired)?", why);
 }
 
 export type PassiveTarget = { tg: number; sensRes: Uint8Array; selRes: number; uid: Uint8Array; ats?: Uint8Array };

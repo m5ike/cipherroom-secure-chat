@@ -11,7 +11,7 @@ import { NfcError, fromDomError } from "../errors";
 import type { CardTransport, CardIdentity, WaitOpts, TransportCapabilities, RawOpts } from "../transport";
 import { u8 } from "../cards/apdu";
 import {
-  Pn532, getFirmwareVersion, samConfigure, listPassiveTargetTypeA,
+  Pn532, handshake, HANDSHAKE_WIRELESS, listPassiveTargetTypeA,
   inDataExchange, inCommunicateThru, inRelease, mifareReadBlockPn532, mifareWriteBlockPn532, type Duplex,
 } from "./pn532";
 
@@ -123,8 +123,8 @@ export class WebBluetoothPn532Transport implements CardTransport {
       this.dev = new Pn532(this.duplex);
       this.dev.onTrace = (dir, bytes, note) => this.trace(dir, bytes, note);
       this.dev.start();
-      await getFirmwareVersion(this.dev);
-      await samConfigure(this.dev);
+      // 6.13.1: wake-up + retries (a BLE bridge forwards the first bytes late).
+      await handshake(this.dev, HANDSHAKE_WIRELESS);
     } catch (err) {
       await this.disconnect();
       throw err instanceof NfcError ? err : fromDomError(err, "protocol");
