@@ -1,0 +1,181 @@
+# =============================================================================
+# M5cet Desktop (6.13) — builds the macOS and Windows apps and smoke-tests them.
+#
+#   test     the desktop unit tests and the desktop typecheck (Linux)
+#   macos    universal dmg + zip (Intel + Apple Silicon), smoke test of the
+#            packaged app against a local M5cet server — both halves (arm64
+#            natively, x86_64 under Rosetta)
+#   windows  NSIS installers + portable zips for x64 and arm64, smoke test of
+#            the packaged x64 app
+#
+# Signing comes from repository secrets only — never from files in the repo:
+#   macOS    MAC_CSC_LINK, MAC_CSC_KEY_PASSWORD (Developer ID Application .p12, base64)
+#            APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID — or
+#            APPLE_API_KEY (.p8 path is written from APPLE_API_KEY_P8), APPLE_API_KEY_ID, APPLE_API_ISSUER
+#   Windows  WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD — or Azure Trusted Signing:
+#            AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET + variables
+#            M5CET_AZURE_ENDPOINT, M5CET_AZURE_ACCOUNT, M5CET_AZURE_PROFILE, M5CET_AZURE_PUBLISHER
+# Without them the artifacts are unsigned (ad-hoc on macOS) and say so; an
+# unsigned build never updates itself. Pull requests from forks get no secrets.
+# Repository variables: M5CET_DEFAULT_SERVER, M5CET_UPDATE_GITHUB / M5CET_UPDATE_URL,
+# M5_RELEASE_KEY (the web client's pinned release key).
+#
+# Supply chain (6.12, F-29): third-party actions pinned to full commit SHAs.
+# =============================================================================
+
+name: Desktop
+
+on:
+  push:
+    branches: [master, 'release/**']
+    tags: ['v*']
+    paths: ['desktop/**', 'client/**', 'server/security-headers.ts', 'server/desktop-auth.ts', 'package-lock.json', '.github/workflows/desktop.yml']
+  pull_request:
+    paths: ['desktop/**', 'client/**', 'server/security-headers.ts', 'server/desktop-auth.ts', 'package-lock.json', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  M5CET_DEFAULT_SERVER: ${{ vars.M5CET_DEFAULT_SERVER }}
+  M5CET_UPDATE_GITHUB: ${{ vars.M5CET_UPDATE_GITHUB }}
+  M5CET_UPDATE_URL: ${{ vars.M5CET_UPDATE_URL }}
+  M5_RELEASE_KEY: ${{ vars.M5_RELEASE_KEY }}
+
+jobs:
+  test:
+    name: Desktop tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - run: npm ci --no-fund
+      - run: npm ci --no-fund --prefix desktop
+      - name: Unit tests (router, server URL, navigation, permissions, deep links, versions, headers, handoff, build config)
+        run: npx vitest run test/desktop-*.test.ts
+      - name: Typecheck the desktop app
+        run: npx tsc -p desktop/tsconfig.json
+
+  macos:
+    name: macOS (universal)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    needs: test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - run: npm ci --no-fund
+      - run: npm ci --no-fund --prefix desktop
+      - name: Notarization API key (when configured)
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -n "$APPLE_API_KEY_P8" ]; then
+            mkdir -p "$RUNNER_TEMP/apple"
+            printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/apple/AuthKey.p8"
+            echo "APPLE_API_KEY=$RUNNER_TEMP/apple/AuthKey.p8" >> "$GITHUB_ENV"
+          fi
+      - name: Build (web client → app → dmg + zip)
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: npm run desktop:build -- --mac
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: m5cet-desktop-macos
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.blockmap
+            desktop/release/latest*.yml
+          if-no-files-found: error
+          retention-days: 14
+      - name: Start a local M5cet server (port 5181)
+        run: |
+          PORT=5181 npm run dev > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 60); do curl -fs http://127.0.0.1:5181/api/health >/dev/null && exit 0; sleep 2; done
+          cat "$RUNNER_TEMP/server.log"; exit 1
+      - name: Smoke test (Apple Silicon)
+        run: node desktop/scripts/smoke.mjs --server http://localhost:5181 --app desktop/release/mac-universal/M5cet.app/Contents/MacOS/M5cet
+      - name: Smoke test (Intel, Rosetta)
+        run: |
+          softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true
+          node desktop/scripts/smoke.mjs --server http://localhost:5181 --arch x86_64 --app desktop/release/mac-universal/M5cet.app/Contents/MacOS/M5cet
+
+  windows:
+    name: Windows (x64 + arm64)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    needs: test
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - run: npm ci --no-fund
+      - run: npm ci --no-fund --prefix desktop
+      - name: Build the web client
+        run: npx tsx script/build.ts
+      - name: Build (app → NSIS installers + zips)
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          M5CET_AZURE_ENDPOINT: ${{ vars.M5CET_AZURE_ENDPOINT }}
+          M5CET_AZURE_ACCOUNT: ${{ vars.M5CET_AZURE_ACCOUNT }}
+          M5CET_AZURE_PROFILE: ${{ vars.M5CET_AZURE_PROFILE }}
+          M5CET_AZURE_PUBLISHER: ${{ vars.M5CET_AZURE_PUBLISHER }}
+        run: node desktop/scripts/build.mjs --win --skip-web
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: m5cet-desktop-windows
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.zip
+            desktop/release/*.blockmap
+            desktop/release/latest*.yml
+          if-no-files-found: error
+          retention-days: 14
+      - name: Start a local M5cet server (port 5181)
+        env:
+          NODE_ENV: development
+          PORT: '5181'
+        run: |
+          npx tsx server/index.ts > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 60); do curl -fs http://127.0.0.1:5181/api/health >/dev/null && exit 0; sleep 2; done
+          cat "$RUNNER_TEMP/server.log"; exit 1
+      - name: Smoke test (x64)
+        run: node desktop/scripts/smoke.mjs --server http://localhost:5181 --app desktop/release/win-unpacked/M5cet.exe

@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="dark light" />
+    <title>M5cet</title>
+    <link rel="stylesheet" href="./ui.css" />
+  </head>
+  <body class="welcome">
+    <main>
+      <header>
+        <img src="./icon.svg" alt="" width="56" height="56" />
+        <h1 id="title"></h1>
+      </header>
+      <p id="intro"></p>
+      <form id="form" autocomplete="off">
+        <input id="server" type="text" inputmode="url" spellcheck="false" autocapitalize="off" placeholder="chat.example.org" aria-labelledby="intro" />
+        <button id="connect" type="submit"></button>
+      </form>
+      <p id="error" role="alert" hidden></p>
+      <p id="busy" hidden></p>
+      <section id="list-wrap" hidden>
+        <h2 id="servers"></h2>
+        <ul id="list"></ul>
+      </section>
+      <footer>
+        <p id="note"></p>
+        <p id="version"></p>
+      </footer>
+    </main>
+    <script src="./welcome.js"></script>
+  </body>
+</html>

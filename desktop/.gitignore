@@ -1,0 +1,10 @@
+# Build outputs of M5cet Desktop — never committed.
+node_modules/
+dist/
+web/
+web-index.json
+release/
+build/lproj/
+*.dmg
+*.exe
+*.blockmap
