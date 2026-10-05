@@ -154,7 +154,7 @@ final class FnOutputsTests: XCTestCase {
             host.toneOverride = dark
             let look = ToolsLook(host: host)
             let view = FnOutputsView(key: "draw-\(dark)", outputs: d.outputs + more, meta: FnRun.meta(.object(d.message(keyword: "report", name: "R", visibility: "caller").local)),
-                                     createdAt: Millis.now, ink: nil, host: engine.outputsHost(host), look: look)
+                                     createdAt: EpochMs.now, ink: nil, host: engine.outputsHost(host), look: look)
                 .environment(host)
                 .frame(width: 360)
             let (vc, window) = RendererTestSupport.show(ScrollView { view }, size: CGSize(width: 390, height: 1600), dark: dark)

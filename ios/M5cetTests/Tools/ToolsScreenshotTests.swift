@@ -51,7 +51,7 @@ final class ToolsScreenshotTests: XCTestCase {
 
     func testTheHistoryScreen() throws {
         guard let dir = ProcessInfo.processInfo.environment["M5_SHOTS_DIR"], !dir.isEmpty else { throw XCTSkip("M5_SHOTS_DIR not set") }
-        let now = Millis.now
+        let now = EpochMs.now
         for (device, size, regular) in [("iphone", CGSize(width: 402, height: 874), false), ("ipad", CGSize(width: 1032, height: 1376), true)] {
             for dark in [false, true] {
                 let state = StubScreenState(AppRouteState(enrolled: true, lockSetUp: true, locked: false, hasActiveRoom: true))

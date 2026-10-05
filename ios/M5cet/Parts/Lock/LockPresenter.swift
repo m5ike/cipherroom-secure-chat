@@ -60,6 +60,12 @@ final class LockPresenter {
     /// What should be up now, on every connected scene.
     func update() {
         guard let center else { return }
+        // 6.14 core: the design's own lock screen (route "lock" + the lockPad slot) is what every window shows;
+        // with showsWindows off these windows stay down (the privacy cover is ScreenPrivacy's, not these).
+        guard center.showsWindows else {
+            for id in Array(windows.keys) { remove(id) }
+            return
+        }
         let want: Kind? = center.wipedNotice ? .wiped : (center.lock.isSetUp && center.lock.isLocked ? .lock : nil)
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let live = Set(scenes.map(ObjectIdentifier.init))

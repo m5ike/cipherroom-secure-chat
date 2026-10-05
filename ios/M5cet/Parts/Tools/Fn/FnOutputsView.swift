@@ -127,7 +127,7 @@ struct FnOutputsView: View {
     let look: ToolsLook
 
     var body: some View {
-        let fresh = createdAt > 0 && Millis.now - createdAt < FnOutputsLayout.freshMs
+        let fresh = createdAt > 0 && EpochMs.now - createdAt < FnOutputsLayout.freshMs
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(FnOutputsLayout.parts(outputs).enumerated()), id: \.offset) { _, part in
                 switch part {

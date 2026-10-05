@@ -29,6 +29,8 @@ public struct Outgoing: Sendable {
     public var fn: JSONObject?, fnLocal: JSONObject?
     public var forwardedFrom: String?
     public var sourceAudio: String?
+    /// The message's id when the caller chose it ("msg-" + hex; nil: the room makes one) — the UI knows its bubble at once.
+    public var id: String?
     public init(text: String = "") { self.text = text }
 }
 

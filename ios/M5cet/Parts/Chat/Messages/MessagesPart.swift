@@ -27,7 +27,7 @@ import UniformTypeIdentifiers
 
 struct MessagesPart: View {
     let ctx: SlotContext
-    @State private var lastTick: Int64 = Millis.now
+    @State private var lastTick: Int64 = EpochMs.now
     @State private var animateId: String?
     @State private var flashTokens: [String: Int] = [:]
     @State private var restoresSeen = -1
@@ -43,7 +43,7 @@ struct MessagesPart: View {
         let room = core.rooms.active
         let _ = ChatState.shared.hidesGeneration
         let _ = ChatState.shared.mapGeneration
-        let now = Millis.now
+        let now = EpochMs.now
         let all = room?.messages ?? []
         let list = Self.filter(all, tag: win.tag, peek: win.peek, now: now)
         let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
@@ -209,7 +209,7 @@ struct MessagesPart: View {
 
     /// Vanishing messages on screen and open use up their time; a timed hide that is over brings its message back.
     private func ticker() async {
-        lastTick = Millis.now
+        lastTick = EpochMs.now
         while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(250))
             if Task.isCancelled { return }
@@ -218,7 +218,7 @@ struct MessagesPart: View {
     }
 
     private func tick() {
-        let now = Millis.now
+        let now = EpochMs.now
         let delta = min(1000, now - lastTick)
         lastTick = now
         guard let room = CoreModels.shared.rooms.active else { return }
@@ -346,7 +346,7 @@ private struct MessageRowContainer: View {
         let host = ctx.host
         let m = message
         let scope = ChatMessageScope.scope(m, previous: previous, room: room, byId: byId, roster: roster, tr: ctx.t,
-                                           has: { ChatIcons.has($0) }, settings: host.settings, now: Millis.now)
+                                           has: { ChatIcons.has($0) }, settings: host.settings, now: EpochMs.now)
         let screen = ChatMessageScope.screen(m)
         VStack(spacing: 0) {
             BubbleRowView(message: m, screen: screen, scope: scope, animate: animate, dimmed: dimmed, flashToken: flashToken,

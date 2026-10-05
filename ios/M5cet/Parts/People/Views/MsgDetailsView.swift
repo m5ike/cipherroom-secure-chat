@@ -16,7 +16,7 @@ struct MsgDetailsView: View {
     let messageId: String
     let hides: any DetailsHiding
     /// The clock (tests and screenshots fix it).
-    var now: () -> Int64 = { Millis.now }
+    var now: () -> Int64 = { EpochMs.now }
     var timeZone: TimeZone?
 
     @Environment(DesignHost.self) private var host

@@ -35,6 +35,8 @@ public protocol RoomEvents: Sendable {
     func signal(from peerId: String, _ description: JSONObject)
     /// A peer's audio-status (calls).
     func peerAudio(_ peerId: String, _ state: String)
+    /// 6.14: a relayed call item (CallWake) — the room's inbox decides: a missed call, or the call the room shows.
+    func callWake(_ item: CallWake.Item)
     /// A file frame (JSON) for the app's file transfers; `peerId` nil for the server's.
     func fileFrame(_ peerId: String?, _ frame: JSONObject, proxy: Bool)
     /// A proxied file's key, opened from its sealed signal (§ 8).
@@ -56,6 +58,7 @@ public extension RoomEvents {
     func lockedState(messageId: String, who: String, name: String, state: String) {}
     func joined(peerId: String, resume: String) {}
     func peerAudio(_ peerId: String, _ state: String) {}
+    func callWake(_ item: CallWake.Item) {}
 }
 
 /// The settings a room reads.
@@ -131,6 +134,10 @@ public final class RoomCore {
     public private(set) var proven = false
     public private(set) var unproven = false
     private var hubNonce = ""
+    /// 6.14: the server wakes away members for calls (its hello lists "call-wake" — CallWake).
+    public private(set) var serverCallWake = false
+    /// 6.14: my ring to the away members (ringAway / endRing).
+    var wakeSender = CallWake.Sender()
     private var joinSent = false
     private var proofSkipUntil: Int64 = 0
     private var legacyRetried = false
@@ -143,7 +150,7 @@ public final class RoomCore {
     public func peer(_ id: String) -> RoomPeer? { peerById[id] }
     public private(set) var people = PeerFacts()
     public private(set) var presence = RoomPresence()
-    public private(set) var messages = [ChatMessage]()
+    public internal(set) var messages = [ChatMessage]()
     private var held = [String: [ChatMessage]]()
     private var relayHeld = OrderedMap<String, [ChatMessage]>()
     public private(set) var heldIds = Set<String>()
@@ -153,7 +160,7 @@ public final class RoomCore {
     struct Queued { var message: ChatMessage; let payload: JSONObject; let targets: Set<String>?; let createdAt: Int64; var attempts = 0 }
     private var outbox = [Queued]()
     private var receiptQueue = [String: [String: [String]]]()
-    struct RelayWaiting { let payload: JSONObject; let refs: [String]; let mention: [String]; let messageId: String?; let deadline: Int64 }
+    struct RelayWaiting { let payload: JSONObject; let refs: [String]; let mention: [String]; let messageId: String?; let deadline: Int64; var extra: JSONObject? = nil }
     private var relayWaiting = OrderedMap<String, RelayWaiting>()
     /// KT lookups the hub answered, for the actor to check (async) and hand back with `applyKtLookup`.
     public private(set) var pendingKtLookups = [(ref: String, lookup: JSONObject?)]()
@@ -272,6 +279,8 @@ public final class RoomCore {
         switch f.optString("type") {
         case "hello":
             hubNonce = f.string("nonce") ?? ""
+            // 6.14: whether this server wakes away members for calls (call wake).
+            serverCallWake = (f.array("features") ?? []).contains { $0.stringValue == CallWake.feature }
             if !joinSent { sendJoin() }
         case "key-bundles":
             if !relay.onKeyBundles(f, now: now).isEmpty { sendWaitingRelays() }
@@ -608,7 +617,12 @@ public final class RoomCore {
         if seen[m.id] != nil { return }
         seen[m.id] = true
         while seen.count > 20_000, let first = seen.first { seen.remove(first.key) }
-        if m.kind == "audio-status" { p.audio = m.text; events.peerAudio(p.id, m.text); events.roomChanged(); return }
+        if m.kind == "audio-status" {
+            p.audio = m.text
+            // 6.14 (call wake): someone's audio is on — my ring was answered.
+            if m.text == "live" || m.text == "muted" { wakeSender.markAnswered() }
+            events.peerAudio(p.id, m.text); events.roomChanged(); return
+        }
         if !freshMessage(&m, payload["createdAt"], p4Message: opened.version == P4.version, liveChain: liveChain) { return }
         m.roomKey = key
         m.senderKid = p.publicKey.isEmpty ? "" : Ec.kid(p.publicKey)
@@ -866,7 +880,7 @@ public final class RoomCore {
         events.added(m, fresh: fresh && !m.mine && m.kind != "sys")
     }
 
-    private func update(_ id: String, _ body: (inout ChatMessage) -> Void) -> ChatMessage? {
+    func update(_ id: String, _ body: (inout ChatMessage) -> Void) -> ChatMessage? {
         guard let i = messages.lastIndex(where: { $0.id == id }) else { return nil }
         body(&messages[i])
         events.changed(messages[i])
@@ -891,7 +905,7 @@ public final class RoomCore {
     /// before `finishSend`; `sealedText`/`sealedMeta` carry its result.
     public func compose(_ o: Outgoing) -> ChatMessage {
         var m = ChatMessage()
-        m.id = "msg-" + Crypto.hex(Crypto.random(12))
+        m.id = o.id.flatMap { $0.hasPrefix("msg-") && $0.utf16.count <= Payloads.idMax && message($0) == nil ? $0 : nil } ?? "msg-" + Crypto.hex(Crypto.random(12))
         m.roomKey = key
         m.text = o.text
         m.createdAt = now
@@ -1032,17 +1046,11 @@ public final class RoomCore {
 
     /// 6.12 (§ 7.4): a room message for the signed-in members who are away — sealed per trusted device, the room
     /// envelope for the others. Waits (≤ 3 s, `sendParkedRelays`) for the directory and the lookups.
-    func relayToAway(_ payload: JSONObject, mentionNames: [String], messageId: String?) {
+    /// 6.14: `extra` — fields the frame carries besides (a call wake's: call / callEnd, callId, video); `only` — just
+    /// these away members (nil: all).
+    func relayToAway(_ payload: JSONObject, mentionNames: [String], messageId: String?, extra: JSONObject? = nil, only: [String]? = nil) {
         guard connected else { return }
-        var here = Set<String>()
-        for p in peerList where transport.isOpen(p.id) { let a = people.account(p.id); if !a.isEmpty { here.insert(a) } }
-        var refs = [String](), mention = [String]()
-        for a in people.away {
-            if here.contains(a.account) || refs.contains(a.account) { continue }
-            refs.append(a.account)
-            for n in mentionNames where Verified.sameName(n, a.name) { mention.append(a.account) }
-            if refs.count >= 50 { break }
-        }
+        let (refs, mention) = awayRefs(mentionNames: mentionNames, only: only)
         if refs.isEmpty { return }
         let id = payload.optString("id")
         var waiting = false
@@ -1054,9 +1062,50 @@ public final class RoomCore {
                 else if !relay.ktKnown(ref, now: now) { waiting = true }
             }
         }
-        if !waiting { sendRelay(id, payload, refs, mention, messageId); return }
-        relayWaiting[id] = RelayWaiting(payload: payload, refs: refs, mention: mention, messageId: messageId, deadline: now + 3_000)
+        if !waiting { sendRelay(id, payload, refs, mention, messageId, extra); return }
+        relayWaiting[id] = RelayWaiting(payload: payload, refs: refs, mention: mention, messageId: messageId, deadline: now + 3_000, extra: extra)
         while relayWaiting.count > 100, let first = relayWaiting.first { relayWaiting.remove(first.key) }
+    }
+
+    /// The away members a relayed message goes to: not on an open channel here, at most 50; `mention` the mentioned ones.
+    func awayRefs(mentionNames: [String], only: [String]?) -> (refs: [String], mention: [String]) {
+        var here = Set<String>()
+        for p in peerList where transport.isOpen(p.id) { let a = people.account(p.id); if !a.isEmpty { here.insert(a) } }
+        var refs = [String](), mention = [String]()
+        for a in people.away {
+            if let only, !only.contains(a.account) { continue }
+            if here.contains(a.account) || refs.contains(a.account) { continue }
+            refs.append(a.account)
+            for n in mentionNames where Verified.sameName(n, a.name) { mention.append(a.account) }
+            if refs.count >= 50 { break }
+        }
+        return (refs, mention)
+    }
+
+    /* ------------------------------------------------ 6.14: call wake */
+
+    /// My call just started (my audio went live): when nobody else is in it, the away members get one call item
+    /// (CallWake). `othersInCall`: how many others' audio is on here now.
+    public func ringAway(video: Bool, othersInCall: Int) {
+        guard connected, !myId.isEmpty else { return }
+        let ring = wakeSender.start(serverWakes: serverCallWake, othersInCall: othersInCall, away: awayRefs(mentionNames: [], only: nil).refs,
+                                    video: video, now: now)
+        if let ring { sendCallWake(ring, CallWake.ring) }
+    }
+
+    /// I hung up: when nobody answered my ring, it stops for those still away.
+    public func endRing() {
+        let end = wakeSender.stop(awayNow: people.away.map(\.account))
+        if let end, !myId.isEmpty { sendCallWake(end, CallWake.end) }
+    }
+
+    /// The ring that is out (nil: none, or answered).
+    public var wakeRinging: CallWake.Ring? { wakeSender.ringing }
+
+    private func sendCallWake(_ ring: CallWake.Ring, _ state: String) {
+        let payload = CallWake.payload(callId: ring.callId, state: state, video: ring.video, at: ring.at, senderId: myId, senderName: userName, now: now)
+        relayToAway(payload, mentionNames: [], messageId: nil, extra: CallWake.relayFields(callId: ring.callId, state: state, video: ring.video), only: ring.refs)
+        M5Log.shared.info("call", "call wake (\(state)) to \(ring.refs.count) away")
     }
 
     /// Every reference has its directory answer (and its lookup, where one is needed)?
@@ -1071,7 +1120,7 @@ public final class RoomCore {
     private func sendWaitingRelays() {
         for (id, w) in relayWaiting.entries where relayReady(w.refs) {
             relayWaiting.remove(id)
-            sendRelay(id, w.payload, w.refs, w.mention, w.messageId)
+            sendRelay(id, w.payload, w.refs, w.mention, w.messageId, w.extra)
         }
     }
 
@@ -1079,14 +1128,14 @@ public final class RoomCore {
     public func sendParkedRelays() {
         for (id, w) in relayWaiting.entries where w.deadline <= now {
             relayWaiting.remove(id)
-            sendRelay(id, w.payload, w.refs, w.mention, w.messageId)
+            sendRelay(id, w.payload, w.refs, w.mention, w.messageId, w.extra)
         }
     }
 
     /// When the next parked relay is due (nil: none).
     public var nextRelayDeadline: Int64? { relayWaiting.orderedValues.map(\.deadline).min() }
 
-    private func sendRelay(_ id: String, _ payload: JSONObject, _ refs: [String], _ mention: [String], _ messageId: String?) {
+    private func sendRelay(_ id: String, _ payload: JSONObject, _ refs: [String], _ mention: [String], _ messageId: String?, _ extra: JSONObject? = nil) {
         var devices = [String: [P4Relay.Device]]()
         for ref in refs { devices[ref] = relay.devices(ref, pinnedApk: device.store.refAccount(ref), remembered: device.store.devicesOfRef(ref), ktOn: ktOn, now: now) }
         let box = device.mailbox(identity)
@@ -1096,8 +1145,11 @@ public final class RoomCore {
         guard let built = try? P4Relay.frame(messageId: id, refs: refs, devices: devices,
                                              seal: { d in try box.seal(roomId: keys.roomId, id: id, payloadJson: json, recipientPk: d.pk, recipient: d.bundle, sacc: sacc, now: n) },
                                              roomEnvelope: { try Envelopes.sealMessage(keys, id: id, payload: payload, identity: identity) }, mention: mention) else { return }
-        transport.sendHub(built.frame)
-        if let messageId { markRelayed(messageId, to: built.frame.array("to") ?? [], sealed: built.sealed) }
+        var frame = built.frame
+        // 6.14: a call wake's fields (call / callEnd, callId, video — CallWake.relayFields).
+        if let extra { for (k, v) in extra { frame[k] = v } }
+        transport.sendHub(frame)
+        if let messageId { markRelayed(messageId, to: frame.array("to") ?? [], sealed: built.sealed) }
     }
 
     /// § 7.4: the message's info names who got which form.
@@ -1146,6 +1198,19 @@ public final class RoomCore {
                 opened = o
             }
             ack.append(itemId)
+            // 6.14 (call wake): a call item — a missed call, unless the room shows that call (CallWake).
+            if let wake = CallWake.parse(opened.payload, transportSender: from.optString("peerId"), myId: myId, now: now) {
+                var probe = ChatMessage()
+                probe.id = wake.id
+                probe.senderId = wake.senderId
+                probe.senderName = wake.senderName
+                probe.createdAt = wake.createdAt
+                if seen[wake.id] == nil {
+                    seen[wake.id] = true
+                    if freshMessage(&probe, opened.payload["createdAt"], p4Message: opened.version == P4.version, liveChain: false) { events.callWake(wake) }
+                }
+                continue
+            }
             guard var m = Payloads.validate(opened.payload, transportSender: from.optString("peerId"), myId: myId, now: now), seen[m.id] == nil, m.kind != "audio-status" else { continue }
             seen[m.id] = true
             if !freshMessage(&m, opened.payload["createdAt"], p4Message: opened.version == P4.version, liveChain: false) { continue }

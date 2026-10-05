@@ -132,7 +132,7 @@ final class DetailsHides: DetailsHiding, LockParticipant {
 
     /// The unlock the app is in now (never stored: a new start is a new one).
     private(set) var unlock = DetailsHides.newUnlock()
-    var now: () -> Int64 = { Millis.now }
+    var now: () -> Int64 = { EpochMs.now }
     /// MessageAudit.add(action, room, message, until) — "hide", "unhide", "delete".
     var audit: (@MainActor (String, any RoomModel, ChatMessage, Int64) -> Void)?
 

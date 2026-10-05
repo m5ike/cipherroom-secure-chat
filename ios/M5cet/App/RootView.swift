@@ -29,6 +29,8 @@ struct RootView: View {
         // The system's tone from the first frame (the shell keeps it in step afterwards).
         h.systemDark = UITraitCollection.current.userInterfaceStyle == .dark
         host = h
+        // The core knows every window (flash, route after a lock, the composers).
+        model.core?.attach(h)
         // Links (m5cet://) while the window is open; one that came before it waits in pendingLink.
         model.onLink { [weak h] link in h?.handleLink(link) ?? false }
         model.onScenePhase { [weak h] phase in if phase == .active { h?.resumed() } }

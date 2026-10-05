@@ -40,7 +40,7 @@ enum ChatMessageAudit {
     /// One action; until = a hide's end (ms), 0 = until the next sign-in (and for unhide / delete).
     static func add(_ action: String, room: any RoomModel, message m: ChatMessage, until: Int64) {
         // The server's room id is the core's to fill in (RoomModel does not carry it): "" until then.
-        let e = entry(action, m, room: "", until: until, at: Millis.now)
+        let e = entry(action, m, room: "", until: until, at: EpochMs.now)
         if let sink { sink.record(e, roomKey: room.key) } else {
             pending.append((e, room.key))
             if pending.count > 200 { pending.removeFirst(pending.count - 200) }

@@ -22,7 +22,7 @@ final class FnCommandsClient {
     private var stateBearer = ""
     private var stateAt: Int64 = 0
 
-    init(api: FnApi, now: @escaping () -> Int64 = { Millis.now }) {
+    init(api: FnApi, now: @escaping () -> Int64 = { EpochMs.now }) {
         self.api = api
         self.now = now
     }

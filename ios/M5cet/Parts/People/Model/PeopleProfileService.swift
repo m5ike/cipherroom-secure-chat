@@ -72,7 +72,7 @@ final class MemoryProfiles: PeopleProfileService {
     var lookups: [String: JSONObject] = [:]
     @ObservationIgnored var publicProfiles: [String: JSONObject] = [:]
     @ObservationIgnored var publicError: String?
-    @ObservationIgnored var now: () -> Int64 = { Millis.now }
+    @ObservationIgnored var now: () -> Int64 = { EpochMs.now }
     @ObservationIgnored private(set) var saves = 0
 
     init(card: JSONObject? = nil) { self.card = card }

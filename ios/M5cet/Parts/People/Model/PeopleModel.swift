@@ -23,7 +23,7 @@ final class PeopleModel {
     @ObservationIgnored var store: PeopleStore
     @ObservationIgnored var contacts: (any PeopleContacts)?
     @ObservationIgnored var profiles: () -> any PeopleProfileService = { PeopleParts.profiles }
-    @ObservationIgnored var now: () -> Int64 = { Millis.now }
+    @ObservationIgnored var now: () -> Int64 = { EpochMs.now }
     /// Delays (the keep-fresh loop, the composer's focus) — tests make them short.
     @ObservationIgnored var freshDelay: Duration = .milliseconds(2000)
 

@@ -111,7 +111,7 @@ enum ChatSamples {
         }
         add("s5", from: "Alice") { m in
             m.text = "Tohle je skryté do zítřka"
-            m.hiddenUntil = Millis.now + 86_400_000
+            m.hiddenUntil = EpochMs.now + 86_400_000
         }
         add("s6", from: "Alice") { m in
             m.text = "Prosím, kdo vezme #faktury tento týden? @Mike"

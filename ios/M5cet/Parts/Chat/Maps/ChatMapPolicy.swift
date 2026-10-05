@@ -87,7 +87,7 @@ enum ChatMapPolicies {
         let server = CoreModels.shared.server
         if server.isEmpty { return nil }
         let p = currentFor == server ? current : nil
-        let now = Millis.now
+        let now = EpochMs.now
         if now >= nextAsk || (p == nil && currentFor != server) { ask(server) }
         guard let p, p.enabled, now >= unreachableUntil else { return nil }
         return p
@@ -96,7 +96,7 @@ enum ChatMapPolicies {
     private static func ask(_ server: String) {
         if asking { return }
         asking = true
-        nextAsk = Millis.now + 60_000
+        nextAsk = EpochMs.now + 60_000
         Task { @MainActor in
             var got: ChatMapPolicy?
             do {
@@ -109,7 +109,7 @@ enum ChatMapPolicies {
             }
             asking = false
             let changed = got != nil && (current == nil || currentFor != server || got!.signature != current!.signature || got!.enabled != current!.enabled)
-            if let got { current = got; currentFor = server; nextAsk = Millis.now + 600_000 }
+            if let got { current = got; currentFor = server; nextAsk = EpochMs.now + 600_000 }
             if changed { ChatState.shared.mapPolicyChanged() }
         }
     }
@@ -118,8 +118,8 @@ enum ChatMapPolicies {
 
     /// Tiles failed for want of the network or the server: the pin for a minute, then previews try again.
     static func unreachable() {
-        let was = Millis.now < unreachableUntil
-        unreachableUntil = Millis.now + 60_000
+        let was = EpochMs.now < unreachableUntil
+        unreachableUntil = EpochMs.now + 60_000
         if !was {
             ChatState.shared.mapPolicyChanged()
             Task { @MainActor in
@@ -142,7 +142,7 @@ enum ChatMapPolicies {
     static func setForTesting(_ p: ChatMapPolicy?, server: String) {
         current = p
         currentFor = server
-        nextAsk = Millis.now + 600_000
+        nextAsk = EpochMs.now + 600_000
         unreachableUntil = 0
     }
     #endif

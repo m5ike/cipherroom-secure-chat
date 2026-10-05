@@ -119,8 +119,8 @@ final class PreviewRooms: RoomsModel {
     }
 
     func join(room: String, passphrase: String, userName: String) -> String {
-        var s = SavedRooms.make(roomName: room, passphrase: passphrase, userName: userName, now: Millis.now)
-        if let i = saved.firstIndex(where: { $0.key == s.key }) { s.lastActive = Millis.now; saved[i] = s } else { saved.append(s) }
+        var s = SavedRooms.make(roomName: room, passphrase: passphrase, userName: userName, now: EpochMs.now)
+        if let i = saved.firstIndex(where: { $0.key == s.key }) { s.lastActive = EpochMs.now; saved[i] = s } else { saved.append(s) }
         connect(s.key)
         switchTo(s.key)
         return s.key
@@ -128,7 +128,7 @@ final class PreviewRooms: RoomsModel {
 
     func clone(_ key: String) -> String? {
         guard let s = saved(key) else { return nil }
-        let c = SavedRooms.copy(s, keys: Set(saved.map(\.key)), now: Millis.now)
+        let c = SavedRooms.copy(s, keys: Set(saved.map(\.key)), now: EpochMs.now)
         saved.append(c)
         return c.key
     }
@@ -200,7 +200,7 @@ final class PreviewRoom: RoomModel {
         m.id = "msg-" + String(UInt64.random(in: 0..<UInt64.max), radix: 16)
         m.roomKey = key
         m.text = o.text
-        m.createdAt = Millis.now
+        m.createdAt = EpochMs.now
         m.senderName = myName
         m.senderId = myId
         m.mine = true
@@ -231,7 +231,7 @@ final class PreviewRoom: RoomModel {
     func sendFile(vaultId: String, name: String, mime: String, size: Int64, _ o: Outgoing) {
         var m = ChatMessage()
         m.id = "msg-" + String(UInt64.random(in: 0..<UInt64.max), radix: 16)
-        m.roomKey = key; m.createdAt = Millis.now; m.mine = true; m.senderName = myName; m.senderId = myId; m.status = "sent"
+        m.roomKey = key; m.createdAt = EpochMs.now; m.mine = true; m.senderName = myName; m.senderId = myId; m.status = "sent"
         m.fileName = name; m.fileMime = mime; m.fileSize = size; m.filePath = vaultId; m.fileProgress = -1; m.text = o.text
         messages.append(m)
         freshId = m.id
@@ -254,37 +254,49 @@ final class PreviewRoom: RoomModel {
 
     func addNote(text: String, fileName: String?, fileMime: String?, dataUrl: String?, filePath: String?, fileSize: Int64, toLabel: String?) {
         var m = ChatMessage()
-        m.id = "note-" + String(Millis.now, radix: 36)
-        m.roomKey = key; m.kind = "note"; m.mine = true; m.senderName = myName; m.createdAt = Millis.now; m.text = text; m.status = "sent"
+        m.id = "note-" + String(EpochMs.now, radix: 36)
+        m.roomKey = key; m.kind = "note"; m.mine = true; m.senderName = myName; m.createdAt = EpochMs.now; m.text = text; m.status = "sent"
         m.fileName = fileName; m.fileMime = fileMime; m.fileDataUrl = dataUrl; m.filePath = filePath; m.fileSize = fileSize
         messages.append(m)
     }
 
     func startFnCall(keyword: String, name: String, query: String, icon: String) -> ChatMessage? {
         var m = ChatMessage()
-        m.id = "fncall-" + String(Millis.now, radix: 36)
-        m.roomKey = key; m.mine = true; m.senderName = myName; m.createdAt = Millis.now; m.status = "sent"; m.text = query
+        m.id = "fncall-" + String(EpochMs.now, radix: 36)
+        m.roomKey = key; m.mine = true; m.senderName = myName; m.createdAt = EpochMs.now; m.status = "sent"; m.text = query
         m.fnLocal = JSONObject([("keyword", .string(keyword)), ("name", .string(name)), ("icon", .string(icon)), ("query", .string(query)), ("pending", true)])
         messages.append(m)
         return m
     }
 
+    // As the real core (M5Proto RoomCore+Local, Android RoomSession): the status drops the loading and the
+    // progress; the progress is {p, text}; a model's answer comes from system-messenger, replying to what asked.
     func fnCallStatus(_ id: String, kind: String, label: String, code: String) {
         touch(id) { m in
             m.fnLocal?["pending"] = false
+            m.fnLocal?["outputs"] = nil
+            m.fnLocal?["progress"] = nil
             m.fnLocal?["status"] = .object(JSONObject([("kind", .string(kind)), ("label", .string(label)), ("code", .string(code))]))
         }
     }
 
     func fnCallProgress(_ id: String, progress: Double, text: String) {
-        touch(id) { m in m.fnLocal?["progress"] = .double(progress); m.fnLocal?["progressText"] = .string(text) }
+        guard message(id)?.fnLocal?.bool("pending") == true else { return }
+        let p = progress.isFinite ? max(-1, min(1, progress)) : -1
+        let t = String(text.prefix(200))
+        touch(id) { m in m.fnLocal?["progress"] = .object(JSONObject([("p", .double(p)), ("text", .string(t))])) }
     }
 
     func addModelAnswer(identity: JSONObject, text: String, share: JSONObject?, local: JSONObject?, replyTo: ChatMessage?) -> ChatMessage? {
         var m = ChatMessage()
-        m.id = "msg-" + String(Millis.now, radix: 36)
-        m.roomKey = key; m.mine = true; m.senderName = myName; m.createdAt = Millis.now; m.status = "sent"; m.text = text
+        m.id = "fn-" + String(EpochMs.now, radix: 36)
+        m.roomKey = key
+        m.senderId = ModelIdentity.systemMessengerId
+        m.senderName = identity.string("name") ?? ModelIdentity.systemMessengerName
+        m.createdAt = max(EpochMs.now, (replyTo?.createdAt ?? -1) + 1)
+        m.status = "displayed"; m.text = text; m.verified = true
         m.model = identity; m.fn = share; m.fnLocal = local
+        if let r = replyTo { m.replyToId = r.id; m.replyToSender = r.senderName; m.replyToText = String(r.visibleText.prefix(200)) }
         messages.append(m)
         return m
     }
@@ -352,7 +364,7 @@ final class PreviewAccount: AccountModel {
 @MainActor
 final class PreviewFiles: MessageFiles {
     private var data: [String: Data] = [:]
-    func store(_ d: Data) throws -> String { let id = "out-\(Millis.now)"; data[id] = d; return id }
+    func store(_ d: Data) throws -> String { let id = "out-\(EpochMs.now)"; data[id] = d; return id }
     func store(contentsOf url: URL) throws -> (id: String, size: Int64) { let d = try Data(contentsOf: url); return (try store(d), Int64(d.count)) }
     func read(_ id: String) throws -> Data { data[id] ?? Data("M5cet sample file\n".utf8) }
     func temporaryCopy(_ id: String, name: String) throws -> URL {
@@ -369,7 +381,7 @@ final class PreviewFiles: MessageFiles {
 @MainActor
 final class PreviewPosition: PositionSource {
     var permitted: Bool { true }
-    func recent() -> JSONObject? { JSONObject([("lat", .double(50.08804)), ("lon", .double(14.42076)), ("acc", 12), ("at", .int(Millis.now))]) }
+    func recent() -> JSONObject? { JSONObject([("lat", .double(50.08804)), ("lon", .double(14.42076)), ("acc", 12), ("at", .int(EpochMs.now))]) }
     func current() async -> JSONObject? { recent() }
 }
 #endif

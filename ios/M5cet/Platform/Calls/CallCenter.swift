@@ -154,6 +154,10 @@ final class CallCenter: RoomCallEvents {
     /// The call of a room, if CallKit has one.
     func call(forRoom roomKey: String) -> Call? { calls.values.first { $0.roomKey == roomKey } }
 
+    /// 6.14 core (call wake): a VoIP push owns this room's call now — it rings, or its record is pending — so the
+    /// room's relayed call items of it add no second record (one record per call).
+    func pushOwnsCall(roomKey: String) -> Bool { call(forRoom: roomKey)?.fromPush == true || pushRecords[roomKey] != nil }
+
     /// The room whose call is on (not just ringing) — the call screen shows it.
     var activeRoomKey: String? {
         calls.values.filter { $0.phase != .ringing }.map(\.roomKey).sorted().first

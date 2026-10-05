@@ -60,9 +60,15 @@ public struct HubRelay: Sendable, Equatable {
     public var expiresAt: Millis?
     public var mention: [String]?
     public var call: Bool
+    /// 6.14 (call wake, frames.ts): the end of a ring (the call ended before anyone answered) — never with `call`.
+    public var callEnd: Bool
+    /// 6.14: the call a ring (`call`) or its end (`callEnd`) belongs to; an end needs it. Only with `call` / `callEnd`.
+    public var callId: String?
+    /// 6.14: a video call. Only with `call` / `callEnd`.
+    public var video: Bool
 
     public init(messageId: String, to: [String], envelope: NetJSON? = nil, per: [String: NetJSON]? = nil, expiresAt: Millis? = nil,
-                mention: [String]? = nil, call: Bool = false) {
+                mention: [String]? = nil, call: Bool = false, callEnd: Bool = false, callId: String? = nil, video: Bool = false) {
         self.messageId = messageId
         self.to = to
         self.envelope = envelope
@@ -70,6 +76,9 @@ public struct HubRelay: Sendable, Equatable {
         self.expiresAt = expiresAt
         self.mention = mention
         self.call = call
+        self.callEnd = callEnd
+        self.callId = callId
+        self.video = video
     }
 }
 
@@ -165,6 +174,12 @@ public enum HubClientFrame: Sendable, Equatable {
             if let x = r.expiresAt { o["expiresAt"] = .int(x) }
             if let m = r.mention, !m.isEmpty { o["mention"] = .strings(m.filter { to.contains($0) }) }
             if r.call { o["call"] = true }
+            // 6.14 (call wake): the ring's end, the call's id, video — only with a ring or its end (frames.ts).
+            if r.callEnd && !r.call { o["callEnd"] = true }
+            if r.call || r.callEnd {
+                if let c = r.callId { o["callId"] = .string(c) }
+                if r.video { o["video"] = true }
+            }
             return .object(o)
         case .relayAck(let ids):
             return ["type": "relay-ack", "ids": .strings(ids)]
@@ -251,6 +266,9 @@ extension HubClientFrame {
             }
             if r.envelope == nil, !to.allSatisfy({ r.per?[$0] != nil }) { throw fail("relay needs an envelope for every recipient (envelope, or per[ref])") }
             if let m = r.mention, m.count > 50 || !m.allSatisfy(HubWire.isId) { throw fail("bad mention list") }
+            if r.call && r.callEnd { throw fail("relay.call and relay.callEnd exclude each other") }
+            if r.call || r.callEnd, let c = r.callId, !HubWire.isId(c) { throw fail("relay.callId is an id ([A-Za-z0-9_:.-], at most 96)") }
+            if r.callEnd && r.callId == nil { throw fail("relay.callEnd needs the callId of its ring") }
         case .relayAck(let ids):
             guard ids.count <= 500, ids.allSatisfy(HubWire.isId) else { throw fail("relay-ack needs ids[]") }
         case .receipt(let ids, _):

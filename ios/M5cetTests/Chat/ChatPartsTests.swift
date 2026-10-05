@@ -68,7 +68,7 @@ final class ChatPartsTests: XCTestCase {
         XCTAssertEqual(room.freshId, m.id)
         // Its row: the outgoing template, in the list, the state the design shows.
         XCTAssertEqual(ChatMessageScope.screen(m), "message.out")
-        XCTAssertTrue(MessagesPart.filter(room.messages, tag: "", peek: false, now: Millis.now).items.contains { $0.id == m.id })
+        XCTAssertTrue(MessagesPart.filter(room.messages, tag: "", peek: false, now: EpochMs.now).items.contains { $0.id == m.id })
         await wait(0.6)
         m = try XCTUnwrap(room.message(m.id))
         XCTAssertEqual(m.status, "sent")
@@ -124,7 +124,7 @@ final class ChatPartsTests: XCTestCase {
         defer { ChatMessageAudit.sink = nil }
         let m = try XCTUnwrap(room.message("m9"))
         BubbleHides.hide(room, m, choice: 0)
-        let now = Millis.now
+        let now = EpochMs.now
         var list = MessagesPart.filter(room.messages, tag: "", peek: false, now: now)
         XCTAssertFalse(list.items.contains { $0.id == "m9" })
         XCTAssertTrue(list.hidden.contains("m9"))
@@ -156,11 +156,11 @@ final class ChatPartsTests: XCTestCase {
         let hidden = try XCTUnwrap(room.message("m7"))
         XCTAssertEqual(hidden.hiddenUntil, ChatMessage.untilSignIn)
         XCTAssertEqual(hidden.hiddenFor, BubbleHides.unlock)
-        XCTAssertTrue(MessagesPart.filter(room.messages, tag: "", peek: false, now: Millis.now).hidden.contains("m7"))
+        XCTAssertTrue(MessagesPart.filter(room.messages, tag: "", peek: false, now: EpochMs.now).hidden.contains("m7"))
         XCTAssertEqual(sink.actions, ["hide"]) // the chat's audit line
         XCTAssertEqual(sink.entries.first?.int64("until"), 0)
         PeopleParts.defaultHides.lockDidUnlock() // the next sign-in
-        XCTAssertFalse(MessagesPart.filter(room.messages, tag: "", peek: false, now: Millis.now).hidden.contains("m7"))
+        XCTAssertFalse(MessagesPart.filter(room.messages, tag: "", peek: false, now: EpochMs.now).hidden.contains("m7"))
         PeopleParts.hides.unhide(room, hidden)
         XCTAssertEqual(room.message("m7")?.hiddenUntil, 0)
     }
@@ -239,7 +239,7 @@ final class ChatPartsTests: XCTestCase {
 
     func testTheRowsScopeIsAndroids() throws {
         // A run: Bob's file, then the position from Alice (another person) — no run; two of Alice's within minutes — a run.
-        let items = MessagesPart.filter(room.messages, tag: "", peek: false, now: Millis.now).items
+        let items = MessagesPart.filter(room.messages, tag: "", peek: false, now: EpochMs.now).items
         let i = try XCTUnwrap(items.firstIndex { $0.id == "m9" })
         let prev = items[i - 1]
         let s = scope(items[i], previous: prev)
@@ -455,7 +455,7 @@ final class ChatPartsTests: XCTestCase {
     private func scope(_ m: ChatMessage, previous: ChatMessage? = nil) -> Scope {
         let byId = Dictionary(room.messages.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         return ChatMessageScope.scope(m, previous: previous, room: room, byId: byId, roster: ChatRoster(room: room, userName: "Mike"),
-                                      tr: { self.t($0) }, has: { ChatIcons.has($0) }, settings: host.settings, now: Millis.now)
+                                      tr: { self.t($0) }, has: { ChatIcons.has($0) }, settings: host.settings, now: EpochMs.now)
     }
 }
 

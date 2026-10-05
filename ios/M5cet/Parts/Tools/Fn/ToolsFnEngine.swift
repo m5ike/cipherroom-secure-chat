@@ -85,7 +85,7 @@ final class ToolsFnEngine: FnEngine {
     private var usageObj: Usage?
     private var nfcHandle: (any FnNfcAsk)?
 
-    init(transport: any FnTransport = FnURLSessionTransport(), now: @escaping () -> Int64 = { Millis.now }) {
+    init(transport: any FnTransport = FnURLSessionTransport(), now: @escaping () -> Int64 = { EpochMs.now }) {
         self.transport = transport
         self.now = now
     }

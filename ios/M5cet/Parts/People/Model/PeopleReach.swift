@@ -36,7 +36,8 @@ final class PeopleReach: ContactReachHost {
     /// RoomSession.peopleScope per connected room; "settling" while the room or one of its peers is still connecting.
     func connectedRooms() -> [ContactReachRoom] {
         core().rooms.open.map { r in
-            let settling = r.status == "connecting" || r.people.contains { $0.channel == "connecting" }
+            // RoomSession.peopleSettling (the core's RoomModel: joined moments ago, a channel not open or no hello yet).
+            let settling = r.peopleSettling
             return ContactReachRoom(key: r.key, label: r.label, settling: settling, lastActivity: r.lastActivity,
                                     people: r.people.compactMap { $0.scope.json.objectValue })
         }

@@ -248,7 +248,7 @@ final class ToolsRecordingRoom: RoomModel {
         m.id = "fncall-\(n)"
         m.mine = true
         m.text = query
-        m.createdAt = Millis.now
+        m.createdAt = EpochMs.now
         m.fnLocal = JSONObject([("keyword", .string(keyword)), ("name", .string(name)), ("query", .string(query)), ("pending", true), ("icon", .string(icon))])
         messages.append(m)
         log.append("start " + query)
@@ -281,7 +281,7 @@ final class ToolsRecordingRoom: RoomModel {
         m.model = identity
         m.fn = share
         m.fnLocal = local
-        m.createdAt = Millis.now
+        m.createdAt = EpochMs.now
         messages.append(m)
         return m
     }

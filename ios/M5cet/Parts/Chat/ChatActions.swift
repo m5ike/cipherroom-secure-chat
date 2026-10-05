@@ -100,7 +100,7 @@ enum ChatActions {
     /// Where a quote's original is: on screen now, hidden here, or not in this device's history (MessageList.jumpTo).
     static func jump(_ id: String, host: DesignHost) -> Jump {
         let win = ChatState.shared.window(host)
-        let now = Millis.now
+        let now = EpochMs.now
         guard !id.isEmpty, let room = CoreModels.shared.rooms.active, let o = room.message(id), !o.deleted, !o.expired(now) else { return .missing }
         if !win.tag.isEmpty && !MessagesPart.matches(o, win.tag) { win.tag = "" }
         let list = MessagesPart.filter(room.messages, tag: win.tag, peek: win.peek, now: now)
@@ -116,7 +116,7 @@ enum ChatActions {
         let win = ChatState.shared.window(host)
         if !win.tag.isEmpty { win.tag = "" }
         guard let room = CoreModels.shared.rooms.active,
-              MessagesPart.filter(room.messages, tag: "", peek: win.peek, now: Millis.now).items.contains(where: { $0.id == id }) else { return false }
+              MessagesPart.filter(room.messages, tag: "", peek: win.peek, now: EpochMs.now).items.contains(where: { $0.id == id }) else { return false }
         win.flashId = id
         win.scrollTarget = id
         return true

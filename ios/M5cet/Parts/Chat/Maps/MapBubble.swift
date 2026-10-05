@@ -17,10 +17,10 @@ enum MapBubble {
 
     static func failedLately(_ m: ChatMessage) -> Bool {
         guard let at = failed[m.id] else { return false }
-        return Millis.now - at < 60_000
+        return EpochMs.now - at < 60_000
     }
 
-    static func markFailed(_ m: ChatMessage) { failed[m.id] = Millis.now }
+    static func markFailed(_ m: ChatMessage) { failed[m.id] = EpochMs.now }
 
     /// The policy when this message gets a map now, else nil (the pin as before).
     static func policy(for m: ChatMessage) -> ChatMapPolicy? {

@@ -24,6 +24,9 @@ final class AppModel {
     /// `design.state` (where the app is, each screen's variables).
     @ObservationIgnored let design = DesignServices()
 
+    /// The app's core (Core/: rooms, account, device, the screens' state and actions) — CoreInstall makes it at launch.
+    @ObservationIgnored var core: AppCore?
+
     /// Silent pushes and the APNs token — installed by Platform/Push.
     @ObservationIgnored var push: (any RemotePushHandling)?
     /// VoIP pushes — installed by Platform/Calls. PushKit is registered only while one is set

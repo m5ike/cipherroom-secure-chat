@@ -46,9 +46,18 @@ protocol ScreenStateProvider: AnyObject {
     /// "selectedCount": …], "room" → ["room", "rooms", "me", "users", "call"]… They win over the common ones.
     /// The renderer adds $lock.wide and, when missing, $presets (settings.appearance).
     func variables(for screen: String, context: ScreenContext) -> [String: DesignValue]
+    /// The same for one window (6.14 core: the parts' providers read that window's $form — `$profile`). The default
+    /// is the window-less one above.
+    func variables(for screen: String, context: ScreenContext, host: DesignHost?) -> [String: DesignValue]
     /// $define (m5mobile.define) and $account.
     var define: DesignValue { get }
     var account: DesignValue { get }
+}
+
+extension ScreenStateProvider {
+    func variables(for screen: String, context: ScreenContext, host: DesignHost?) -> [String: DesignValue] {
+        variables(for: screen, context: context)
+    }
 }
 
 /// The state before the integration: nothing enrolled, so the app shows the design's enrolment screen.

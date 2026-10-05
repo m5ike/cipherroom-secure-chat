@@ -59,7 +59,7 @@ struct MsgBodyView: View {
         let (fg, accent) = colors(m)
         let state = ChatState.shared
         let holding = state.isHeld(m.id)
-        let now = Millis.now
+        let now = EpochMs.now
         VStack(alignment: .leading, spacing: 0) {
             if m.vanished {
                 BodyNote(text: ctx.t("msg.vanished"), fg: fg, italic: true)

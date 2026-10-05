@@ -179,7 +179,7 @@ struct UserPanelView: View {
             let shown = state.revealed || !state.autoHide
             if shown { people.core().rooms.active?.refreshStats() }
             ticks += 1
-            if shown && ticks % 10 == 0 { clock = Millis.now }
+            if shown && ticks % 10 == 0 { clock = EpochMs.now }
             try? await Task.sleep(for: .seconds(3))
         }
     }
