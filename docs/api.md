@@ -26,7 +26,8 @@ Frame format: JSON. Rámce delší než **128 000 znaků** server tiše zahodí
 { "type": "ping",   "t": 1700000000000 }
 { "type": "leave",  "away": true }
 { "type": "storage",   "id": "42", "op": "kv.put", "payload": { ... }, "auth": "token?", "session": "id?" }
-{ "type": "relay",     "messageId": "...", "to": ["accountId"], "envelope": { "iv", "ciphertext" }, "mention?": ["accountId"], "call?": true }
+{ "type": "relay",     "messageId": "...", "to": ["accountId"], "envelope": { "iv", "ciphertext" }, "mention?": ["accountId"], "call?": true,
+  "callEnd?": true, "callId?": "...", "video?": true }
 { "type": "relay-ack", "ids": ["mailId"] }
 { "type": "presence",  "away": true, "foreground": false }
 { "type": "receipt",   "to": { "peerId?", "accountId?" }, "messageIds": ["..."], "state": "delivered|read" }
@@ -44,8 +45,9 @@ počtu peerů na místnost není.
 **Upozornění (6.7).** `relay.mention` (≤ 50, jen účty, které jsou i v `to`)
 říká, že zpráva toho nepřítomného člena zmiňuje — server mu pošle upozornění
 druhu `mention` místo `message`; web ho vyplní z `@jméno` (u zapečetených
-zpráv ne). `relay.call` server přijme (druh `call`), žádný klient ho zatím
-neposílá. Obsah zprávy server ani tak nevidí.
+zpráv ne). `relay.call` server přijme (druh `call`); od 6.14 ho posílají web
+a Android, když volající zahájí hovor — viz [Buzení při hovoru (6.14)](#buzení-při-hovoru-614).
+Obsah zprávy server ani tak nevidí.
 
 Rámec `presence` hlásí, že prohlížeč stránku odložil (nebo vrátil), aniž by
 klient opouštěl místnost: server pro něj začne (nebo přestane) přebírat
@@ -104,6 +106,133 @@ idle timeout.
 > **Pozor — rate limit.** `wsUpgradeLimiter` (30/min) je Express middleware
 > a při WS upgradu se nevolá; počet spojení tedy reálně omezen není.
 > REST limiter níže funguje.
+
+### Buzení při hovoru (6.14)
+
+Hovor v místnosti po síti nezvoní: ohlášením je, že někomu naskočí zvuk (`audio-status`
+„live“ v datovém kanálu), a to vidí jen členové s živým kanálem. Člen, který je **pryč**
+(*away* — nemá v místnosti bdělý socket: stránka odložená, aplikace na pozadí nebo zavřená),
+se o hovoru nedozvěděl, dokud se sám nevrátil. Od 6.14 klient volajícího pošle nepřítomným
+**jednu relay položku na hovor** a server je probudí upozorněním druhu `call` (Android, web
+push, na iOS PushKit/VoIP — bez něj iOS na pozadí vůbec nezazvoní). Když volající zavěsí dřív,
+než to kdokoli vzal, druhá položka zvonění ukončí.
+
+**Kdy klient budí** (web `client/src/lib/call-wake.ts` z `App.tsx`, Android `chat/CallWake.java`
+z `Calls`/`RoomSession`, iOS stejně — viz `ios/M5cet/Platform/Calls/README.md`):
+
+1. server v `hello.features` hlásí **`"call-wake"`** (jinak klient nebudí vůbec — starý server);
+2. já právě zapnul zvuk (hlas i video) a **nikdo jiný v hovoru není** (žádný peer nemá
+   `audio-status` `live` / `muted`) — hovor zahajuji (Androidí `CallTrack`: odchozí). Kdo se
+   připojuje k cizímu hovoru, nebudí nikoho;
+3. v místnosti je aspoň jeden člen **away**, který se mnou nemá otevřený datový kanál (ten hovor
+   vidí sám). Nejvýš 50 příjemců.
+
+**Konec** (`callEnd`) pošle klient, když zavěsí a během jeho hovoru nikomu jinému nenaskočil
+zvuk (= nikdo to nevzal), a jen těm příjemcům zvonění, kteří jsou pořád away (kdo se vrátil,
+vidí místnost). Kdo ukončí spojení s místností úplně, konec už nepošle — zvonění pak skončí
+samo po 60 s.
+
+#### Relay rámec
+
+```json
+{ "type": "relay", "messageId": "cw-…:r", "to": ["ref…"], "per?": { "ref": { … } }, "envelope?": { … },
+  "call": true, "callId": "cw-<24 hex>", "video?": true }
+{ "type": "relay", "messageId": "cw-…:e", "to": ["ref…"], "per?": { "ref": { … } }, "envelope?": { … },
+  "callEnd": true, "callId": "cw-<24 hex>", "video?": true }
+```
+
+Kontrola (`server/signaling/frames.ts`): `callId` je id (`[A-Za-z0-9_:.-]`, nejvýš 96 znaků),
+`callEnd` bez `callId` i `call` spolu s `callEnd` je `invalid-frame`; bez `call` / `callEnd`
+server pole `callId` a `video` zahodí (zpráva zůstane zprávou); platí jen `true`. `call: true`
+bez `callId` (rámec klienta 6.7) server přijme a dá mu id `call-<messageId>`. `messageId` je
+`<callId>:r` / `<callId>:e`, takže opakované odeslání fronta odhalí jako duplikát (nebudí
+podruhé). Obálky (`per` protokolu 4 do schránek zařízení, jinak `envelope` protokolu 3) jsou
+přesně jako u zprávy — klient používá `relayToAway` / `P4Relay`, žádná nová kryptografie.
+
+#### Zapečetěný obsah
+
+```json
+{ "kind": "call", "id": "cw-…:r", "createdAt": 1760000000000, "senderId": "<peerId>", "senderName": "Alice",
+  "call": "cw-…", "state": "ring" | "end", "video": false, "at": 1760000000000 }
+```
+
+`at` = kdy hovor začal (hodiny volajícího). Příjemce ho kontroluje jako zprávu: odesílatel musí
+být peer, za kterého server položku předal, nikdy my ani vyhrazené id; jméno se normalizuje,
+čas víc než 5 min dopředu se srazí na „teď“, id prochází oknem proti přehrání (§ 11). **Starší
+klienti** neznámý `kind` tiše zahodí (web `validatePayload`, Android `Payloads.validate`, iOS
+`Payloads.validate`): položku potvrdí a nic neukážou.
+
+#### Server
+
+* **Relay** (`server/signaling/relay.ts`): položka se uloží jako zpráva (příjemci z ní později
+  udělají záznam hovoru); nepřítomného probudí druh `call` s `call: { id, video, end? }`. Kdo je
+  v místnosti vzhůru, dostane ji předanou (`forwarded`) a nebudí se.
+* **Limit** (`CALL_WAKE_LIMITS`): jeden odesílatel (účet, bez účtu adresa) smí v jedné místnosti
+  zazvonit nejvýš jednou za 10 s a 6× za 10 min; nad limit se položka uloží, ale nikoho
+  nebudí (audit `relay.call-limited`). Konec limitovaný není — notifikátor ho pošle jen tam, kam
+  šlo zvonění.
+* **Notifikátor** (`server/notify/dispatch.ts`): zvonění projde všemi kontrolami jako dosud
+  (provozovatel má druh zapnutý, uživatel nemá vypnutá upozornění ani **Hovory**, nejsou tiché
+  hodiny, throttle 5 s, hodinový limit) — **kdo má hovory vypnuté, nebudí se**. Odeslané zvonění
+  si pamatuje 10 min (účet | místnost | `callId` → kanál, čas). Konec jde **jen tam, kam šlo
+  zvonění**, jen tím kanálem, **nikdy e-mailem**, ne tomu, kdo je už v místnosti; kontrolami
+  uživatele neprochází (prošlo jimi jeho zvonění, jeden konec na jedno zvonění). Text konce je
+  `CALL_MISSED_BODY` („[{sender}: ]Zmeškaný hovor“ v devíti jazycích) s titulkem šablony
+  `call`, bez zvuku, vibrace a „sticky“.
+* **Obsah upozornění** (`NotifyPayload`): `tag: "m5-call-<callId>"` (zvonění i konec mají stejný
+  — konec nahradí zvonění, zpráva ne), `call: { id, video, at, end?, room? }` — `at` čas
+  zvonění podle serveru, **`room` jen pro kanál aplikace** (Android / iOS: zapečetěné pro jedno
+  zařízení, které si ho přeloží na svou místnost). **Životnost 60 s na všech kanálech** — starší
+  zvonění už nezvoní.
+
+#### Co nese push
+
+| kanál | zvonění | konec |
+|---|---|---|
+| **web push** (RFC 8291, šifrováno pro prohlížeč) | `NotifyPayload` + `call` (bez místnosti), `TTL: 60`, `Urgency: high`, topic z tagu | totéž s `call.end`; service worker zavře zvonění (`data.call`) a ukáže tiché „Zmeškaný hovor“ se stejným tagem |
+| **Android FCM** | data jen `{m5, i, e, iv, ct, s}`; zapečetěno `{id, kind:"notify", at, exp: at+60 s, payload: NotifyPayload + call{id, room, video, at}}`; priorita HIGH, ttl 60, collapse `m5-notify-m5-call-<id>` | totéž s `call.end`; **jen aplikaci ≥ 6.14.0** (`appCode` 61400 — starší by „zmeškaný hovor“ zvonila na kanálu hovorů) |
+| **iOS s VoIP tokenem** | PushKit: `{ "m5": {m5:"1", i, e, iv, ct, s} }`, topic `<bundle>.voip`, priorita 10, `apns-expiration` = teď + 60 s; zapečetěno `{id, kind:"call", at, exp, payload:{call, room, who, video, at}}` | `kind:"call-end"`, **jen do 60 s od zvonění** (pak už telefon zvonění ukončil sám a VoIP push by v CallKitu jen problikl) |
+| **iOS bez VoIP tokenu** | alert s neutrálním „Příchozí hovor“, `apns-collapse-id: m5-call-<id>`, obsah jako na Androidu | alert „Zmeškaný hovor“ bez zvuku, stejné `apns-collapse-id` (nahradí zvonění) |
+
+`who` ve VoIP pushi je jméno volajícího, jen pokud ho úroveň soukromí uživatele pustí
+(`vars.sender`), jinak `""`; co ukáže CallKit, rozhoduje aplikace.
+
+#### Příjemci
+
+* **Android** (`telecom/CallRing.pushed`, `chat/CallWake`): push místnosti, kterou má aplikace
+  otevřenou (`Rooms.byServerId(call.room)`), zvoní **stejně jako hovor, který místnost vidí**
+  (`CallRing.ring`: kanál hovorů, kategorie call, Přidat se / Odmítnout, zmizí po 60 s, stejné
+  upozornění — pozdější zvonění místnosti ho jen nahradí). Plnoobrazovkový intent ani
+  ConnectionService aplikace nepoužívá ani u živých hovorů (`M5ConnectionService` odmítá každé
+  spojení) — parita. *Přidat se* otevře místnost a počká (až 60 s), až se připojí a hovor
+  ukáže, pak zapne zvuk; *Odmítnout* = odmítnutý hovor (i když ho místnost ukáže později, znovu
+  nezazvoní). Konec → zvonění zmizí, Záznam dostane zmeškaný hovor a upozornění „Zmeškaný
+  hovor“; bez odpovědi do 60 s totéž. Místnost, kterou aplikace otevřenou nemá: šablonové
+  upozornění jako dosud (zvonění 60 s, konec tichý zmeškaný hovor).
+* **Web**: service worker viz tabulka. Položka z fronty po návratu: konec → hned „📞 Zmeškaný
+  hovor od X (čas)“ v chatu; zvonění počká 30 s, jestli místnost hovor neukáže (někomu naskočí
+  zvuk) — pak ho má místnost, jinak zmeškaný hovor. Web historii hovorů nemá.
+* **Jeden záznam na hovor**: jakmile místnost hovor ukáže, zaznamená ho její `CallTrack`
+  (příchozí, zmeškaný, odmítnutý); zvonění z pushe i položka z fronty se pak zahodí. Stejný
+  hovor (`callId`) se nezaznamená dvakrát.
+
+#### Co se server dozví
+
+Totéž co u každé zprávy s `call: true`: **probuzení kvůli hovoru od člena X v místnosti R
+členům Y** a kdy — navíc náhodné `callId` (spojí zvonění s jeho koncem), příznak videa a že
+zvonění skončilo nepřijaté. Obsah ne. Služby pushů: FCM vidí šifrový text a collapse klíč
+s náhodným `callId`, APNs šifrový text (VoIP) nebo neutrální text, služba web push šifrový text
+a topic odvozený z tagu. **ID místnosti a jméno volajícího jen uvnitř zapečetěných částí**,
+nikdy v čitelné části pushe.
+
+#### Změny chování
+
+* Upozornění druhu `call` s informací o hovoru má tag `m5-call-<callId>` (dřív podle šablony
+  `m5-call` / místnost) a na Androidu i iOS žije 60 s (dřív hodinu jako ostatní).
+* Obsah VoIP pushe na iOS je nově hovor (`kind: "call"` / `"call-end"`), ne `notify` s
+  `NotifyPayload`.
+* Starý server (bez `call-wake`): klienti nebudí — beze změny. Starší klienti položku tiše
+  zahodí; Android < 6.14 dostane zvonění jako šablonové upozornění 6.7 a konec žádný.
 
 ## REST
 

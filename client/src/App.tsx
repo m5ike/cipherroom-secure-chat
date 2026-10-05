@@ -4372,6 +4372,10 @@ function ChatApp() {
     p4Ref.current = null;
     fileKeysRef.current.clear();
     peerRefsRef.current.clear();
+    // 6.14 (call wake): no ring of mine, nothing waiting for this room any more (an unanswered ring ends on its own in 60 s).
+    callWakeSenderRef.current.stop([]);
+    callWakeInboxRef.current.clear();
+    if (callWakeTimerRef.current !== null) { window.clearTimeout(callWakeTimerRef.current); callWakeTimerRef.current = null; }
     setP4Peers({});
     setHubProven(null);
     void replayStoreRef.current?.flush();

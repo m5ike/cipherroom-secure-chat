@@ -17,7 +17,7 @@ UI je v `M5cet/Parts/Calls`, testy v `M5cetTests/Calls`.
 | `telecom/CallLogBridge` (systémový záznam hovorů) | `includesCallsInRecents` = nastavení `callLog`, jméno položky `CallNaming` |
 | `telecom/M5ConnectionService` (odmítá každé spojení) | není potřeba — hovory místností jdou přes CallKit |
 | `ui/CallService` (služba v popředí) | režimy pozadí `voip` + `audio`, `CallAudioSession` |
-| FCM (žádné push hovory) | **PushKit** VoIP push → `VoIPPushHandler` → `CallCenter.reportVoIP` |
+| FCM `notify` s `call` (6.14, `telecom/CallRing.pushed`, `chat/CallWake`) | **PushKit** VoIP push → `VoIPPushHandler` → `CallCenter.reportVoIP` |
 | `ui/parts/CallParts`, `CallLogUi` | `Parts/Calls/{CallScreen, CallControls, RtcVideoView, CallHistoryView, CallPresentation}` |
 
 ## Návrh
@@ -38,7 +38,8 @@ UI je v `M5cet/Parts/Calls`, testy v `M5cetTests/Calls`.
  PushKit (AppDelegate.PushKitBridge)    ───▶  VoIPPushHandler ──▶ CallCenter.reportVoIP (synchronně)
 ```
 
-* **Hovory místností nezvoní po síti** (jako Android a web): hovor = zapnutý zvuk v místnosti. Stopy se přidají do
+* **Hovory místností nezvoní po síti** (jako Android a web): hovor = zapnutý zvuk v místnosti. Výjimka 6.14: členy,
+  kteří jsou pryč, budí jedna položka hovoru přes relay (viz *VoIP push a buzení při hovoru*). Stopy se přidají do
   existujících spojení (perfect negotiation přejedná) a `audio-status` ostatním řekne `live` / `muted` / `off`.
   Cizí `live` je ohlášení — `CallTrack` z toho udělá zvonění a jeden záznam na hovor (odchozí, příchozí, zmeškaný,
   odmítnutý; 20 s milost pro výpadek spojení). Délka = můj čas v hovoru. Hovor neskončí odchodem ostatních (parita).
@@ -131,21 +132,65 @@ Další rozhraní (`CallContracts.swift`, `IceConfig.swift`, `CallHistory.swift`
 | `VoIPPushHandler.onToken` / `AppModel.voipToken` | síť | VoIP token (hex) do `enroll` / `checkin` (`/api/ios`, pole `voipToken`) |
 | `CallSystem.continueUserActivity` | App (scéna) | `INStartCallIntent` z Nedávných → otázka a hovor |
 
-### VoIP push (server + Platform/Push)
+### VoIP push a buzení při hovoru (server + Platform/Push + room session)
 
-Server o hovorech neví (ohlášení je zapečetěný `audio-status` v datovém kanálu). Aby iOS zařízení **mimo aplikaci**
-zazvonilo, musí volající room session poslat nepřítomným členům relayovou položku označenou jako hovor a server
-z ní udělat VoIP push na iOS zařízení (topic `cz.m5cet.app.voip`). Payload jako řídicí zprávy FCM
-(`{"m5":{i,e,iv,ct,s}}`, podpis `m5push/1|deviceId|i|e|iv|ct`, ECIES s klíčem zařízení), obsah:
+Hovor po síti nezvoní (ohlášení je zapečetěný `audio-status` v datovém kanálu). Aby iOS zařízení **mimo aplikaci**
+zazvonilo, pošle volající room session nepřítomným členům relayovou položku hovoru a server z ní udělá VoIP push
+(6.14, „buzení při hovoru“ — celý formát v `docs/api.md` › *Buzení při hovoru (6.14)*; web `client/src/lib/call-wake.ts`
+a Android `chat/CallWake.java` jsou referenční implementace, iOS je musí dělat **stejně**).
+
+**Push (server → zařízení s VoIP tokenem)**: topic `<bundle>.voip`, priorita 10, `apns-expiration` = odeslání + 60 s,
+tělo `{"m5":{"m5":"1","i","e","iv","ct","s"}}` — podpis `m5push/1|deviceId|i|e|iv|ct` (P-256, klíč serveru připnutý
+při enrollu), ECIES s klíčem zařízení (info `"push"`), tedy stejně jako řídicí zprávy. Zapečetěný obsah:
 
 ```json
-{"id":"…","kind":"call","exp":1760000060000,"payload":{"room":"<klíč místnosti>","who":"Alice","video":false,"at":1760000000000}}
+{"id":"cmd_…","kind":"call","at":1760000000500,"exp":1760000060500,
+ "payload":{"call":"cw-0123…","room":"<id místnosti na hubu>","who":"Alice","video":false,"at":1760000000000}}
 ```
 
-`kind` `"call-end"` = hovor skončil před přijetím. **Každý** VoIP push se nahlásí CallKitu dřív, než handler vrátí:
+* `kind` `"call"` = zvoní, `"call-end"` = volající zavěsil dřív, než to kdokoli vzal (server ho pošle **jen do 60 s
+  od zvonění** a jen zařízením, kam šlo zvonění; později už telefon zvonění ukončil sám).
+* `payload.call` = id hovoru (volajícího; zvonění a konec ho mají stejné) — patří do `VoIPCallInvite.id`
+  (komentář u `VoIPCallInvite.id` v `CallContracts.swift` je třeba upravit: deduplikaci id řídicí zprávy `i` dělá
+  otevírač sám, jako Android `push/Control.seen`).
+* `payload.room` = id místnosti, jak ho zná hub (= `keys.roomId`, co aplikace poslala v `join.room`); otevírač ho
+  přeloží na **uloženou místnost** (`roomKey`, jako Android `Rooms.byServerId`); neznámá místnost → `nil`
+  (neutrální hovor hned ukončený). `who` = jméno volajícího, jen pokud ho pustí úroveň soukromí uživatele (jinak
+  `""`); `at` = čas zvonění podle serveru. `exp` < teď → `nil`.
+* Zařízení **bez VoIP tokenu** dostane místo toho alert (NSE): neutrální „Příchozí hovor“ / „Zmeškaný hovor“,
+  `apns-collapse-id: m5-call-<call>` (konec nahradí zvonění v Oznamovacím centru), zapečetěný obsah
+  `{kind:"notify", payload: NotifyPayload}` s `payload.call = {id, video, at, end?, room}` — jako Android.
+* Kdo má v oznámeních vypnuté hovory (nebo všechno, tiché hodiny), tomu server zvonění **nepošle** (a tedy ani konec).
+
+**Odesílatel (room session, M5Proto `RoomCore` + lepidlo)** — port `CallWake.Sender` (Android) / `CallWakeSender` (web):
+
+1. Z `hello` hubu si zapamatovat, zda `features` obsahuje `"call-wake"`; bez toho nebudit.
+2. Když zapnu zvuk (`startCall`, `RoomRtc` „live“) a **žádný peer nemá `audio-status` live/muted** a v místnosti je
+   člen away bez otevřeného kanálu (`people.away` minus otevření peery, max. 50): `callId = "cw-" + 24 hex`
+   (12 náhodných bajtů), `at = teď`, a jednou `relayToAway` s payloadem
+   `{kind:"call", id:"<callId>:r", createdAt, senderId: myId, senderName, call: callId, state:"ring", video, at}` a
+   s poli rámce `call:true, callId, video?:true` (`relayToAway`/`sendRelay` potřebují parametr „pole navíc“, které se
+   přidají do rámce z `P4Relay.frame`, a filtr příjemců) — zapečetění přesně jako u zprávy.
+3. Peer zapne zvuk (live / muted), dokud zvonění běží → „přijato“, žádný konec.
+4. Zavěsím a nikdo nepřijal → stejný payload se `state:"end"`, `id:"<callId>:e"`, rámec `callEnd:true, callId,
+   video?` jen příjemcům zvonění, kteří jsou pořád away.
+
+**Příjemce** — port `CallWake.Inbox` (Android) / `CallWakeInbox` (web), jeden záznam na hovor:
+
+* **Položka z fronty** (`onRelayDeliver`, před `Payloads.validate`): `kind:"call"` zkontrolovat jako zprávu (odesílatel
+  = předávající peer, ne my ani vyhrazené id; `call` `[A-Za-z0-9_:.-]{1,90}`; `state` ring|end; `at`/`createdAt`
+  nejvýš teď + 5 min; `video` jen `true`; jméno normalizovat; `seen` + okno proti přehrání), pak: zvonění **nezvoní**
+  (místnost je připojená a zazvoní sama) — počká 30 s, jestli místnost hovor ukáže; ukáže → nic (zaznamená ho
+  `CallTrack`), neukáže → zmeškaný hovor (Záznam + `onMissed`). Konec → zmeškaný hovor hned (odmítnutý, pokud jsem
+  pushnuté zvonění odmítl), nebo nic, když místnost hovor už měla. Stejné `call` podruhé nic.
+* **VoIP push**: `CallCenter.reportVoIP` (zvonění 60 s, `pushWait` 30 s, `recordLater`) — záznam z pushe a z fronty
+  musí být jeden: klíčovat podle `call` id, ne jen podle místnosti.
+* Starší aplikace (a weby, Android před 6.14) položku tiše zahodí — neznámý `kind`.
+
+**Každý** VoIP push se nahlásí CallKitu dřív, než handler vrátí:
 neotevřitelný → neutrální hovor („M5cet“) hned ukončený (`.failed`); zastaralý (> 60 s), `call-end`, zakázané zvonění
-nebo už odmítnutý hovor → nahlásit a hned ukončit; hovor, který CallKit už má → nahlásit znovu tentýž UUID. Server by
-proto neměl posílat VoIP push zařízení, jehož uživatel má hovory v oznámeních vypnuté (krátce by se ukázal).
+nebo už odmítnutý hovor → nahlásit a hned ukončit; hovor, který CallKit už má → nahlásit znovu tentýž UUID. Server
+proto VoIP push zařízení, jehož uživatel má hovory v oznámeních vypnuté, neposílá, a konec jen do 60 s od zvonění.
 Dokončení PushKitu se zavolá po odpovědi CallKitu, nejpozději po 3 s. Po pushi se místnost připojí (`connect`); když do
 30 s nikoho v hovoru neukáže, zvonění skončí (`.remoteEnded`) a Záznam dostane zmeškaný hovor (jen pokud ho místnost
 neviděla — jinak ho zaznamená `CallTrack`, jeden záznam na hovor).
@@ -181,7 +226,9 @@ jako přílohy, s `TEST_RUNNER_M5_SNAPSHOT_DIR=<dir>` i do složky).
   „direct“; `reportNewIncomingCall` na simulátoru neodpoví vůbec (proto pojistka dokončení PushKitu). Simulátor nemá
   kameru ani VoIP push. Ověřeno jen na simulátoru — **nativní obrazovka CallKitu, zvonění z VoIP pushe, zámek
   obrazovky, Bluetooth / sluchátka, kamera a skutečný zvuk čekají na test na zařízení** (podepsané sestavení s týmem).
-* VoIP push vyžaduje změnu serveru a room session (výše) — dokud není, zvoní iOS jen s aplikací v popředí (hub připojený).
+* VoIP push: server a web / Android to umí od 6.14 (buzení při hovoru, výše); dokud iOS room session neposílá a
+  nepřijímá položky hovoru a Platform/Push neimplementuje `VoIPPayloadOpening`, zvoní iOS jen s aplikací v popředí
+  (hub připojený) — a iOS volající nebudí nikoho.
 * CallKit nesmí být v aplikacích pro čínský App Store — distribuce tam by potřebovala vypnout CallKit i PushKit.
 * Kamera na pozadí: iOS ji při odchodu aplikace do pozadí zastaví (zvuk běží dál); obraz v obraze pro videohovory
   (`AVPictureInPictureVideoCallViewController`) zatím není.

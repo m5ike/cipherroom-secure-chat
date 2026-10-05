@@ -22,6 +22,21 @@ modal:
   toggle the camera track on/off, hang up. Local preview shows in a
   `<video>` element; remote streams are appended to a grid container.
 
+## Call wake (6.14)
+
+A call does not ring over the network: members on a live data channel see
+someone's audio go live (`audio-status`). Members who are **away** (no awake
+socket — the page suspended, the app in the background or closed) are woken:
+when I start a call nobody else is in, my client relays one sealed call item
+to them (`client/src/lib/call-wake.ts`, Android `chat/CallWake.java`) and the
+server rings them with a "call" notification (web push, Android, iOS PushKit);
+hanging up before anyone answered ends the ring (a quiet "missed call" in its
+place). Back in the room, an item whose call the room no longer shows is a
+missed call (web: a line in the chat). Only with a server that announces
+`call-wake` in its hello; rings are limited per sender and room. Wire format,
+push payloads and what the server learns: [`api.md` › Buzení při hovoru
+(6.14)](api.md#buzení-při-hovoru-614).
+
 ## Device selection
 
 > Not implemented. An earlier `client/src/lib/calls.ts` helper described
