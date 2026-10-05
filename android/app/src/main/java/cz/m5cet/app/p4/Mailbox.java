@@ -135,9 +135,13 @@ public final class Mailbox {
 
     /* ------------------------------------------------------------ sealing */
 
-    /** § 7.2 AAD. */
-    public static byte[] aad(String roomId, String id, String senderPk, String senderBundleId, String recipientBundleId, String eph, String kctHash) throws P4Error {
-        return Prim.join(P4.L_MAILBOX, roomId, id, senderPk, senderBundleId, recipientBundleId, eph, kctHash);
+    /**
+     * § 7.2 AAD — 6.12 review P13: it ends with saccDigest (the sender's
+     * account attestation as § 2's accDigest, "-" without one), so a relay can
+     * neither strip nor swap `sacc`.
+     */
+    public static byte[] aad(String roomId, String id, String senderPk, String senderBundleId, String recipientBundleId, String eph, String kctHash, String saccDigest) throws P4Error {
+        return Prim.join(P4.L_MAILBOX, roomId, id, senderPk, senderBundleId, recipientBundleId, eph, kctHash, saccDigest);
     }
 
     private static byte[][] itemKey(byte[] aad, byte[] ss1, byte[] ss2, byte[] ss3) {
@@ -170,7 +174,7 @@ public final class Mailbox {
         byte[] ss1 = Prim.ecdh(eph.privateKey, recipient.dh);
         byte[] ss2 = Prim.ecdh(sender.dh, recipient.dh);
         Kem.Encapsulated k = Kem.encaps(Prim.unb64(recipient.kem, P4.KEM_EK), rng, "mailbox.kem-m");
-        byte[] a = aad(roomId, id, senderPk, sender.bundle.id, recipient.id, eph.spki, Prim.hB64(k.ct));
+        byte[] a = aad(roomId, id, senderPk, sender.bundle.id, recipient.id, eph.spki, Prim.hB64(k.ct), Handshake.accDigest(sacc));
         byte[][] keyIv = itemKey(a, ss1, ss2, k.ss);
         byte[] plain = Pad.pad(Prim.utf8(payloadJson));
         byte[] c;
@@ -225,7 +229,7 @@ public final class Mailbox {
         byte[] ss1 = Prim.ecdh(mine.dh, e);
         byte[] ss2 = Prim.ecdh(mine.dh, sb.dh);
         byte[] ss3 = Kem.decaps(kct, mine.kemDk);
-        byte[] a = aad(roomId, id, spk, sb.id, to, e, Prim.hB64(kct));
+        byte[] a = aad(roomId, id, spk, sb.id, to, e, Prim.hB64(kct), Handshake.accDigest(item.opt("sacc")));
         byte[][] keyIv = itemKey(a, ss1, ss2, ss3);
         byte[] plain;
         try { plain = Prim.aesGcmOpen(keyIv[0], keyIv[1], a, c); } finally { Prim.wipe(ss1, ss2, ss3, keyIv[0], keyIv[1]); }

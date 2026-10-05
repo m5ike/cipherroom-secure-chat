@@ -61,10 +61,48 @@ public final class Handshake {
         return (String) v;
     }
 
-    /** § 2: the bytes `sig4` signs. `from` is the hello's sender, `to` its recipient. */
+    /**
+     * § 2 capsDigest (6.12 review P02): b64(H(join(…caps sorted by ordinal
+     * order, duplicates removed))) — never "-": no caps hash the empty join.
+     * Every capability must be printable ASCII without "|" (else malformed).
+     */
+    public static String capsDigest(Object caps) throws P4Error {
+        if (isNull(caps)) return Prim.hB64(Prim.join());
+        if (!(caps instanceof JSONArray)) throw P4Error.malformed("caps");
+        JSONArray a = (JSONArray) caps;
+        java.util.TreeSet<String> sorted = new java.util.TreeSet<>(); // String order = UTF-16 code units = ordinal for ASCII
+        for (int i = 0; i < a.length(); i++) {
+            Object c = a.opt(i);
+            if (!(c instanceof String)) throw P4Error.malformed("caps");
+            sorted.add((String) c);
+        }
+        return Prim.hB64(Prim.join(sorted.toArray()));
+    }
+
+    /** § 2 userDigest (review P02): b64(H(UTF-8(user))), or "-" without one (absent, null or empty). */
+    public static String userDigest(Object user) throws P4Error {
+        if (isNull(user) || "".equals(user)) return "-";
+        if (!(user instanceof String)) throw P4Error.malformed("user");
+        return Prim.hB64(Prim.utf8((String) user));
+    }
+
+    /** § 2 sthDigest (review P02): b64(H(join(sth.size, sth.root, sth.ts, sth.sig))), or "-". */
+    public static String sthDigest(Object sth) throws P4Error {
+        if (isNull(sth)) return "-";
+        if (!(sth instanceof JSONObject)) throw P4Error.malformed("sth");
+        JSONObject s = (JSONObject) sth;
+        return Prim.hB64(Prim.join(Prim.count(s.opt("size")), str(s, "root"), Prim.count(s.opt("ts")), str(s, "sig")));
+    }
+
+    /**
+     * § 2: the bytes `sig4` signs. `from` is the hello's sender, `to` its
+     * recipient. 6.12 review P02: `caps`, `user` and `sth` are signed too — a
+     * receiver uses only the signed values.
+     */
     public static byte[] sig4Data(String roomId, String from, String to, JSONObject h) throws P4Error {
         return Prim.join(P4.L_HELLO, roomId, from, to, str(h, "check"), str(h, "pk"), str(h, "dh"), str(h, "e"),
-            Prim.hB64(Prim.unb64(h.opt("k"))), str(h, "n"), mbDigest(h.opt("mb")), accDigest(h.opt("acc")));
+            Prim.hB64(Prim.unb64(h.opt("k"))), str(h, "n"), mbDigest(h.opt("mb")), accDigest(h.opt("acc")),
+            capsDigest(h.opt("caps")), userDigest(h.opt("user")), sthDigest(h.opt("sth")));
     }
 
     /** § 3: r = b64(H(join(e, b64(H(k)), n))) — names the hello a KEM message answers. */
@@ -143,6 +181,8 @@ public final class Handshake {
         try {
             for (String f : new String[]{"pk", "dh", "sig", "sig4"}) if (!(h.opt(f) instanceof String)) throw P4Error.malformed(f);
             if (!(h.opt("caps") instanceof JSONArray)) throw P4Error.malformed("caps");
+            Object user = h.opt("user");
+            if (user != null && user != JSONObject.NULL && !(user instanceof String)) throw P4Error.malformed("user");
             Prim.p256Public(h.opt("e"));
             Prim.unb64(h.opt("k"), P4.KEM_EK);
             Prim.unb64(h.opt("n"), 16);

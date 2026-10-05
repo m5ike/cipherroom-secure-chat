@@ -48,6 +48,10 @@ public class HandshakeRatchetVectorTest {
             else Vectors.assertJson("mailbox", hello.getJSONObject("mb"), verdict.mailbox.json());
             assertEquals(p.getString("mbDigest"), Handshake.mbDigest(hello.opt("mb")));
             assertEquals(p.getString("accDigest"), Handshake.accDigest(hello.opt("acc")));
+            // 6.12 review P02: caps, user and the tree head are signed too.
+            if (p.has("capsDigest")) assertEquals(p.getString("capsDigest"), Handshake.capsDigest(hello.opt("caps")));
+            if (p.has("userDigest")) assertEquals(p.getString("userDigest"), Handshake.userDigest(hello.opt("user")));
+            if (p.has("sthDigest")) assertEquals(p.getString("sthDigest"), Handshake.sthDigest(hello.opt("sth")));
             assertEquals(p.getString("helloRef"), Handshake.helloRef(hello));
             // A hello for another recipient, another room or with a changed byte does not verify as v4.
             assertEquals("bad-sig4", Handshake.verifyHello(hello, roomId, p.getString("peerId"), "peer-x", check, now).why);
@@ -55,7 +59,8 @@ public class HandshakeRatchetVectorTest {
             assertEquals("key-mismatch", Handshake.verifyHello(hello, roomId, p.getString("peerId"), q.getString("peerId"), "0000000000000000", now).why);
             // Replaying the tape gives the same hello (but the randomized sig4).
             JSONObject v3 = new JSONObject().put("check", check).put("pk", p.getString("pk")).put("dh", p.getString("dh")).put("sig", hello.getString("sig"))
-                .put("caps", new JSONArray().put("bin").put("media"));
+                .put("caps", hello.getJSONArray("caps"));
+            if (hello.has("user")) v3.put("user", hello.get("user"));
             built[side] = Handshake.buildHello(roomId, p.getString("peerId"), q.getString("peerId"), v3, signerOf(p.getString("devicePkcs8"), p.getString("pk")),
                 hello.opt("mb"), hello.opt("acc"), hello.opt("sth"), rng[side]);
             Vectors.assertJson("hello " + side, Vectors.without(hello, "sig4"), Vectors.without(built[side].hello, "sig4"));
