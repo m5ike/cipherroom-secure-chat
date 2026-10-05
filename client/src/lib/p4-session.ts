@@ -171,9 +171,14 @@ export class P4Room {
 
   /* ------------------------------------------------------------- hello */
 
-  /** The channel to `peerId` opened: our hello (a fresh handshake; any old session is wiped). */
+  /**
+   * The channel to `peerId` opened: our hello (a fresh handshake; an old
+   * session is wiped). When the peer's hello came first and we already
+   * answered it with our own, that handshake stands.
+   */
   open(peerId: string): Promise<void> {
     const st = this.state(peerId);
+    if (st.hs && !st.session && st.protocol === "pending") return st.hs.then(() => undefined);
     this.wipe(st);
     st.protocol = "pending";
     st.info = null;

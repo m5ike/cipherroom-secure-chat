@@ -1826,6 +1826,8 @@ function ChatApp() {
     const roomId = keyRef.current?.roomId;
     if (!roomId || !replayRef.current.accept(id)) return false;
     const verdict = await replayGuard().check(roomId, id, createdAt).catch(() => "ok" as const);
+    // A sender whose clock is far off has every message refused: say so once.
+    if (verdict === "future" || verdict === "too-old") warnOnce(`replay-clock:${verdict}`, t(lang, `p4.replay.${verdict}`), "warning");
     return verdict === "ok";
   }
 

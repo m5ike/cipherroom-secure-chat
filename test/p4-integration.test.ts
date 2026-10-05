@@ -27,6 +27,7 @@ import { checkDirectoryDevice, helloAccountOf, sealForAway } from "../client/src
 import { KtClient } from "../client/src/lib/p4-kt";
 import { handleIncomingFrame, newIncomingRegistry, sendFile, type FileTransferEnvelope } from "../client/src/lib/file-transfer";
 import { verifyHubProof as serverVerifyHubProof } from "../server/signaling/proof";
+import { BackgroundRoom, roomKeyOf, type HubDeps } from "../client/src/lib/room-hub";
 
 const subtle = globalThis.crypto.subtle;
 const b64buf = (b: ArrayBuffer) => toBase64(new Uint8Array(b));
@@ -560,6 +561,55 @@ describe("6.12 web client — key transparency (§ 14)", () => {
     expect(kt.newest()).toBeNull();
     expect(await kt.gossip({ size: 1, root: "x", ts: 1, sig: "y" })).toBe("ignored");
     expect(await kt.checkDevice(null, "a", "b")).toBe("unverified");
+  });
+});
+
+describe("6.12 web client — background rooms (room-hub.ts)", () => {
+  it("join with a proof over the server's nonce, speak protocol 4 with a 6.12 peer (room and private messages)", async () => {
+    const me = await identity();
+    const sockets: Array<{ sent: string[]; onopen?: () => void; onmessage?: (e: { data: string }) => void; readyState: number }> = [];
+    const deps: HubDeps = {
+      wsUrl: () => "ws://test/ws",
+      rtcConfig: async () => ({}),
+      makeSocket: () => {
+        const s = { sent: [] as string[], readyState: 1, url: "ws://test/ws", send(t: string) { this.sent.push(t); }, close() {} };
+        sockets.push(s);
+        return s as unknown as WebSocket;
+      },
+      makePeer: () => { throw new Error("no WebRTC here"); },
+      derive: async () => keys,
+      identity: async () => me,
+    };
+    const room = new BackgroundRoom({ key: roomKeyOf("team"), room: "team", label: "Team", name: "Me", passphrase: "x" }, deps, () => undefined);
+    await room.start();
+    const socket = sockets[0];
+    socket.onopen!();
+    const nonce = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX";
+    socket.onmessage!({ data: JSON.stringify({ type: "hello", nonce }) });
+    await new Promise((r) => setTimeout(r, 50));
+    const join = JSON.parse(socket.sent.find((t) => JSON.parse(t).type === "join")!) as { room: string; proof: { pub: string; sig: string } };
+    expect(join.room).toBe(keys.roomId);
+    expect(serverVerifyHubProof(join.proof, keys.roomId, nonce)).toBe(true);
+    socket.onmessage!({ data: JSON.stringify({ type: "joined", peerId: "p-me", peers: [], proven: true }) });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const net = new Net();
+    const b = await client(net, "p-b");
+    net.clients.set("p-me", { receive: (from: string, raw: Record<string, unknown>) => room.handleChannelText(from, JSON.stringify(raw)) } as unknown as Client);
+    await room.handleChannelOpen("p-b", (t) => { net.send("p-me", "p-b", t); });
+    await b.room.open("p-me");
+    await net.drain();
+    expect(room.protocolOf("p-b")).toBe(4);
+    expect(b.room.protocolOf("p-me")).toBe(4);
+    const sealed = await b.room.sealRoom("bg-1", msg("bg-1", "do pozadí", "p-b"), ["p-me"]);
+    net.send("p-b", "p-me", JSON.stringify(sealed!.envelope));
+    net.send("p-b", "p-me", JSON.stringify(await b.room.sealPrivate("p-me", "bg-2", msg("bg-2", "soukromě", "p-b"))));
+    await net.drain();
+    expect(room.messages.map((m) => [m.text, m.sealedWith, m.cryptoVersion, m.identity?.state])).toEqual([
+      ["do pozadí", "p4-sk", 4, "new"],
+      ["soukromě", "p4-pair", 4, "new"],
+    ]);
+    room.stop();
   });
 });
 

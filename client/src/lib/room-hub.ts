@@ -296,9 +296,13 @@ export class BackgroundRoom {
   private wire(link: PeerLink, channel: RTCDataChannel): void {
     link.channel = channel;
     const send = (text: string) => { try { channel.send(text); } catch { /* closing */ } };
-    channel.onopen = () => this.handleChannelOpen(link.id, send);
-    channel.onclose = () => { link.send = null; this.changed(); };
-    channel.onmessage = (e) => { if (typeof e.data === "string") void this.handleChannelText(link.id, e.data); };
+    // 6.12: frames of one channel are handled in the order they came (a chain
+    // must be installed before the message it opens); our hello goes first.
+    let inbox: Promise<void> = Promise.resolve();
+    const queue = (work: () => Promise<void>) => { inbox = inbox.then(work).catch(() => undefined); };
+    channel.onopen = () => queue(() => this.handleChannelOpen(link.id, send));
+    channel.onclose = () => { link.send = null; this.p4?.channelClosed(link.id); this.changed(); };
+    channel.onmessage = (e) => { if (typeof e.data === "string") { const text = e.data; queue(() => this.handleChannelText(link.id, text)); } };
   }
 
   private async applySignal(source: string, payload: unknown): Promise<void> {

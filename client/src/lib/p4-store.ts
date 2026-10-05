@@ -97,7 +97,9 @@ export class LocalVault {
       if (kept && typeof kept === "object" && (kept as CryptoKey).type === "secret") return kept as CryptoKey;
       const fresh = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
       await this.backend.put("wrap", fresh).catch(() => undefined);
-      return fresh;
+      // Another tab of this origin may have made one at the same moment: the stored key is the one.
+      const stored = await this.backend.get("wrap").catch(() => undefined);
+      return stored && typeof stored === "object" && (stored as CryptoKey).type === "secret" ? stored as CryptoKey : fresh;
     })());
   }
 
@@ -250,14 +252,19 @@ export class VaultReplayStore implements ReplayStore {
     this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, this.delayMs);
   }
 
-  /** Writes what changed now (a page going away calls it too). */
-  async flush(): Promise<void> {
-    const rooms = [...this.dirty];
-    this.dirty.clear();
-    for (const roomId of rooms) {
-      const room = await this.room(roomId);
-      await this.vault.putJson(await this.slot(roomId), [...room.entries()].slice(-REPLAY.maxIdsPerRoom)).catch(() => undefined);
-    }
+  private writing: Promise<void> = Promise.resolve();
+
+  /** Writes what changed now (a page going away calls it too); resolves once every earlier write is done as well. */
+  flush(): Promise<void> {
+    this.writing = this.writing.then(async () => {
+      const rooms = [...this.dirty];
+      this.dirty.clear();
+      for (const roomId of rooms) {
+        const room = await this.room(roomId);
+        await this.vault.putJson(await this.slot(roomId), [...room.entries()].slice(-REPLAY.maxIdsPerRoom)).catch(() => undefined);
+      }
+    });
+    return this.writing;
   }
 
   size(roomId: string): Promise<number> { return this.room(roomId).then((r) => r.size); }
