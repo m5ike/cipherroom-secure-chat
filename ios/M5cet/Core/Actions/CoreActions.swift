@@ -35,7 +35,6 @@ final class CoreActions {
         "room.join", "room.switch", "room.toggle", "rooms.connect", "room.leave", "room.forget", "room.delete", "room.clone", "room.edit",
         "message.send", "message.reply", "message.copy", "message.kind", "message.recipients", "compose", "send.option",
         "msg.forward", "msg.forwardRoom", "msg.forwardTo", "msg.map", "msg.open", "msg.save", "msg.share",
-        "users.toggle", "users.dock", "users.autoHide",
         "call.audio", "call.video", "call.audioText", "call.end", "call.mute", "call.camera", "call.switchCamera", "call.speaker",
         "lock.now", "lock.biometric", "pin.change", "biometric.toggle", "wipe.ask", "kt.dismiss",
         "account.signin", "account.signup", "account.signout", "account.recovery", "account.addPasskey", "account.register",
@@ -48,7 +47,7 @@ final class CoreActions {
 
     /// Actions a part owns; the core logs them until the part registers (Core/README.md § Akce).
     static let partOwned: [String] = [
-        "msg.quote", "msg.showHidden", "msg.mapPreview", "msg.source", "msg.info", "msg.sender",
+        "msg.quote", "msg.showHidden", "msg.mapPreview", "msg.source", "msg.info", "msg.sender", "users.toggle", "users.dock", "users.autoHide",
         "people.open", "people.select", "people.all", "people.none", "people.message", "people.call", "people.video", "people.verify",
         "people.link", "people.unlink", "people.unlinkAll",
         "profile.open", "profile.pick", "profile.clear", "profile.field", "profile.sync", "profile.save", "profile.public", "profile.audience",
@@ -97,14 +96,6 @@ final class CoreActions {
         case "msg.forwardTo": forwardTo(s, host)
         case "msg.map": if let m = rooms.activeController?.message(s) { openMap(m) }
         case "msg.open", "msg.save", "msg.share": if let m = rooms.activeController?.message(s) { shareFile(m, host) }
-        // the user panel (Parts.toggleUsers / dockUsers / autoHideUsers — the panel reads UsersPanel)
-        case "users.toggle": var p = UsersPanel.load(); p.open.toggle(); p.save(); host.refresh()
-        case "users.dock": var p = UsersPanel.load(); p.dock = s.isEmpty ? "right" : s; p.save(); host.refresh()
-        case "users.autoHide":
-            var p = UsersPanel.load()
-            if case .usersAutoHide(let on) = action { p.autoHide = on ?? !p.autoHide }
-            p.save()
-            host.refresh()
         // calls
         case "call.audio", "call.video", "call.audioText": startCall(video: action.name == "call.video", host)
         case "call.end":
@@ -265,7 +256,8 @@ final class CoreActions {
 
     private static func vaultFile(_ m: ChatMessage) -> Bool { m.filePath != nil && m.fileDataUrl == nil }
 
-    private func forward(_ m: ChatMessage, _ host: DesignHost) {
+    /// Parts.forward: a room, then everyone there or one member (also for a message in no room — NfcUiHooks.forward).
+    func forward(_ m: ChatMessage, _ host: DesignHost) {
         let open = rooms.connectedSessions
         if open.isEmpty { host.flash(title: "", text: t("room.offline"), level: .warn); return }
         forwarding = m

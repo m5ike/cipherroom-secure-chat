@@ -271,7 +271,7 @@ final class DesignHost: ActionHost {
     /// The scope of a screen: $app $form $settings $define $account and the screen's own variables.
     func scope(for screen: String) -> Scope {
         let state = services.state
-        var own = state.variables(for: screen, context: screenContext)
+        var own = state.variables(for: screen, context: screenContext, host: self)
         if screen == "lock" {
             var lock = own["lock"]?.objectValue ?? [:]
             lock["wide"] = .bool(wide)

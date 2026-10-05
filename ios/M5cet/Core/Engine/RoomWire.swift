@@ -45,6 +45,8 @@ protocol RoomWire: AnyObject {
     var callVideo: Bool { get }
     /// 6.14 (call wake): the call I am starting is a video call (the camera comes after the audio).
     var callWantsVideo: Bool { get }
+    /// A peer's last WebRTC statistics (People's detail), nil when none were read.
+    func peerStats(_ peerId: String) -> RtcStatsSummary?
     func refreshStats() async
     /// The room left: every peer closed (the call recorded first).
     func disconnect()
@@ -52,6 +54,7 @@ protocol RoomWire: AnyObject {
 
 extension RoomWire {
     var callWantsVideo: Bool { callVideo }
+    func peerStats(_ peerId: String) -> RtcStatsSummary? { nil }
 }
 
 /// Where rooms attach their WebRTC side (CallSystem in the app; a fake in tests).
@@ -137,6 +140,7 @@ final class RtcWire: RoomWire {
     var callState: String { rtc.audioState.rawValue }
     var callVideo: Bool { rtc.videoOn }
     var callWantsVideo: Bool { CallSystem.shared.center.call(forRoom: rtc.roomKey)?.video ?? rtc.videoOn }
+    func peerStats(_ peerId: String) -> RtcStatsSummary? { rtc.peers.first { $0.id == peerId }?.stats }
     func refreshStats() async { await rtc.refreshStats() }
     func disconnect() { rtc.disconnect() }
 }

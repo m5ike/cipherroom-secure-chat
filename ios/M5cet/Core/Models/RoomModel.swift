@@ -149,6 +149,9 @@ protocol RoomModel: AnyObject, Observable {
     func safetyNumber(_ peerId: String) -> String
     /// A private message can go to this peer (an open channel with a pair or protocol-4 session).
     func canPrivate(_ peerId: String) -> Bool
+    /// 6.2 (RoomSession.peopleSettling): still connecting, joined moments ago, or a peer's channel is not open (or
+    /// has not said hello) yet — a contact's "message via M5cet" waits a little before it says "not online".
+    var peopleSettling: Bool { get }
 
     // MARK: messages
 
@@ -199,4 +202,9 @@ extension RoomModel {
 
     /// The peers in the order the list shows (me excluded) as {id, name} for the design.
     var peersScope: DesignValue { .array(peers.map { ["id": .string($0.id), "name": .string($0.name)] }) }
+}
+
+extension RoomModel {
+    /// A room without the core's facts (previews): settling while it connects or a member's channel does.
+    var peopleSettling: Bool { status == "connecting" || people.contains { $0.channel == "connecting" } }
 }

@@ -74,7 +74,10 @@ final class RoomBridge: RoomTransport, RoomEvents, @unchecked Sendable {
 
     func dropPeer(_ peerId: String) {
         setOpen(peerId, false)
-        main { $0.wire?.removePeer(id: peerId) }
+        main { c in
+            c.wire?.removePeer(id: peerId)
+            c.rooms?.core?.profiles?.peerGone(room: c, peerId: peerId)
+        }
     }
 
     func signal(from peerId: String, _ description: JSONObject) { main { $0.wireReceive(description, from: peerId) } }

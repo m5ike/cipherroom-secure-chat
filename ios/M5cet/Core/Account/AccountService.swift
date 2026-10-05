@@ -379,15 +379,57 @@ final class AccountService: AccountModel {
         core?.uploadKeys()
     }
 
+    // MARK: - the profile card and the public profile (Account.loadCard / saveCard / profileApi)
+
+    /// The vault slots' revisions this device saw (6.12 F-26: an older one is a rollback).
+    private var slotRevisions: VaultSlotRevisions { VaultSlotRevisions(store: security.userState) }
+
+    /// 6.3 (Account.cardRoot): the account root for an internal (passkey) record of an M5Cet card — while signed in
+    /// with the root kept; nil otherwise (the workbench then asks to sign in). The bytes never leave the device.
+    func cardRoot() -> Bytes? { hasRoot ? root : nil }
+
+    /// The profile card from the account vault's own "card" part (nil: none saved yet). Throws without a session or root.
+    func loadCard() async throws -> JSONObject? {
+        guard signedIn, let root else { throw AccountFailure(code: "no-root", message: t("passkey.noRoot")) }
+        let user = username
+        let contents = try await client.vault(token: token, onlyCard: true)
+        guard let ct = contents.part("card")?.ct, !ct.isEmpty else { return nil }
+        let slot = try AccountKeys.openSlot(ct, key: AccountKeys.profileKey(root), slot: "card")
+        if await !slotRevisions.note(account: user, slot: "card", rev: slot.rev) {
+            Self.log.warning("the card part is older than one this device saw")
+        }
+        return slot.value
+    }
+
+    /// Seals the whole card (every audience) with the vault key into the vault's "card" part (format 2).
+    func saveCard(_ card: JSONObject) async throws {
+        guard signedIn, let root else { throw AccountFailure(code: "no-root", message: t("passkey.noRoot")) }
+        let user = username
+        let rev = await slotRevisions.next(account: user, slot: "card")
+        let ct = try AccountKeys.sealSlot(card, key: AccountKeys.profileKey(root), slot: "card", rev: rev)
+        let sent = await client.putVault(token: token, patch: VaultPatch(card: ct))
+        if sent.answer == nil { throw sent.error ?? AccountFailure(code: "failed", message: "vault") }
+        await slotRevisions.note(account: user, slot: "card", rev: rev)
+    }
+
+    /// The public profile API (/api/profile…): the owner's PUT / DELETE (with the session), anyone's GET by username.
+    func profileApi(_ method: String, _ path: String, body: JSONObject?, auth: Bool) async throws -> JSONObject {
+        guard path.hasPrefix("/api/profile") else { throw AccountFailure(code: "path", message: "not a profile path") }
+        let netBody = try body.map { try NetJSON.parse($0.stringify()) }
+        let answer = try await client.call(method, path, body: netBody, token: auth ? token : nil)
+        return JSON.parseObject(answer.text) ?? JSONObject()
+    }
+
     private static func ceremony(_ error: any Error) -> AccountResult {
         if let f = error as? PasskeyFailure { return .failure(f.code, f.message) }
         return .failure("failed", error.localizedDescription)
     }
 }
 
-struct AccountFailure: Error {
+struct AccountFailure: Error, LocalizedError {
     let code: String
     let message: String
+    var errorDescription: String? { message }
 }
 
 /// The recovery code as the web makes it (account/RecoveryCode.java, client/src/lib/recovery.ts).

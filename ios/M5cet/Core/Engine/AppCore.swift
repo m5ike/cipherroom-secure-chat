@@ -37,14 +37,18 @@ protocol CoreNotifying: AnyObject {
     func neutralizeAll()
 }
 
-/// Profiles shared in rooms (A/profile: ProfileRoom.Exchange, Profiles cache) — the people agent's ProfileUi / the
-/// core's profile service implement it.
+/// Profiles shared in rooms (A/profile: ProfileRoom.Exchange, Profiles cache) — CoreProfiles.
 @MainActor
 protocol RoomProfiles: AnyObject {
     func frame(room: RoomController, peerId: String, _ frame: JSONObject)
     func hello(room: RoomController, peerId: String, caps: [JSON]?)
     func profile(of peerId: String) -> JSONObject?
     func accountKey(room: RoomController, peerId: String) -> String
+    /// A peer left the room; the room went.
+    func peerGone(room: RoomController, peerId: String)
+    func roomGone(_ key: String)
+    /// My profile changed: this room's members learn its version (PeopleRoomExtras.profileChanged).
+    func profileChanged(room: RoomController)
     /// The lock: profiles leave the memory.
     func forget()
 }
@@ -82,7 +86,11 @@ final class AppCore {
     @ObservationIgnored let models: CoreModels
     @ObservationIgnored let fileStore: any CoreFileStore
     @ObservationIgnored var notifications: (any CoreNotifying)?
-    @ObservationIgnored var profiles: (any RoomProfiles)?
+    /// Hides and deletes in this device's view for the operator's audit journal (MessageAudit).
+    @ObservationIgnored let messageAudit: MessageAudit
+    /// The profile card and the rooms' profile frames (People's PeopleParts.profiles).
+    @ObservationIgnored private(set) var profileStore: CoreProfiles!
+    @ObservationIgnored var profiles: (any RoomProfiles)? { profileStore }
     /// Read an incoming message aloud (voice.autoplay) — Platform/Voice installs it.
     @ObservationIgnored var speaker: (@MainActor (ChatMessage) -> Void)?
     /// What else a lock clears (the parts' copies — composers, pictures, the assistant).
@@ -105,7 +113,6 @@ final class AppCore {
     /// The seams handed to other areas (they keep weak references).
     @ObservationIgnored var callLogSource: AnyObject?
     @ObservationIgnored var notificationRooms: AnyObject?
-    @ObservationIgnored var reachHost: AnyObject?
     @ObservationIgnored var voiceEnvironment: AnyObject?
     @ObservationIgnored var locationControl: AnyObject?
     /// The app is in the foreground.
@@ -126,6 +133,7 @@ final class AppCore {
         self.account = account
         rooms = RoomsController(server: device.server, records: security.userRecords, hub: hub, wires: wires, account: account.p4Provider)
         models = CoreModels(rooms: rooms, account: account)
+        messageAudit = MessageAudit(records: security.userRecords)
         rooms.core = self
         rooms.fileStore = fileStore
         account.core = self
@@ -133,12 +141,17 @@ final class AppCore {
         models.server = device.server
         models.userName = userName
         security.setLockListener(self)
+        profileStore = CoreProfiles(core: self)
+        messageAudit.account = { [weak self] in self?.account.signedIn == true ? self?.account.username ?? "" : "" }
+        messageAudit.roomId = { [weak self] key in self?.rooms.controller(key)?.keys?.roomId ?? "" }
         installTexts()
     }
 
     /// Becomes the app's core (CoreModels.shared, the Texts provider).
     func activate() {
         AppCore.current = self
+        // What the parts registered on the core in use so far stays (their $nfc, $users, $profile…).
+        models.variables.adopt(CoreModels.shared.variables)
         CoreModels.shared = models
     }
 
@@ -228,6 +241,7 @@ final class AppCore {
         account.restore()
         refreshKt()
         uploadKeys()
+        messageAudit.flush()
         Task { await checkIn("enter") }
     }
 

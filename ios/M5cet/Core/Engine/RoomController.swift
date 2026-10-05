@@ -488,6 +488,25 @@ final class RoomController: RoomModel {
 
     func canPrivate(_ peerId: String) -> Bool { bridge?.isOpen(peerId) == true && snap.peers.contains { $0.id == peerId && !$0.proto.isEmpty && !$0.downgrade } }
 
+    // MARK: - profiles (RoomSession.profiles' Deps.send)
+
+    /// A profile frame for one peer: sealed for it alone (the ratchet, or the pair key) — never the room key, never
+    /// through the server. False when the sealed frame would not fit (ProfileRoom then sends it without the cover).
+    func sendProfileFrame(_ peerId: String, _ frame: JSONObject) -> Bool {
+        guard let s = session, bridge?.isOpen(peerId) == true, !myId.isEmpty else { return false }
+        var payload = frame
+        payload["kind"] = "profile"
+        payload["id"] = .string("prof-" + Crypto.hex(Crypto.random(12)))
+        payload["createdAt"] = .int(EpochMs.now)
+        payload["senderId"] = .string(myId)
+        payload["senderName"] = .string(myName)
+        // The sealed frame (base64 of the padded body, either protocol) stays under the limit.
+        if Pad.paddedLength(payload.stringify().utf8.count) * 4 / 3 + 2048 > ProfileRoom.frameMaxChars { return false }
+        let sealedFor = payload
+        Task { _ = await s.local { core in core.canPrivate(peerId) && core.privateTo(peerId, sealedFor) } }
+        return true
+    }
+
     // MARK: - RoomModel: messages
 
     @discardableResult
@@ -634,4 +653,29 @@ final class RoomController: RoomModel {
 
     /// The room's name changed (an edit of the saved room that keeps its key).
     func relabel(_ l: String) { label = l }
+}
+
+// MARK: - People (Parts/People: PeopleRoomExtras; RoomSession.peerStats / forwardVerified / profileChanged / peopleSettling)
+
+extension RoomController: PeopleRoomExtras {
+    /// The last WebRTC statistics of a peer (People's detail: transport, candidates, codec, bytes, DTLS).
+    func peerStats(_ peerId: String) -> RtcStatsSummary? { wire?.peerStats(peerId) }
+
+    /// Review P09: the forwarded message's original sender verified by their key (Verified.forward).
+    func forwardVerified(_ message: ChatMessage) -> Bool {
+        guard let from = message.forwardedFrom, !from.isEmpty else { return false }
+        return Verified.forward(message, messages, pinnedKid: rooms?.pins.pinned(room, from), myName: myName)
+    }
+
+    /// My profile card changed: this room's members who speak profiles learn the new version.
+    func profileChanged() { rooms?.core?.profiles?.profileChanged(room: self) }
+
+    var peopleSettling: Bool {
+        if !connected { return wanted && status != "mismatch" }
+        if EpochMs.now - snap.facts.joinedAt < 8_000 { return true }
+        for p in wire?.peerStates ?? [] where p.status != "closed" {
+            if p.status != "open" || snap.facts.get(p.id) == nil { return true }
+        }
+        return false
+    }
 }

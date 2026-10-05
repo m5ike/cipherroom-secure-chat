@@ -200,7 +200,8 @@ private struct JoinFormPart: View {
                 room = s.label
                 pass = s.passphrase
             } else {
-                name = core.profiles.flatMap { _ in nil } ?? core.userName
+                // The public nickname of the profile card first (Profiles.prefill), else the device's name.
+                name = core.profileStore.prefill(core.userName)
             }
         }
     }

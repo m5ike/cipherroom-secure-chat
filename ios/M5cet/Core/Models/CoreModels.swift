@@ -70,19 +70,34 @@ protocol MessageFiles: AnyObject {
 @MainActor
 final class ScreenVariables {
     typealias Provider = @MainActor () -> DesignValue
-    private var providers: [String: [String: Provider]] = [:]
+    /// A provider that reads the window the screen is drawn in (its $form, its sheet); nil outside a window.
+    typealias WindowProvider = @MainActor (DesignHost?) -> DesignValue
+    private var providers: [String: [String: WindowProvider]] = [:]
 
     /// `screen` "ai", `name` "ai" → $ai of the "ai" screen. A later registration replaces an earlier one.
     func register(_ screen: String, _ name: String, _ provider: @escaping Provider) {
+        providers[screen, default: [:]][name] = { _ in provider() }
+    }
+
+    /// The same for a value of the window it is drawn in (`$profile` bound to that window's `$form`).
+    func register(_ screen: String, _ name: String, window provider: @escaping WindowProvider) {
         providers[screen, default: [:]][name] = provider
     }
 
     func unregister(_ screen: String, _ name: String) { providers[screen]?[name] = nil }
 
-    /// The registered variables of a screen.
-    func values(for screen: String) -> [String: DesignValue] { (providers[screen] ?? [:]).mapValues { $0() } }
+    /// The registered variables of a screen, as the window `host` draws it.
+    func values(for screen: String, host: DesignHost? = nil) -> [String: DesignValue] { (providers[screen] ?? [:]).mapValues { $0(host) } }
 
     func has(_ screen: String, _ name: String) -> Bool { providers[screen]?[name] != nil }
+
+    /// Every registration of another registry (a new core keeps what the parts registered on the old one).
+    func adopt(_ other: ScreenVariables) {
+        guard other !== self else { return }
+        for (screen, byName) in other.providers {
+            for (name, p) in byName where providers[screen]?[name] == nil { providers[screen, default: [:]][name] = p }
+        }
+    }
 }
 
 /// The tools' shared state (Android `tools` scope, M5.voice / Nfc availability) and the hooks the tool parts install.

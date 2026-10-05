@@ -208,6 +208,7 @@ final class RoomsController: RoomsModel {
     func leave(_ key: String) {
         let k = key.isEmpty ? activeKey : key
         if let r = sessions.removeValue(forKey: k) { Task { await r.disconnect() } }
+        core?.profiles?.roomGone(k)
         if let i = saved.firstIndex(where: { $0.key == k }) { saved[i].selected = false }
         if k == activeKey { activeKey = connectedSessions.first?.key ?? "" }
         persist()

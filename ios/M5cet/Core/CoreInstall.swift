@@ -95,16 +95,26 @@ enum CoreInstall {
             d.location = control
         }
 
-        // Platform/Contacts.
+        // Platform/Contacts (Parts/People installs the vault behind its store and the reach's window side).
         let people = ContactsService.shared
-        people.store.setVault(SecurityPeopleVault(vault: center.vault))
         let store = people.store
         core.rooms.verifiedDevice = { kid in store.verified(kid) }
-        let reach = CoreReachHost(core: core)
-        core.reachHost = reach
-        people.reach.host = reach
         people.install(into: model)
         core.onForget.append { store.forget() }
+        center.wiper.addTeardown("contacts") { ContactsService.shared.wipe() }
+
+        // Parts/People: the account's profile card, the audit of hides and deletes (one unlock id with the chat's
+        // bubbles: PeopleParts.defaultHides).
+        PeopleParts.profiles = core.profileStore
+        let audit = core.messageAudit
+        if let d = PushCenter.shared?.device {
+            audit.upload = { actions, account in _ = try await d.messageAudit(actions: actions, account: account) }
+        }
+        PeopleParts.defaultHides.audit = { action, room, m, until in audit.add(action, room: room, message: m, until: until) }
+
+        // Parts/NFC: the account root of an M5Cet card's internal records, the forward of a message in no room.
+        NfcUiHooks.accountRoot = { [weak core] in core?.account.cardRoot() }
+        NfcUiHooks.forward = { [weak actions] m, host in actions?.forward(m, host) }
 
         // Platform/Voice.
         let voice = VoiceService.shared

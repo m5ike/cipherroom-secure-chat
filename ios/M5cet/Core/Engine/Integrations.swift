@@ -188,49 +188,6 @@ final class CoreLocationControl: DeviceLocationControl {
     func locateNow(reason: String) async -> Bool { await service.current() != nil }
 }
 
-// MARK: - Contacts
-
-@MainActor
-final class CoreReachHost: ContactReachHost {
-    unowned let core: AppCore
-    init(core: AppCore) { self.core = core }
-
-    var ready: Bool {
-        guard let h = core.hosts.first else { return false }
-        return !core.security.isLocked && !["splash", "lock", "enroll"].contains(h.screen)
-    }
-    var contactsEnabled: Bool { core.settings.bool("people.contacts") }
-    var activeRoom: String? { core.rooms.activeKey.isEmpty ? nil : core.rooms.activeKey }
-
-    func connectedRooms() -> [ContactReachRoom] {
-        core.rooms.connectedSessions.map { r in
-            ContactReachRoom(key: r.key, label: r.label, settling: !r.connected || r.people.contains { $0.channel == "connecting" },
-                             lastActivity: r.lastActivity, people: r.people.compactMap { p in p.scope.objectValue.map { DesignValue.object($0).json.objectValue ?? JSONObject() } })
-        }
-    }
-
-    func text(_ key: String) -> String { core.t(key) }
-    func notice(_ text: String, level: String) { core.flash(text, level: FlashLevel(rawValue: level) ?? .info) }
-
-    func reach(_ kind: ContactReachKind, roomKey: String, peerId: String, username: String) {
-        guard let host = core.hosts.first else { return }
-        core.rooms.switchTo(roomKey)
-        if host.screen != "room" { host.showScreen("room") } else { host.reshow() }
-        switch kind {
-        case .message:
-            let c = core.models.composer(for: host)
-            c.setRecipients([peerId])
-            c.focus()
-        case .call:
-            Task {
-                guard await CoreDialogs.confirm(title: "", message: core.t("people.callAsk").replacingOccurrences(of: "{name}", with: username),
-                                                yes: core.t("people.call"), no: core.t("nav.close")) else { return }
-                if await CallSystem.shared.startCall(roomKey: roomKey, video: false) { host.showScreen("call") }
-            }
-        }
-    }
-}
-
 // MARK: - Voice
 
 @MainActor

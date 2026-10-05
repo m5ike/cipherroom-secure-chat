@@ -55,7 +55,19 @@ final class AppScreenState: ScreenStateProvider {
     // MARK: - variables (MainActivity.scopeFor)
 
     func variables(for screen: String, context: ScreenContext) -> [String: DesignValue] {
-        var s = core.models.variables.values(for: screen)
+        variables(for: screen, context: context, host: nil)
+    }
+
+    /// The core's values of a screen, and over them what the parts registered (core.variables: $users, $profile,
+    /// $ai, $nfc…) — a part's value wins (People owns $users of "room" and "call").
+    func variables(for screen: String, context: ScreenContext, host: DesignHost?) -> [String: DesignValue] {
+        var s = own(screen)
+        for (k, v) in core.models.variables.values(for: screen, host: host) { s[k] = v }
+        return s
+    }
+
+    private func own(_ screen: String) -> [String: DesignValue] {
+        var s: [String: DesignValue] = [:]
         switch screen {
         case "splash":
             s["status"] = .string(splashStatus)
@@ -78,9 +90,7 @@ final class AppScreenState: ScreenStateProvider {
             s["room"] = roomScope(r)
             s["rooms"] = .array(core.rooms.connectedSessions.map { roomScope($0) })
             s["me"] = ["name": .string(r?.myName ?? core.userName)]
-            let panel = UsersPanel.load()
-            s["users"] = ["open": .bool(panel.open), "dock": .string(panel.dock), "autoHide": .bool(panel.autoHide),
-                          "count": .number(Double(r?.userCount ?? 0)), "list": .array(r?.users ?? [])]
+            // $users (the panel's state and list) is People's (core.variables "room" / "call" → "users").
             let call = r?.call ?? CallInfo()
             s["call"] = ["active": .bool(call.active), "mode": .string(call.video ? "video" : "audio"), "muted": .bool(call.muted),
                          "peers": .number(Double(max(0, (r?.userCount ?? 0) - 1)))]
@@ -88,13 +98,11 @@ final class AppScreenState: ScreenStateProvider {
             s["keys"] = keysScope()
             s["connection"] = connectionScope()
         case "settings.voice", "voice", "dictate.options":
-            if s["voice"] == nil { s["voice"] = core.models.tools.voice }
-            if s["voices"] == nil { s["voices"] = .array([]) }
+            s["voice"] = core.models.tools.voice
+            s["voices"] = .array([])
         case "settings.location":
-            if s["location"] == nil {
-                let allowed = core.device.state?.policy.obj("location")?.bool("track", true) ?? true
-                s["location"] = ["permitted": .bool(core.models.position?.permitted ?? false), "tracking": false, "allowed": .bool(allowed)]
-            }
+            let allowed = core.device.state?.policy.obj("location")?.bool("track", true) ?? true
+            s["location"] = ["permitted": .bool(core.models.position?.permitted ?? false), "tracking": false, "allowed": .bool(allowed)]
         case "settings.security":
             var sec = core.security.securityScope(t: core.t).objectValue ?? [:]
             sec["ktAlert"] = .string(core.rooms.ktAlert)
@@ -108,7 +116,7 @@ final class AppScreenState: ScreenStateProvider {
         case "nfc":
             s["room"] = roomScope(core.rooms.activeController)
         case "update":
-            if s["update"] == nil { s["update"] = ["kind": "bundle", "version": "", "size": 0, "notes": "", "progress": 1, "state": "none"] }
+            s["update"] = ["kind": "bundle", "version": "", "size": 0, "notes": "", "progress": 1, "state": "none"]
         case "about":
             let st = core.device.state
             s["device"] = ["id": .string(st?.deviceId ?? ""), "model": .string(CoreDeviceService.description(name: "").model)]
@@ -164,23 +172,5 @@ final class AppScreenState: ScreenStateProvider {
         return ["server": .string(core.device.server), "rooms": .number(Double(joined)), "status": .string(joined > 0 ? "joined" : "offline"),
                 "push": .string(core.pushMode), "checkin": .number(Double(core.lastCheckin)), "protocol": 2,
                 "crypto": "p4 (ML-KEM-768 + ECDH) · v3", "turn": .number(Double(core.iceCount)), "ktAlert": .string(core.rooms.ktAlert)]
-    }
-}
-
-/// The user panel's place and state (Android config.usersPanel): open, dock (none | left | right | bottom), autoHide.
-struct UsersPanel: Equatable, Sendable {
-    var open = false
-    var dock = "right"
-    var autoHide = false
-    static let key = "m5.usersPanel"
-
-    static func load() -> UsersPanel {
-        guard let d = UserDefaults.standard.data(forKey: key), let o = JSON.parseObject(String(decoding: d, as: UTF8.self)) else { return UsersPanel() }
-        return UsersPanel(open: o.bool("open") ?? false, dock: o.optString("dock", "right"), autoHide: o.bool("autoHide") ?? false)
-    }
-
-    func save() {
-        let o = JSONObject([("open", .bool(open)), ("dock", .string(dock)), ("autoHide", .bool(autoHide))])
-        UserDefaults.standard.set(Data(o.stringify().utf8), forKey: Self.key)
     }
 }
