@@ -1,0 +1,8 @@
+// Copy to ios/Config/Signing.xcconfig (git-ignored) and fill in — never commit it.
+// Base.xcconfig includes it when it exists; it overrides the environment.
+
+// Your Apple Developer team ID (developer.apple.com › Membership details).
+DEVELOPMENT_TEAM = ABCDE12345
+
+// The server whose passkeys the app uses (associated domain webcredentials:…).
+M5_WEBCREDENTIALS_DOMAIN = chat.example.com

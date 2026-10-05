@@ -84,6 +84,9 @@ import { registerAdminMenuConfigRoutes, registerMenuConfigRoutes } from "./menu-
 import { registerModulesAdminRoutes } from "./modules-routes";
 import { registerAndroidAdminRoutes } from "./android/admin-routes";
 import { registerAndroidRoutes } from "./android/routes";
+import { registerIosAdminRoutes } from "./ios/admin-routes";
+import { registerIosRoutes } from "./ios/routes";
+import { registerAppSiteAssociation } from "./ios/app-site";
 import { buildInfo } from "./build-info";
 import { turnAnswer } from "./turn";
 import { mayGetTurn, pendingTurnAnswer, turnLimiter } from "./turn-gate";
@@ -234,6 +237,8 @@ export async function registerRoutes(
   // it from the store's revoke event — see SignalingHub.onRevoke.)
   // 6.1: the Android app may use this domain's passkeys (Digital Asset Links).
   registerAppLinks(app);
+  // 6.14: so may the iOS app (apple-app-site-association, webcredentials).
+  registerAppSiteAssociation(app);
   // 6.13: M5cet Desktop signs in through the system browser (the result comes back encrypted to the app).
   registerDesktopAuthRoutes(app);
   // 6.12: devices upload their mailbox bundles; key transparency is public.
@@ -298,6 +303,9 @@ export async function registerRoutes(
   // and the devices' own API (/api/android/*).
   registerAndroidAdminRoutes(app);
   registerAndroidRoutes(app);
+  // 6.14: the iOS app — its console side (the "iOS" page) and its devices' API (/api/ios/*).
+  registerIosAdminRoutes(app);
+  registerIosRoutes(app);
   // 6.7: notifications — the user's choice, tests, e-mail, the console's Notifications.
   registerNotifyRoutes(app, { accounts: accountStore, ...notify });
   registerAdminClientConfigRoutes(app, () => {

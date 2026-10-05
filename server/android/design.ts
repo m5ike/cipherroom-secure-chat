@@ -9,10 +9,9 @@
 // (script/android-assets.ts), so the two never drift apart.
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import { MENU_ICONS } from "../../client/src/lib/menu-icons-data";
+import { createDesignStore } from "../mobile/design-store";
 import { checkExpr, checkTemplate } from "./expr";
 import { ACTIONS_61, ELEMENTS_61, MENUS_61, SCREENS_61, SCREENS_TREES_61, SLOTS_61, STRINGS_61, TOGGLE_PROPS_61, messageIn61, messageOut61, roomBar61 } from "./design-61";
 import { ACTIONS_62, ELEMENTS_62, MENUS_62, SCREENS_62, SCREENS_TREES_62, SLOTS_62, STRINGS_62, THEME_62, patch62 } from "./design-62";
@@ -808,10 +807,15 @@ function sanitizeAnim(raw: unknown, dflt: AnimSpec): AnimSpec {
   };
 }
 
-export function sanitizeDesign(raw: unknown): AndroidDesign {
+/**
+ * Checks a design and fills what it lacks from `defaults` — the platform's
+ * default design (6.14: iOS has its own look, server/ios/design.ts; the
+ * screens, menus, texts and libraries are the same).
+ */
+export function sanitizeDesign(raw: unknown, defaults: AndroidDesign = DEFAULT_DESIGN): AndroidDesign {
   const problems: string[] = [];
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<AndroidDesign>;
-  const d = DEFAULT_DESIGN;
+  const d = defaults;
 
   const appName = typeof r.app?.name === "string" && r.app.name.trim() ? r.app.name.trim().slice(0, 40) : d.app.name;
 
@@ -930,51 +934,23 @@ export function designRev(d: AndroidDesign): string {
 
 /* ================================================================ storage */
 
-const designFile = () => join(androidDir(), "design.json");
-let cachedDesign: AndroidDesign | null = null;
+// 6.14: the storage is shared with iOS (server/mobile/design-store.ts).
+const designStore = createDesignStore({ label: "android", file: () => join(androidDir(), "design.json"), defaults: DEFAULT_DESIGN, sanitize: (raw) => sanitizeDesign(raw), rev: designRev });
 
 /** 6.7: why the saved design was not used (it no longer passes the checks — e.g. the F-01 URL rules), or null. */
-let designProblem: string | null = null;
-export const savedDesignProblem = (): string | null => (androidDesign(), designProblem);
+export const savedDesignProblem = (): string | null => designStore.problem();
 
-export function androidDesign(): AndroidDesign {
-  if (cachedDesign) return cachedDesign;
-  let text: string | null = null;
-  try { text = readFileSync(designFile(), "utf8"); } catch { /* none saved: the default */ }
-  try {
-    cachedDesign = text === null ? { ...structuredClone(DEFAULT_DESIGN), rev: designRev(DEFAULT_DESIGN) } : sanitizeDesign(JSON.parse(text));
-    designProblem = null;
-  } catch (err) {
-    // A saved design the checks now refuse is not used — said loudly, not silently: the
-    // operator re-saves it in the console after fixing what the message names.
-    designProblem = (err as Error).message || "the saved design does not pass the checks";
-    console.warn(`[android] the saved design is not used, the default is: ${designProblem}`);
-    cachedDesign = { ...structuredClone(DEFAULT_DESIGN), rev: designRev(DEFAULT_DESIGN) };
-  }
-  return cachedDesign;
-}
+export function androidDesign(): AndroidDesign { return designStore.get(); }
 
-export function saveAndroidDesign(raw: unknown, by: string): AndroidDesign {
-  const clean = sanitizeDesign(raw);
-  clean.rev = designRev(clean);
-  clean.updatedAt = Date.now();
-  clean.updatedBy = by;
-  const file = designFile();
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(clean)}\n`, { mode: 0o600 });
-  renameSync(tmp, file);
-  cachedDesign = clean;
-  return clean;
-}
+export function saveAndroidDesign(raw: unknown, by: string): AndroidDesign { return designStore.save(raw, by); }
 
-export function forgetAndroidDesign(): void { cachedDesign = null; }
+export function forgetAndroidDesign(): void { designStore.forget(); }
 
-/** What the console's Android builder needs to know. */
-export function androidCatalog() {
+/** What the console's Android builder needs to know (6.14: iOS's the same, with its own defaults). */
+export function androidCatalog(defaults: AndroidDesign = DEFAULT_DESIGN) {
   return {
     elements: ELEMENTS, style: STYLE_PROPS, colors: COLOR_TOKENS, anims: ANIM_TYPES, easings: EASINGS, events: EVENTS,
     actions: ACTIONS, slots: SLOTS, screens: SCREENS, langs: LANGS, locales: LOCALE_INFO, icons: MENU_ICONS, limits: LIMITS,
-    defaults: DEFAULT_DESIGN,
+    defaults,
   };
 }

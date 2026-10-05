@@ -8,3 +8,6 @@ xcuserdata/
 *.ipa
 *.xcarchive/
 .swiftpm/
+
+# Local signing (team ID, passkey domain) — ios/Config/Signing.xcconfig.example
+Config/Signing.xcconfig

@@ -89,6 +89,13 @@ proměnné ze skutečného prostředí mají přednost. `.env` je v `.dockerigno
 | `KT_ACCOUNT_ENTRIES_PER_DAY` | 6.12: kolik záznamů smí jeden účet přidat do transparentnosti klíčů za 24 h nahráváním klíčů (40; 5–10 000); další `PUT /api/keys/bundle`, který by něco zapsal, dostane `429 kt-quota`. |
 | `VONAGE_ALLOW_UNSIGNED_SMS`| 6.7: `1` = přijmout Vonage SMS bez podpisu.          |
 | `ANDROID_DESIGN_IMAGE_HOSTS`| 6.7: povolení hostitelé obrázků v designu Androidu (výchozí žádný). |
+| `APNS_KEY_FILE`            | 6.14: cesta k `.p8` klíči APNs (Apple Developer › Keys, „Apple Push Notifications service“; PKCS#8, EC P-256). Soubor 0600, mimo repozitář; v Dockeru připojte jako volume. Bez něj iOS zařízení push nedostávají a jen se hlásí (check-in). |
+| `APNS_KEY_ID`              | 6.14: 10znakové ID toho klíče (`kid` JWT). |
+| `APNS_TEAM_ID`             | 6.14: 10znakové ID týmu (vydavatel JWT); zároveň zveřejní `/.well-known/apple-app-site-association` (passkeys aplikace iOS). |
+| `APNS_TOPIC`               | 6.14: bundle ID aplikace (výchozí `cz.m5cet.app`); VoIP push jde na `<topic>.voip`. Konzole (iOS › Push) ho může přepsat. |
+| `APNS_ENV`                 | 6.14: `production` (výchozí) nebo `sandbox`; zařízení, které hlásí vlastní prostředí (vývojový build = sandbox), dostává push tam. |
+| `IOS_DATA_DIR`             | 6.14: složka dat iOS (`$DATA_DIR/ios`: `ios.db`, `ios.json`, `design.json`, `builds/`). |
+| `IOS_EVENT_DAYS`           | 6.14: retence událostí zařízení iOS ve dnech (180; min. 7). |
 | `NOTIFY_DIR`               | 6.7: nastavení upozornění (`$DATA_DIR/notify`).      |
 | `HUB_REQUIRE_ROOM_PROOF`   | 6.12: `1` = místnost se slepým ID (`r3.…`) přijme jen člena, který doloží znalost klíče místnosti (důkaz při `join`, G-09); klienti před 6.12 dostanou `room-proof-required`. Místnosti s čitelným jménem (protokol 2) důkaz podat nemohou a zůstávají „starší“. Bez `1` (výchozí): join bez důkazu projde a člen je označen `proven: false`; zvuk telefonu do místnosti, hovor nabídnutý místnosti, cíl podle jména či peer id, oznámení konzole podle jména a adresář klíčů přes hub dostanou jen prokázaní členové, jakmile má místnost ověřovací klíč (i když jsou všichni prokázaní členové pryč; jinak všichni jako dřív). Chyba `room-proof` nese `legacyAllowed` (zda by prošel join bez důkazu). |
 | `HUB_ROOM_PROOF_TTL_DAYS`  | 6.12: dny, po kterých server zapomene ověřovací klíč místnosti, kterou nikdo s důkazem nenavštívil (365; 1–3650). Ověřovače jsou v globální SQLite (sdílené instancemi clusteru), bez úložiště jen v paměti instance. |
