@@ -1,0 +1,108 @@
+{
+ "generator": "ios/M5Kit/Tests/M5NetTests/fixtures/generate-fixtures.ts",
+ "devicePkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1uDZW/c2hksec5XA2CfvQkj7Eherb5g7I3cauVggYm+hRANCAARuzjiYXA0ah0mWZynnIWRQEdpDtKzSV3Y49rNJ2WgGiq9DpZc4bwNxpJsxJRcGh6OzWZehoR+TUFq2tyfUYPs5",
+ "devicePublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbs44mFwNGodJlmcp5yFkUBHaQ7Ss0ld2OPazSdloBoqvQ6WXOG8DcaSbMSUXBoejs1mXoaEfk1Batrcn1GD7OQ==",
+ "deviceKid": "tMnA4_jX1xBPH_ov",
+ "deviceFingerprint": "B4C9 C0E3 F8D7 D710 4F1F FA2F D9A7 0CAE",
+ "requests": [
+  {
+   "method": "POST",
+   "path": "/api/ios/checkin",
+   "time": "1800000000000",
+   "nonce": "AAECAwQFBgcICQoLDA0ODw",
+   "body": "{\"appVersion\":\"6.14.0\",\"appCode\":61400,\"locale\":\"cs\"}",
+   "bodyB64": "eyJhcHBWZXJzaW9uIjoiNi4xNC4wIiwiYXBwQ29kZSI6NjE0MDAsImxvY2FsZSI6ImNzIn0=",
+   "string": "m5android/1|POST|/api/ios/checkin|1800000000000|AAECAwQFBgcICQoLDA0ODw|+GCeG2KYflbOsNt9Wz0DcvvxPh0vHEpeiomOhMwYd7o=",
+   "signature": "rjtr4q+Eu6bJ6YzNnxqHKmxQX7K0twE4VXgbJjPnmGWRqIWGrn8hGBQW/GG68vGqjX6iiojVQ/LH6+idwttSWA=="
+  },
+  {
+   "method": "GET",
+   "path": "/api/ios/bundles/bld_0001",
+   "time": "1800000000001",
+   "nonce": "EBESExQVFhcYGRobHB0eHw",
+   "body": "",
+   "bodyB64": "",
+   "string": "m5android/1|GET|/api/ios/bundles/bld_0001|1800000000001|EBESExQVFhcYGRobHB0eHw|47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+   "signature": "av2q1z1LJcQKpUAhs7PoN8aKrG1YrmNRrByVzST8sA7R1HXzK8xWiWye53IEO4pe4+1Pd7tsAY+kqjMPLIWyVQ=="
+  },
+  {
+   "method": "post",
+   "path": "/m5/api/ios/events?x=1",
+   "time": "1800000000002",
+   "nonce": "ICEiIyQlJicoKSorLC0uLw",
+   "body": "{\"events\":[{\"id\":\"ev0000001\",\"type\":\"log\",\"at\":1,\"detail\":{\"text\":\"Žluťoučký kůň\"}}]}",
+   "bodyB64": "eyJldmVudHMiOlt7ImlkIjoiZXYwMDAwMDAxIiwidHlwZSI6ImxvZyIsImF0IjoxLCJkZXRhaWwiOnsidGV4dCI6IsW9bHXFpW91xI1rw70ga8WvxYgifX1dfQ==",
+   "string": "m5android/1|POST|/m5/api/ios/events?x=1|1800000000002|ICEiIyQlJicoKSorLC0uLw|iE6AtBnOpdevkS2C0nRl28s9JrPtzOSaVS8Wuo44yNM=",
+   "signature": "wu821JgzW9MThbineqqvQ6qE7n8dNQmRMxiEfyJ70V0OBTtWverBOIWUnL8rBpqOPUsih1kTANQVQkRMpwXmDg=="
+  }
+ ],
+ "enroll": {
+  "signKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbs44mFwNGodJlmcp5yFkUBHaQ7Ss0ld2OPazSdloBoqvQ6WXOG8DcaSbMSUXBoejs1mXoaEfk1Batrcn1GD7OQ==",
+  "encKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbs44mFwNGodJlmcp5yFkUBHaQ7Ss0ld2OPazSdloBoqvQ6WXOG8DcaSbMSUXBoejs1mXoaEfk1Batrcn1GD7OQ==",
+  "time": 1800000000000,
+  "string": "m5android/enroll/1|MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbs44mFwNGodJlmcp5yFkUBHaQ7Ss0ld2OPazSdloBoqvQ6WXOG8DcaSbMSUXBoejs1mXoaEfk1Batrcn1GD7OQ==|MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbs44mFwNGodJlmcp5yFkUBHaQ7Ss0ld2OPazSdloBoqvQ6WXOG8DcaSbMSUXBoejs1mXoaEfk1Batrcn1GD7OQ==|1800000000000",
+  "proof": "zRWe2ZXJ+p11KW48EEF99lceWJjYFOwozhGlv6p0YYsUc5oZRy6rfHsv9U2nSzLyYPLTp8a/OJF1GE7UM3oWbA=="
+ },
+ "server": {
+  "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEGkfjjJPFtkSdff8O0vEsBRJwjGHtZYXexqVPGeccLRkhYR6RKUmQp7UIdjEFdppRKIfsCfUF0TQBGZ6tgd9Suw==",
+  "kid": "82JlGIo1nL-kiVtN",
+  "fingerprint": "F362 6518 8A35 9CBF A489 5B4D F5F0 8C23"
+ },
+ "deviceId": "ios_vector0001",
+ "policy": {
+  "at": 1800000000000,
+  "policy": "{\"lock\":{\"pinLength\":6,\"maxAttempts\":8,\"wipe\":true,\"screenshots\":false,\"autolockSeconds\":60},\"logs\":\"errors\",\"rooms\":{\"max\":5},\"location\":{\"track\":false}}",
+  "sig": "WVDhRCJIukqtTeCkmUy8vxKN4i7ybp6w8dYXF08kAEdLWpafe0spGgbqS+ZQFmz/WYQQSk7ic00z8XgTt2SjpA=="
+ },
+ "policyOlder": {
+  "at": 1799999999000,
+  "policy": "{\"lock\":{\"pinLength\":6,\"maxAttempts\":8,\"wipe\":true,\"screenshots\":false,\"autolockSeconds\":60},\"logs\":\"off\",\"rooms\":{\"max\":5},\"location\":{\"track\":false}}",
+  "sig": "OzB3mPuvkAORRpTlnTutoS6kHfA5H4aIS7PtfBOTRdb8/fTXH4TLR151GJCvY+MEK2yX9taR/UfDRMsDYRvIGA=="
+ },
+ "policyOtherDevice": {
+  "at": 1800000000000,
+  "policy": "{\"lock\":{\"pinLength\":6,\"maxAttempts\":8,\"wipe\":true,\"screenshots\":false,\"autolockSeconds\":60},\"logs\":\"errors\",\"rooms\":{\"max\":5},\"location\":{\"track\":false}}",
+  "sig": "WFjwslH1EF0rv0rPBY9uXFM2ZIHqvAcxD5bplCM2ZnWscaEZfTYvqGI7KP+RcO6mYEDmcDr2hnvIb60+8U0RZQ=="
+ },
+ "releaseAnswer": {
+  "ok": true,
+  "release": {
+   "id": "rel_0001",
+   "versionCode": 61500,
+   "versionName": "6.15.0",
+   "packageName": "cz.m5cet.app",
+   "apkSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+   "certSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+   "size": 1234,
+   "minSdk": 26,
+   "mandatory": false,
+   "notes": "",
+   "channel": "stable"
+  },
+  "signed": "m5release/1|rel_0001|61500|6.15.0|cz.m5cet.app|0000000000000000000000000000000000000000000000000000000000000000|1111111111111111111111111111111111111111111111111111111111111111|1234",
+  "signature": "JOZiqrIfl15240dkBYUk07os6k9D+lBIC6PZg8AEvS7XCea2ZvPJgqGVFWRHGruEi9LoMAC26A1XRHseJ1EHkg==",
+  "kid": "82JlGIo1nL-kiVtN"
+ },
+ "push": {
+  "i": "msg_0001",
+  "e": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2ZuPH3YfPyldY4CVvFbNv75oap8Hadi9l+zVnFqqUymPWv+BWljRbNRiYnqkcjjD8GoU+S0+/ZMcgY+4Y5D7yA==",
+  "iv": "9gnczORn3/THTKDW",
+  "ct": "pfQ7Y5Mx/m/3By8tzyvIobR8KWADa3tQVXRKTC7gPwjzc2GBnuanhHofY+43Xa1E0kAgtu54AmLM5eAZLrmzRsmKbgeCWaKk2x+k8xyzdn22lr8=",
+  "s": "3HJSM5FKzsM0LhFbjYSJwzgf/ujE9cSYpIqIZLTwmRS7uji/ZLPr+H+H9BY11tViOezsH010cLn2rN/LSnARVg=="
+ },
+ "pushContent": {
+  "id": "msg_0001",
+  "kind": "lock",
+  "payload": {
+   "reason": "lost"
+  },
+  "exp": 0
+ },
+ "pushExpired": {
+  "i": "msg_0002",
+  "e": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjepUmpEkjYSfkGgl+Y8Mm9H1PMsUSbz9ng11EdstKjOHorULXbFBX3jdcfLhA7jQoR6wLqrErfu7rw4ncPjcaA==",
+  "iv": "4Y9FZPEl2I7pcfNT",
+  "ct": "B+LRsWn8St2wRk2yzLozpvYglva+fATSZaK5dJcxzg/vp0wD6oAUCM2CjEA65/xWWxL99T07pFXWSR6VHbSoet5DYMAQ6y0=",
+  "s": "CgTUGHgykID/I6ICDqnNB3FoKzMDKgzfLORKZK1naPrHxH/lMf1R8ZPRcpHt+UuhwFLGeNl40Vdk//VJASozjQ=="
+ }
+}
