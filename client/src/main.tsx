@@ -1,5 +1,7 @@
+import { lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { installDesktopBridge } from "./lib/desktop-bridge";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./index.css";
 import "./mobile.css";
@@ -38,6 +40,12 @@ startViewportSync();
 watchFullscreen(() => {});
 captureInstallPrompt();
 startStyleRuntime();
+// 6.13: in M5cet Desktop, notifications go through the app (a click brings the window forward).
+installDesktopBridge();
+
+// 6.13: /desktop-signin is the browser half of M5cet Desktop's passkey sign-in — not the app.
+const DesktopSignIn = lazy(() => import("./components/DesktopSignIn"));
+const desktopSignIn = window.location.pathname === "/desktop-signin";
 
 // 6.13: the chosen language's texts before the first paint (a lazily loaded
 // language is one small chunk); a slow or failed load still renders — with
@@ -46,7 +54,7 @@ applyDocumentLang(startPrefs.lang);
 const render = () => {
   createRoot(document.getElementById("root")!).render(
     <ErrorBoundary scope="app">
-      <App />
+      {desktopSignIn ? <Suspense fallback={null}><DesktopSignIn /></Suspense> : <App />}
     </ErrorBoundary>,
   );
 };

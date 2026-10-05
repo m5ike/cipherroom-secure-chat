@@ -16,7 +16,9 @@ co uživatel pošle službám serveru: příkazy Functions (`/příkaz`), AI
 asistentovi, řeči (přepis, převod textu na řeč), telefonii a veřejné části
 profilu (6.7) — vše volitelné a zapínané provozovatelem. Kód webu doručuje
 server, takže proti zlému provozovateli web nechrání; podrobný model důvěry
-je v [`docs/security-analysis.md`](docs/security-analysis.md).
+je v [`docs/security-analysis.md`](docs/security-analysis.md). **M5cet Desktop**
+(6.13, macOS a Windows) má kód klienta v podepsané aplikaci, ne ze serveru —
+viz [M5cet Desktop](#m5cet-desktop-macos-windows).
 
 ```text
 ┌──────────────────┐       /ws (WSS, signaling only)        ┌──────────────────┐
@@ -55,11 +57,12 @@ je v [`docs/security-analysis.md`](docs/security-analysis.md).
 15. [Privacy / audit erase / TTL](#privacy--audit-erase--ttl)
 16. [Omezení prohlížečů](#omezení-prohlížečů)
 17. [Známá omezení](#známá-omezení)
-18. [Rychlá instalace](#rychlá-instalace)
-19. [Lokální vývoj](#lokální-vývoj)
-20. [Verzování](#verzování)
-21. [Další dokumentace](#další-dokumentace)
-22. [Licence](#licence)
+18. [M5cet Desktop (macOS, Windows)](#m5cet-desktop-macos-windows)
+19. [Rychlá instalace](#rychlá-instalace)
+20. [Lokální vývoj](#lokální-vývoj)
+21. [Verzování](#verzování)
+22. [Další dokumentace](#další-dokumentace)
+23. [Licence](#licence)
 
 ---
 
@@ -821,6 +824,41 @@ je v [dokumentaci › Návrhy a roadmapa](docs/site/index.html#navrhy).
 
 ---
 
+## M5cet Desktop (macOS, Windows)
+
+**6.13:** tentýž webový klient jako aplikace pro **macOS 13+** (univerzální build pro Intel
+i Apple Silicon, `.dmg` + `.zip`) a **Windows 10/11 x64 a arm64** (instalátor NSIS + přenosný
+`.zip`), postavená na Electronu 44. Okno načítá `https://<server>/` — skutečný origin, takže
+cookies, passkeys (RP ID), WebSocket i relativní URL fungují jako na webu — ale **soubory
+klienta (`index.html`, `/assets/*`, `sw.js`, manifesty) podává aplikace ze svého podepsaného
+`app.asar`**, ne server: zlý provozovatel nemůže podvrhnout kód, který běží (nález F-02 je pro
+desktop uzavřen). API, soubory, `/fn-sandbox.html` a WebSocket jdou na server beze změny.
+
+* Výběr serveru při prvním spuštění (jen `https://`, bez jména a hesla v adrese, IDN se ukazuje
+  i v ASCII), seznam serverů, kontrola verze proti serveru; při nesouladu volba „použít webový
+  kód serveru“ (zapamatovaná, s trvalým varovným pruhem).
+* Passkeys: Windows Hello a bezpečnostní klíče v aplikaci; na macOS (Electron nemá Touch ID
+  s PRF ani passkeys z Klíčenky) **přihlášení přes systémový prohlížeč** — token relace a kořen
+  účtu se vrací **zašifrované ke klíči aplikace** (`/api/desktop-auth/*`), nikdy v URL.
+* Nativně: nabídky a dialogy v 9 jazycích, upozornění, odznak s nepřečtenými, ikona v liště,
+  odkazy `m5cet://`, spouštění po přihlášení, stav okna, aktualizace jen podepsaných buildů.
+* Tvrdé nastavení: sandbox, izolace kontextu, minimální most `window.m5desktop`, omezená
+  navigace a oprávnění jen pro origin serveru, pojistky Electronu (bez `RunAsNode`, bez
+  `--inspect`, kontrola integrity `app.asar`, šifrované cookies), tytéž bezpečnostní hlavičky
+  jako server (`server/security-headers.ts`).
+
+```bash
+npm run desktop:install && npm run desktop:build -- --mac   # nebo --win (jde i na macOS, bez Wine)
+```
+
+Podpis a notarizace jen z proměnných prostředí (`CSC_LINK`, `APPLE_*`, `WIN_CSC_LINK`, Azure
+Trusted Signing); bez nich vznikne nepodepsaný build (macOS ad-hoc) a řekne to. CI:
+`.github/workflows/desktop.yml`. Podrobně — instalace, co je jinak (Web Push, Web NFC, passkeys
+podle systému), bezpečnostní model, sestavení, testy, co nebylo ověřeno —
+v [`docs/desktop.md`](docs/desktop.md).
+
+---
+
 ## Rychlá instalace
 
 ### Linux / Docker (one-liner)
@@ -993,6 +1031,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/install-check.md`](docs/install-check.md)        | `check.sh` (6.12): kontrola instalačního balíčku a hostitele — HTTP server, TLS, firewall, jádro, síť, systém, Docker |
 | [`docs/protocol-v4.md`](docs/protocol-v4.md)            | Protokol 4 (6.12): specifikace — hello v4, ratchet, sender keys, schránky, soubory, média, padding, přehrání, identita, důkaz na hubu, průhlednost klíčů, manifesty vydání, NFC tag v2 |
 | [`docs/review-612.md`](docs/review-612.md)              | Nezávislá revize 6.12 s důkazními testy a stavem oprav |
+| [`docs/desktop.md`](docs/desktop.md)                    | M5cet Desktop (6.13) pro macOS a Windows: kód klienta z podepsané aplikace, výběr serveru a kontrola verze, passkeys podle systému a přihlášení přes prohlížeč, upozornění, NFC, bezpečnostní model, sestavení, podpis, CI, testy |
 | [`CHANGELOG.md`](CHANGELOG.md)                          | Historie verzí                                 |
 | [`docs/modes.md`](docs/modes.md)                        | Režimy Light / Server-enhanced, jejich parametry a soubory; Firebase |
 | [`docs/session-and-sharing.md`](docs/session-and-sharing.md) | Session cache, vynucený stav, pozvánky s kódem, Smazat vše a odejít |

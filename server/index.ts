@@ -23,6 +23,7 @@ import "./env";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import helmet from "helmet";
+import { BASE_HEADERS, helmetOptions } from "./security-headers";
 import { rateLimit } from "express-rate-limit";
 import { requireAdminToken } from "./admin-auth";
 import { mountAdminRequestGuards } from "./admin-limits";
@@ -156,54 +157,14 @@ app.use(notHooks(formBody));
 
 app.disable("etag");
 
-// Helmet sets a strong baseline of security headers. We then customize CSP
-// to allow the WebSocket/WebRTC client (self) and OSM tiles for the map
-// preview. The production bundle has no inline script and no eval, so its
-// script-src is 'self' alone; the Vite dev server injects inline modules
-// and needs 'unsafe-inline' / 'unsafe-eval'.
+// Helmet sets a strong baseline of security headers, with a CSP for the
+// WebSocket/WebRTC client (server/security-headers.ts — 6.13: M5cet Desktop
+// serves the bundled client under the same set).
 const DEV = process.env.NODE_ENV !== "production";
-app.use(
-  helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        connectSrc: ["'self'", "wss:", "ws:", "https://tile.openstreetmap.org"],
-        // 'wasm-unsafe-eval' lets WebAssembly compile (Argon2id, kdf.ts) —
-        // it does not allow eval() or inline script.
-        scriptSrc: DEV ? ["'self'", "'unsafe-inline'", "'unsafe-eval'"] : ["'self'", "'wasm-unsafe-eval'"],
-        objectSrc: ["'none'"],
-        // Google Fonts: only fetched after the user opts in (Appearance → Typography).
-        styleSrc: ["'self'", "'unsafe-inline'", "https://api.fontshare.com", "https://fonts.googleapis.com"],
-        imgSrc: ["'self'", "data:", "blob:", "https://tile.openstreetmap.org"],
-        fontSrc: ["'self'", "https://api.fontshare.com", "https://fonts.gstatic.com"],
-        mediaSrc: ["'self'", "blob:"],
-        workerSrc: ["'self'"],
-        childSrc: ["'none'"],
-        // 5.3: only this site's own pages may be framed — /fn-sandbox.html, where a
-        // function's browser code runs (sandboxed, opaque origin).
-        frameSrc: ["'self'"],
-        frameAncestors: ["'none'"],
-        baseUri: ["'self'"],
-        formAction: ["'self'"],
-        upgradeInsecureRequests: [],
-      },
-    },
-    crossOriginEmbedderPolicy: false, // WebRTC/getUserMedia does not require COEP
-  }),
-);
+app.use(helmet(helmetOptions(DEV)));
 
 app.use((_req, res, next) => {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
-  res.setHeader("Surrogate-Control", "no-store");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  // (self), not (): an empty allowlist disables the feature for this document
-  // too — getUserMedia / geolocation then fail without ever prompting, which
-  // breaks calls, speech-to-text and location sharing. (self) still blocks
-  // every embedded third-party frame, and the browser prompt still applies.
-  res.setHeader("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(self), interest-cohort=()");
+  for (const [name, value] of Object.entries(BASE_HEADERS)) res.setHeader(name, value);
   next();
 });
 

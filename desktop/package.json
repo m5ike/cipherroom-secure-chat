@@ -1,0 +1,28 @@
+{
+  "name": "m5cet-desktop",
+  "productName": "M5cet",
+  "version": "6.13.0",
+  "description": "M5cet Desktop — the M5cet web client with its code inside the signed app (macOS, Windows).",
+  "author": "M5cet",
+  "license": "MIT",
+  "private": true,
+  "main": "dist/main.cjs",
+  "scripts": {
+    "compile": "node scripts/compile.mjs",
+    "icons": "node scripts/icons.mjs",
+    "web": "node scripts/web.mjs",
+    "start": "node scripts/web.mjs && node scripts/compile.mjs && electron .",
+    "build": "node scripts/build.mjs",
+    "build:mac": "node scripts/build.mjs --mac",
+    "build:win": "node scripts/build.mjs --win",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
+  "devDependencies": {
+    "@electron/fuses": "2.1.3",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  }
+}

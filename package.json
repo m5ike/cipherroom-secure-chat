@@ -31,7 +31,11 @@
     "release:keygen": "tsx script/release-manifest.ts keygen",
     "release:sign": "tsx script/release-manifest.ts sign",
     "release:verify": "tsx script/release-manifest.ts verify",
-    "docs:summary-pdf": "node scripts/security-summary-pdf.mjs"
+    "docs:summary-pdf": "node scripts/security-summary-pdf.mjs",
+    "desktop:install": "npm ci --prefix desktop",
+    "desktop:build": "node desktop/scripts/build.mjs",
+    "desktop:start": "npm --prefix desktop run start",
+    "desktop:smoke": "node desktop/scripts/smoke.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-ng-wasmfile-release-sync": "^0.32.0",
