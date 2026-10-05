@@ -55,7 +55,8 @@ final class NotificationPrefs {
         return d
     }()
 
-    let settings: any NotifySettingsSource
+    /// The notify.* settings (the design's once Notifier.connect(design:) ran; UserDefaults before).
+    var settings: any NotifySettingsSource
     weak var account: (any NotifyAccount)?
     private let store: (any SyncStateStore)?
     /// The device (the account link, the server's address); nil before Platform/Push is installed.

@@ -79,7 +79,9 @@ enum PushContent {
         }
         if (vars["app"] ?? "").isEmpty { vars["app"] = prefs.appName }
         if let roomName, !locked, NotifyTemplate.rank(privacy) >= 2 { vars["room"] = roomName }
-        let neutralKind = NeutralTexts.kind(forNotify: kind)
+        // 6.14 call wake: a call's end (payload.call.end) is its "missed call", as the server's neutral alert says.
+        let callEnd = kind == "call" && ((p["call"] as? [String: Any])?["end"] as? Bool) == true
+        let neutralKind: NeutralTexts.Kind = callEnd ? .missed : NeutralTexts.kind(forNotify: kind)
         var title: String, body: String
         if let tpl = p["tpl"] as? [String: Any] {
             (title, body) = NotifyTemplate.notification(str(tpl, "title"), str(tpl, "body"), vars, privacy)
@@ -100,7 +102,7 @@ enum PushContent {
         let sender = !locked && !neutralNow && messageLike && rank >= 1 ? vars["sender"].map { NotifyTemplate.clean($0, 64) }.flatMap { $0.isEmpty ? nil : $0 } : nil
         let group = !locked && !neutralNow && rank >= 2 ? roomName.flatMap { $0.isEmpty ? nil : $0 } : nil
         return NotificationPlan(title: title, body: body, category: category, sound: bool(p, "sound", true) && allowed, passive: !allowed,
-                                neutral: locked || neutralNow || rank == 0, neutralKey: kind == "call" ? "ring.call" : "notify.message",
+                                neutral: locked || neutralNow || rank == 0, neutralKey: callEnd ? "ring.missed" : kind == "call" ? "ring.call" : "notify.message",
                                 sender: sender, groupName: group, serverRoom: str(p, "room").flatMap { $0.isEmpty ? nil : $0 },
                                 url: nil, at: (p["at"] as? NSNumber)?.int64Value ?? 0)
     }

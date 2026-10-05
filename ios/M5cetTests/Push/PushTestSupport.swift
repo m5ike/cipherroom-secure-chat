@@ -7,6 +7,8 @@
 
 import CryptoKit
 import Foundation
+import M5Core
+import M5Crypto
 import M5Design
 import M5Net
 import XCTest
@@ -37,28 +39,18 @@ enum PushFixtures {
     static var serverKey: String { ios.obj("info")!.obj("server")!.str("publicKey") }
     static var serverKid: String { ios.obj("info")!.obj("server")!.str("kid") }
     /// The server's clock at the check-in (the recorded command expires a week later).
-    static var checkinTime: Millis { ios.obj("checkin")!.int("time") }
+    static var checkinTime: Int64 { ios.obj("checkin")!.int("time") }
     static let base = "https://chat.example.com"
 }
 
 /// The fixture device's keys (the same P-256 key signs and decrypts, as in the recording).
-struct FixtureSigner: DeviceSigner {
-    let key: P256.Signing.PrivateKey
-    init(pkcs8: Data = PushFixtures.devicePkcs8) { key = try! P256.Signing.PrivateKey(derRepresentation: pkcs8) }
-    var level: KeyLevel { .software }
-    func publicKeySPKI() throws -> String { b64(key.publicKey.derRepresentation) }
-    func sign(_ data: Data) throws -> Data { try key.signature(for: data).rawRepresentation }
-}
-
-struct FixtureAgreement: DeviceAgreement {
-    let key: P256.KeyAgreement.PrivateKey
-    init(pkcs8: Data = PushFixtures.devicePkcs8) { key = try! P256.KeyAgreement.PrivateKey(derRepresentation: pkcs8) }
-    init(key: P256.KeyAgreement.PrivateKey) { self.key = key }
-    var level: KeyLevel { .software }
-    func publicKeySPKI() throws -> String { b64(key.publicKey.derRepresentation) }
-    func sharedSecret(withSPKI spki: String) throws -> Data {
-        try key.sharedSecretFromKeyAgreement(with: EcP256.publicKey(spki: spki)).withUnsafeBytes { Data($0) }
-    }
+enum FixtureKeys {
+    static var pair: P256Pair { P256Pair(try! P256.KeyAgreement.PrivateKey(derRepresentation: PushFixtures.devicePkcs8)) }
+    static var spki: String { pair.spki }
+    /// M5Net's request signer (X-M5-Signature, the enrolment proof).
+    static var requestSigner: SoftwareRequestSigner { try! SoftwareRequestSigner(derBase64: PushFixtures.ios.str("devicePkcs8")) }
+    /// M5Crypto's device signer (the wipe report's synchronous signature).
+    static var deviceSigner: SoftwareSigner { SoftwareSigner(pair) }
 }
 
 /// The server as it answered in the recording (by path); `override` answers first. Records the requests.
@@ -103,12 +95,12 @@ extension HTTPRequest {
 struct TestControlServer {
     let key = P256.Signing.PrivateKey()
     var spki: String { b64(key.publicKey.derRepresentation) }
-    var kid: String { EcP256.kid(spki: spki) ?? "" }
+    var kid: String { Ec.kid(spki) }
 
     /// eciesSeal: an ephemeral P-256 key, HKDF-SHA256(salt label, info "<purpose>|<deviceId>"), AES-256-GCM.
     static func seal(_ plain: Data, toSPKI device: String, deviceId: String, purpose: String) -> (e: String, iv: String, ct: String) {
         let eph = P256.KeyAgreement.PrivateKey()
-        let peer = try! EcP256.publicKey(spki: device)
+        let peer = try! Ec.publicFromSpki(device)
         let shared = try! eph.sharedSecretFromKeyAgreement(with: peer)
         let k = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data(PushOpener.eciesLabel.utf8), sharedInfo: Data("\(purpose)|\(deviceId)".utf8),
                                                outputByteCount: 32)
@@ -145,7 +137,7 @@ final class FakeFacts: DeviceFactsProviding {
     func description(name: String?) -> DeviceDescription {
         DeviceDescription(name: name ?? "Test iPhone", model: "iPhone17,1", modelName: "iPhone 17 Pro", idiom: "phone", os: "iOS", osVersion: "26.0", locale: "cs")
     }
-    func status(bundle: NetJSON?, push: String, policyAt: Millis) -> DeviceStatusReport {
+    func status(bundle: NetJSON?, push: String, policyAt: Int64) -> DeviceStatusReport {
         DeviceStatusReport(battery: 80, network: "wifi", rooms: 1, bundle: bundle, push: push, lockMode: "pin", storage: 1024, policyAt: policyAt, biometry: "faceID")
     }
 }
@@ -202,13 +194,13 @@ struct DeviceRig {
         init(_ v: T) { value = v }
     }
 
-    init(clock: Millis = PushFixtures.checkinTime, agreement: any DeviceAgreement = FixtureAgreement(), signer: any DeviceSigner = FixtureSigner()) {
+    init(clock: Int64 = PushFixtures.checkinTime, agreement: any KeyAgreer = FixtureKeys.pair, signer: any RequestSigner = FixtureKeys.requestSigner) {
         let keys = KeyringEciesOpener(agreement: agreement)
         var deps = DeviceService.Dependencies(client: DeviceAPIClient(http: HTTPClient(transport: server), clock: NetClock { clock }), store: store,
-                                              signer: KeyringRequestSigner(signer: signer), opener: keys, facts: facts, clock: NetClock { clock },
+                                              signer: signer, opener: keys, facts: facts, clock: NetClock { clock },
                                               appCode: 61400)
         let box = appliedBox
-        deps.applyPolicy = { answer, _, _ in box.value.append(answer); return answer.obj("policySigned") != nil }
+        deps.adoptPolicy = { policy, _ in box.value.append(policy); return true }
         deps.agree = keys.agree
         deps.defaultServer = PushFixtures.base
         let bundles = DesignBundleStore(storage: storage, crypto: DeviceBundleCrypto(opener: keys), appCode: 61400, now: { Double(clock) })

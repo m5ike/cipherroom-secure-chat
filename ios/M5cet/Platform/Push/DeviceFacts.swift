@@ -17,7 +17,7 @@ protocol DeviceFactsProviding: AnyObject {
     /// The enrolment's / check-in's description (`name`: what the person typed; nil: the device's).
     func description(name: String?) -> DeviceDescription
     /// The check-in's state report.
-    func status(bundle: NetJSON?, push: String, policyAt: Millis) -> DeviceStatusReport
+    func status(bundle: NetJSON?, push: String, policyAt: Int64) -> DeviceStatusReport
     /// "sandbox" or "production" — the APNs environment the tokens are for (the server's names).
     var apnsEnvironment: String { get }
 }
@@ -112,7 +112,7 @@ final class SystemDeviceFacts: DeviceFactsProviding {
                                  locale: language())
     }
 
-    func status(bundle: NetJSON?, push: String, policyAt: Millis) -> DeviceStatusReport {
+    func status(bundle: NetJSON?, push: String, policyAt: Int64) -> DeviceStatusReport {
         let d = UIDevice.current
         let level = d.batteryLevel
         let lock = lock()

@@ -5,6 +5,7 @@
 import CryptoKit
 import Foundation
 import M5Design
+import M5Crypto
 import M5Net
 import XCTest
 @testable import M5cet
@@ -21,7 +22,7 @@ final class DesignBundleStoreTests: XCTestCase {
     } }
 
     private func store(_ storage: MemoryBundleStorage, now: Double = 1_000) -> (DesignBundleStore, Holder) {
-        let s = DesignBundleStore(storage: storage, crypto: DeviceBundleCrypto(opener: KeyringEciesOpener(agreement: FixtureAgreement())), appCode: 61400,
+        let s = DesignBundleStore(storage: storage, crypto: DeviceBundleCrypto(opener: KeyringEciesOpener(agreement: FixtureKeys.pair)), appCode: 61400,
                                   now: { now })
         s.builtIn = { nil }
         let events = Holder()
@@ -129,7 +130,7 @@ final class DesignBundleStoreTests: XCTestCase {
         XCTAssertEqual(storage2.ledger.items[id]?.error, "the bundle is not encrypted for this device")
         // A newer app needed: not even fetched.
         let storage3 = MemoryBundleStorage()
-        let old = DesignBundleStore(storage: storage3, crypto: DeviceBundleCrypto(opener: KeyringEciesOpener(agreement: FixtureAgreement())), appCode: 61300)
+        let old = DesignBundleStore(storage: storage3, crypto: DeviceBundleCrypto(opener: KeyringEciesOpener(agreement: FixtureKeys.pair)), appCode: 61300)
         let fetched = Flag()
         await old.offer(offer, autoDownload: true, wifiOnly: false, unmetered: true, fetch: { _, _ in fetched.set(); return Data() }, keys: keys)
         XCTAssertFalse(fetched.value)
@@ -232,15 +233,23 @@ final class VoIPInviteOpenerTests: XCTestCase {
         let rig = DeviceRig(clock: 1_800_000_000_000)
         rig.store.saveNow("config", DeviceState(server: PushFixtures.base, deviceId: "ios_test0001", serverKey: server.spki, serverKid: server.kid).json)
         let device = DeviceService(rig.device.deps, bundles: rig.device.bundles, events: rig.device.events)
-        let enc = try FixtureAgreement().publicKeySPKI()
-        let opener = VoIPInviteOpener(device: device, keys: KeyringEciesOpener(agreement: FixtureAgreement()), store: rig.store)
-        let w = server.wire(id: "v1", kind: "call", payload: ["room": "family", "who": "Alice", "video": true, "at": 5], exp: 4_000_000_000_000,
-                            device: enc, deviceId: "ios_test0001")
+        let enc = FixtureKeys.spki
+        let opener = VoIPInviteOpener(device: device, keys: KeyringEciesOpener(agreement: FixtureKeys.pair), store: rig.store)
+        // The call wake's content (server/ios/commands.ts voipCallContent): the call's id, the hub's room id.
+        opener.roomForServerId = { $0 == "r3.family" ? "family" : nil }
+        let w = server.wire(id: "cmd_v1", kind: "call", payload: ["call": "cw-0123", "room": "r3.family", "who": "Alice", "video": true, "at": 5],
+                            exp: 4_000_000_000_000, device: enc, deviceId: "ios_test0001")
         let invite = try XCTUnwrap(opener.openCallInvite(["m5": w]))
-        XCTAssertEqual(invite, VoIPCallInvite(kind: .ring, id: "v1", roomKey: "family", who: "Alice", video: true, at: 5))
+        XCTAssertEqual(invite, VoIPCallInvite(kind: .ring, id: "cw-0123", roomKey: "family", who: "Alice", video: true, at: 5))
         XCTAssertNil(opener.openCallInvite(["m5": w]), "the same push twice: once")
-        let end = server.wire(id: "v2", kind: "call-end", payload: ["room": "family"], device: enc, deviceId: "ios_test0001")
-        XCTAssertEqual(opener.openCallInvite(["m5": end])?.kind, .end)
+        let end = server.wire(id: "cmd_v2", kind: "call-end", payload: ["call": "cw-0123", "room": "r3.family"], device: enc, deviceId: "ios_test0001")
+        XCTAssertEqual(opener.openCallInvite(["m5": end]), VoIPCallInvite(kind: .end, id: "cw-0123", roomKey: "family", at: 1), "no time of its own: the message's")
+        // A room this device does not have: nil.
+        let other = server.wire(id: "cmd_v4", kind: "call", payload: ["call": "cw-9", "room": "r3.other"], device: enc, deviceId: "ios_test0001")
+        XCTAssertNil(opener.openCallInvite(["m5": other]))
+        // Expired (60 s after the ring).
+        let late = server.wire(id: "cmd_v5", kind: "call", payload: ["call": "cw-8", "room": "r3.family"], exp: 1_000, device: enc, deviceId: "ios_test0001")
+        XCTAssertNil(opener.openCallInvite(["m5": late]))
         // Forged: nil (CallKit then gets a neutral call, ended at once).
         let forged = TestControlServer().wire(id: "v3", kind: "call", payload: ["room": "family"], device: enc, deviceId: "ios_test0001")
         XCTAssertNil(opener.openCallInvite(["m5": forged]))
@@ -248,10 +257,10 @@ final class VoIPInviteOpenerTests: XCTestCase {
     }
 
     func testTheNotifiersCallMapsTheServersRoom() {
-        let o = PushOpener.Opened(id: "n1", kind: "notify", payload: ["kind": "call", "room": "srv-room", "privacy": "sender", "vars": ["sender": "Bob"], "at": 7],
-                                  exp: 0, at: 1)
+        let o = PushOpener.Opened(id: "n1", kind: "notify", payload: ["kind": "call", "room": "srv-room", "privacy": "sender", "vars": ["sender": "Bob"], "at": 7,
+                                                                      "call": ["id": "cw-1", "video": true, "at": 6]], exp: 0, at: 1)
         let invite = VoIPInviteOpener.invite(o) { $0 == "srv-room" ? "family" : nil }
-        XCTAssertEqual(invite, VoIPCallInvite(kind: .ring, id: "n1", roomKey: "family", who: "Bob", video: false, at: 7))
+        XCTAssertEqual(invite, VoIPCallInvite(kind: .ring, id: "cw-1", roomKey: "family", who: "Bob", video: true, at: 6))
         let neutral = PushOpener.Opened(id: "n2", kind: "notify", payload: ["kind": "call", "room": "srv-room", "privacy": "neutral", "vars": ["sender": "Bob"]],
                                         exp: 0, at: 1)
         XCTAssertEqual(VoIPInviteOpener.invite(neutral) { _ in "family" }?.who, "", "the level hides the caller")

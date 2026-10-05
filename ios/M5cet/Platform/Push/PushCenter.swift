@@ -18,6 +18,7 @@
 
 import BackgroundTasks
 import Foundation
+import M5Core
 import M5Net
 import OSLog
 import UIKit
@@ -58,19 +59,22 @@ final class PushCenter: RemotePushHandling {
     static func install(into model: AppModel) {
         guard let security = SecurityCenter.shared else { return }
         let facts = SystemDeviceFacts()
+        facts.language = { [weak model] in model?.design.lang ?? NeutralTexts.deviceLanguage }
         let store = VaultNetStateStore(vault: security.vault)
-        let keys = KeyringEciesOpener(agreement: security.agreement)
+        let deviceKeys = DeviceKeys(keyring: security.keyring)
+        let keys = KeyringEciesOpener { try deviceKeys.agreement() }
         let appCode = Int(AppInfo.build) ?? M5NetInfo.defaultCode
         let bundles = DesignBundleStore(storage: VaultBundleStorage(vault: security.vault), crypto: DeviceBundleCrypto(opener: keys), appCode: appCode)
         let events = DeviceEvents(store: store)
         let handoff = PushHandoff(shared: security.paths.shared)
         let http = HTTPClient(transport: URLSessionHTTPTransport(), userAgent: M5NetInfo.userAgent(version: AppInfo.version))
-        var deps = DeviceService.Dependencies(client: DeviceAPIClient(http: http), store: store, signer: KeyringRequestSigner(signer: security.signer),
+        var deps = DeviceService.Dependencies(client: DeviceAPIClient(http: http), store: store, signer: DeviceRequestSigner(keys: deviceKeys),
                                               opener: keys, facts: facts, appCode: appCode)
         deps.buildPin = Bundle.main.object(forInfoDictionaryKey: "M5ServerKeyPin") as? String
         deps.defaultServer = Bundle.main.object(forInfoDictionaryKey: "M5DefaultServer") as? String ?? ""
-        deps.applyPolicy = { [weak security] answer, key, id in
-            security?.policies.apply(answer: answer.foundation, serverKey: key, deviceId: id) ?? false
+        deps.adoptPolicy = { [weak security] policy, at in
+            guard let p = JSON.parseObject(policy.text) else { return false }
+            return security?.policies.adopt(policy: p, at: at) ?? false
         }
         deps.resetPolicy = { [weak security] in security?.policies.reset() }
         deps.isLocked = { [weak security] in security?.lock.isLocked ?? true }
@@ -89,7 +93,7 @@ final class PushCenter: RemotePushHandling {
         center.host = host
         device.host = host
         // The wipe's report: signed with the device key while it exists, sent at every start until delivered.
-        device.wipeReporter.signer = security.signer
+        device.wipeReporter.signer = { try deviceKeys.signer() }
         security.wiper.signer = device.wipeReporter
         security.wiper.transport = device.wipeReporter
         security.wiper.addTeardown("device") { [weak center] in center?.wiped() }
@@ -100,10 +104,21 @@ final class PushCenter: RemotePushHandling {
         CallSystem.shared.voip.onToken { [weak center] _ in center?.tokensChanged() }
 
         center.registerBackgroundTask()
+        // The design in use (Renderer DesignServices): the active bundle, else the built-in one; a screen of a trial
+        // bundle that fails to draw rolls it back (Bundles.onRenderFailure).
+        let services = model.design
+        bundles.builtIn = { [weak services] in services?.builtIn }
+        bundles.onChange { [weak services] d in
+            guard let services else { return }
+            services.setDesign(d ?? services.builtIn)
+        }
+        services.onRenderFailure = { [weak bundles] screen, error in bundles?.renderFailed(screen: screen, message: "\(error)") }
         bundles.loadActive()
+        // An enrolment link fills DeviceService.prefill (or says why not) and is not taken: the Renderer still brings
+        // the enrolment screen forward and the link stays pending for the form (DesignHost.handleLink).
         model.onLink { [weak device] link in
-            guard case .enroll(let url) = link, let device else { return false }
-            return device.takeEnrollLink(url)
+            if case .enroll(let url) = link { device?.takeEnrollLink(url) }
+            return false
         }
         model.onScenePhase { [weak center] phase in
             switch phase {
@@ -272,15 +287,20 @@ enum LogTail {
 
 /// Opens a PushKit payload for Platform/Calls (VoIPPayloadOpening): the same wire as the control messages
 /// ({"m5":{i,e,iv,ct,s}}), checked synchronously (the server's signature with the pinned key, ECIES with the
-/// Secure Enclave key, the id, the expiry) and deduplicated (SYS record "seen-voip"). Contents:
-///   {kind:"call"|"call-end", payload:{room: <room key>, who, video, at}}   (Platform/Calls README)
-///   {kind:"notify", payload:{kind:"call", room: <the server's room id>, vars:{sender}, at}}   (server/ios/commands.ts today)
+/// device's encryption key, the id, the expiry) and deduplicated by the message id `i` (SYS record "seen-voip",
+/// Android push/Control.seen). The content (6.14 call wake, server/ios/commands.ts voipCallContent):
+///   {kind:"call"|"call-end", exp: at + 60 s, payload:{call: <call id>, room: <the hub's room id>, who, video, at}}
+/// `call` becomes the invite's id (the ring and its end share it), `room` is mapped to the saved room
+/// (NotificationRooms.roomKey(forServerId:), Android Rooms.byServerId) — an unknown room: nil (CallKit then
+/// shows a neutral call ended at once). A notifier "notify" of kind call (an older server) is read the same way.
 @MainActor
 final class VoIPInviteOpener: VoIPPayloadOpening {
     private weak var device: DeviceService?
     private let keys: KeyringEciesOpener
     private let store: any SyncStateStore
     static let record = "seen-voip"
+    /// The hub's room id → the saved room (the room session, through Notifications' NotificationRooms).
+    var roomForServerId: (String) -> String? = { Notifier.shared?.rooms?.roomKey(forServerId: $0) }
 
     init(device: DeviceService, keys: KeyringEciesOpener, store: any SyncStateStore) {
         self.device = device
@@ -295,7 +315,7 @@ final class VoIPInviteOpener: VoIPPayloadOpening {
         if seen.contains(o.id) { return nil }
         seen.append(o.id)
         store.saveNow(Self.record, ["ids": .strings(Array(seen.suffix(100)))])
-        return Self.invite(o, roomForServerId: { Notifier.shared?.rooms?.roomKey(forServerId: $0) })
+        return Self.invite(o, roomForServerId: roomForServerId)
     }
 
     /// The invite of an opened message (nil: not a call, or a room this device does not have).
@@ -304,15 +324,20 @@ final class VoIPInviteOpener: VoIPPayloadOpening {
         func s(_ k: String, _ from: [String: Any]) -> String { from[k] as? String ?? "" }
         switch o.kind {
         case "call", "call-end":
-            let room = s("room", p)
-            guard !room.isEmpty else { return nil }
-            return VoIPCallInvite(kind: o.kind == "call" ? .ring : .end, id: o.id, roomKey: room, who: s("who", p),
+            let serverRoom = s("room", p)
+            guard !serverRoom.isEmpty, let room = roomForServerId(serverRoom) else { return nil }
+            let call = s("call", p)
+            return VoIPCallInvite(kind: o.kind == "call" ? .ring : .end, id: call.isEmpty ? o.id : call, roomKey: room, who: s("who", p),
                                   video: (p["video"] as? Bool) ?? false, at: (p["at"] as? NSNumber)?.int64Value ?? o.at)
         case "notify":
-            guard s("kind", p) == "call", let room = roomForServerId(s("room", p)) else { return nil }
+            let c = p["call"] as? [String: Any] ?? [:]
+            let serverRoom = (c["room"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? s("room", p)
+            guard s("kind", p) == "call", let room = roomForServerId(serverRoom) else { return nil }
             let vars = p["vars"] as? [String: Any] ?? [:]
             let who = NotifyTemplate.rank(s("privacy", p)) >= 1 ? s("sender", vars) : ""
-            return VoIPCallInvite(kind: .ring, id: o.id, roomKey: room, who: who, video: false, at: (p["at"] as? NSNumber)?.int64Value ?? o.at)
+            let call = c["id"] as? String ?? ""
+            return VoIPCallInvite(kind: (c["end"] as? Bool) == true ? .end : .ring, id: call.isEmpty ? o.id : call, roomKey: room, who: who,
+                                  video: (c["video"] as? Bool) ?? false, at: (c["at"] as? NSNumber)?.int64Value ?? (p["at"] as? NSNumber)?.int64Value ?? o.at)
         default:
             return nil
         }

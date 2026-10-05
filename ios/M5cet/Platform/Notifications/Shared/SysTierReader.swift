@@ -7,8 +7,9 @@
 //   sys.key            {v:1, hw, e, iv, ct}: K = HKDF-SHA256(ECDH(key "sys", e), salt "m5/ios/sys.key/1",
 //                      info e), AES-256-GCM, AAD "m5/sys.key" → DEK_sys
 //   sys/<name>.bin     iv ‖ AES-256-GCM(DEK_sys, AAD "SYS|<name>")
-//   Keychain           generic password, service "cz.m5cet.app.security", account "key.<alias>":
-//                      a level byte (1 Secure Enclave, 2 software) and the key's blob
+//   Keychain           generic password, service "cz.m5cet.shared.security", account "key.sys" / "key.enc",
+//                      in the keychain group <TEAMID>.cz.m5cet.shared (the extension's only one): a level byte
+//                      (1 Secure Enclave, 2 software) and the key's blob (Security README "Skupiny Keychainu")
 //
 // Never the USER tier: it is not in the App Group (Security README). Shared:
 // compiled into the app (tests) and, through a symlink, into M5cetNotifications.
@@ -20,7 +21,7 @@ import Security
 struct SysTierReader: Sendable {
     enum Failure: Error, Equatable, Sendable { case noKey(String), damaged(String) }
 
-    static let keychainService = "cz.m5cet.app.security"
+    static let keychainService = "cz.m5cet.shared.security"
 
     /// The App Group's Application Support/m5 (the app's SecurityPaths.shared).
     let shared: URL

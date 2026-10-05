@@ -97,7 +97,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate, LockParticipan
         shared = n
         let center = UNUserNotificationCenter.current()
         center.delegate = n
-        n.registerCategories()
+        n.connect(design: model.design)
         n.device = PushCenter.shared?.device
         prefs.device = n.device
         prefs.postLocalTest = { [weak n] p in n?.templated(p, local: true) }

@@ -14,6 +14,8 @@
 
 import CryptoKit
 import Foundation
+import M5Core
+import M5Crypto
 import M5Design
 import M5Net
 import Observation
@@ -79,8 +81,8 @@ final class DeviceService {
         var buildPin: String?
         /// The server the form starts with (Info.plist M5DefaultServer; Android BuildConfig.DEFAULT_SERVER).
         var defaultServer: String = ""
-        /// The lock policy (Platform/Security PolicyStore): applies policySigned of an answer.
-        var applyPolicy: (_ answer: NetJSON, _ serverKey: String, _ deviceId: String) -> Bool = { _, _, _ in false }
+        /// The lock policy (Platform/Security PolicyStore.adopt): the policy DeviceState verified (one copy, never older).
+        var adoptPolicy: (_ policy: NetJSON, _ at: Int64) -> Bool = { _, _ in false }
         /// A new server: the policy's clock starts again (Android Config.enrolled).
         var resetPolicy: () -> Void = {}
         /// The app lock (an enrolment link while locked says nothing of the server).
@@ -109,7 +111,7 @@ final class DeviceService {
     private(set) var deviceStatus = ""
     private(set) var checkingIn = false
     /// When the last check-in succeeded (ms; 0: not in this run).
-    private(set) var lastCheckinAt: Millis = 0
+    private(set) var lastCheckinAt: Int64 = 0
     /// The last check-in's problem (network, refused), nil when it went through.
     private(set) var lastError: String?
     /// How the server reaches this device ("apns" / "poll").
@@ -250,7 +252,7 @@ final class DeviceService {
             st.apply(serverAnswer: answer)
             save(st)
             deps.resetPolicy()
-            _ = deps.applyPolicy(answer, key, deviceId)
+            if st.policyAt > 0 { _ = deps.adoptPolicy(st.policy, st.policyAt) }
             policyApplied()
             update.noteMinBuild(max(info.minBuild, answer.int("minBuild")))
             pushMode = answer.obj("apns") != nil && !(pushTokens().token ?? "").isEmpty ? "apns" : "poll"
@@ -300,8 +302,11 @@ final class DeviceService {
             schedule.ran(at: deps.clock.now())
             lastCheckinAt = deps.clock.now()
             save(st)
-            if case .ignored(let reason) = result.policy { logger.warning("\(reason, privacy: .public)") }
-            _ = deps.applyPolicy(result.raw, st.serverKey, st.deviceId)
+            switch result.policy {
+            case .applied: _ = deps.adoptPolicy(st.policy, st.policyAt)
+            case .ignored(let reason): logger.warning("\(reason, privacy: .public)")
+            case .none: break
+            }
             policyApplied()
             pushMode = result.push.isEmpty ? push : result.push
             deviceStatus = ""
@@ -538,8 +543,8 @@ final class DeviceService {
 final class DeviceWipeReporter: WipeReportSigner, WipeTransport, @unchecked Sendable {
     private let lock = NSLock()
     private var server = "", deviceId = ""
-    /// The device's signing key (Platform/Security), nil in tests without one.
-    var signer: (any DeviceSigner)?
+    /// The device's signing key (Platform/Security KeyringSigner — M5Crypto DeviceSigner), nil before installed.
+    var signer: (@Sendable () throws -> any M5Crypto.DeviceSigner)?
     var transport: any HTTPTransport = URLSessionHTTPTransport()
     var clock: NetClock = .system
 
@@ -555,9 +560,9 @@ final class DeviceWipeReporter: WipeReportSigner, WipeTransport, @unchecked Send
         guard !server.isEmpty, !deviceId.isEmpty, let signer else { return nil }
         let path = (URLComponents(string: server)?.percentEncodedPath ?? "") + "/api/ios/events"
         let time = String(clock.now())
-        let nonce = Bytes.b64url(Bytes.random(16))
+        let nonce = B64.url(Crypto.random(16))
         let text = DeviceSigning.requestString(method: "POST", pathAndQuery: path, time: time, nonce: nonce, body: body)
-        let sig = try signer.sign(Data(text.utf8))
+        guard let sig = Data(base64Encoded: try signer().sign(Bytes.utf8(text))) else { return nil }
         return PendingRequest(url: server + "/api/ios/events",
                               headers: ["X-M5-Device": deviceId, "X-M5-Time": time, "X-M5-Nonce": nonce, "X-M5-Signature": Bytes.b64(sig),
                                         "Content-Type": "application/json", "User-Agent": M5NetInfo.userAgent],

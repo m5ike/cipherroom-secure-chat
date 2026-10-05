@@ -2,36 +2,52 @@
 // Platform/Security (Android: net/Server's Keystore.signKey, Config.encPrivateKey,
 // the vault's system tier):
 //
-//   KeyringRequestSigner    M5Net RequestSigner   — the Secure Enclave signing key (X-M5-Signature, the enrolment proof)
-//   KeyringEciesOpener      M5Net EciesOpener     — ECIES with the Secure Enclave encryption key (push, bundle keys)
+//   DeviceKeys              the Keyring's signing and encryption keys, made on first use (KeyringSigner,
+//                           KeyringAgreement — Secure Enclave where there is one)
+//   DeviceRequestSigner     M5Net RequestSigner   — the signing key (X-M5-Signature, the enrolment proof)
+//   KeyringEciesOpener      M5Net EciesOpener     — ECIES with the encryption key (push, bundle keys), also synchronous
 //   DeviceBundleCrypto      M5Design BundleCrypto — the same key for design bundles, CryptoKit for the rest
 //   VaultNetStateStore      M5Net NetStateStore   — JSON records of the SYS tier (readable while locked, and by
 //                                                   the notification extension): "config", "seen", "events", …
 
 import CryptoKit
 import Foundation
+import M5Core
+import M5Crypto
 import M5Design
 import M5Net
 
-/// M5Net's request signer over the device's signing key (Platform/Security DeviceSigner).
-struct KeyringRequestSigner: RequestSigner {
-    let signer: any DeviceSigner
-    func publicKeySPKI() async throws -> String { try signer.publicKeySPKI() }
-    func signP1363(_ data: Data) async throws -> Data { try signer.sign(data) }
+/// The device's two keys in the Keyring (SecurityCenter.signer() / .agreement() without the main actor):
+/// each use reads the key, so a key the system cannot reach yet (before the first unlock) fails that use only.
+struct DeviceKeys: Sendable {
+    let keyring: Keyring
+    func signer() throws -> KeyringSigner { try KeyringSigner(keyring: keyring) }
+    func agreement() throws -> KeyringAgreement { try KeyringAgreement(keyring: keyring) }
+}
+
+/// M5Net's request signer over the device's signing key, made when first used.
+struct DeviceRequestSigner: RequestSigner {
+    let keys: DeviceKeys
+    func publicKeySPKI() async throws -> String { try await keys.signer().publicKeySPKI() }
+    func signP1363(_ data: Data) async throws -> Data { try keys.signer().sign(data: data) }
 }
 
 /// ECIES (server/mobile/crypto.ts eciesSeal) opened with the device's encryption key — synchronously
 /// (PushKit and the bundle checks cannot await) and as M5Net's EciesOpener.
 struct KeyringEciesOpener: EciesOpener {
-    let agreement: any DeviceAgreement
+    /// The encryption key (M5Crypto KeyAgreer: the Keyring's, a software pair in tests).
+    let agreement: @Sendable () throws -> any KeyAgreer
+
+    init(agreement: @escaping @Sendable () throws -> any KeyAgreer) { self.agreement = agreement }
+    init(agreement: any KeyAgreer) { self.agreement = { agreement } }
 
     /// Raw ECDH with a peer key (the 32-byte x).
     var agree: @Sendable (P256.KeyAgreement.PublicKey) throws -> Data {
         let a = agreement
-        return { peer in try a.sharedSecret(withSPKI: EcP256.spki(peer)) }
+        return { peer in Data(try a().agree(with: peer)) }
     }
 
-    func publicKeySPKI() async throws -> String { try agreement.publicKeySPKI() }
+    func publicKeySPKI() async throws -> String { try agreement().spki }
 
     func open(_ wire: EciesEnvelope, deviceId: String, purpose: String) async throws -> Data {
         try openNow(e: wire.e, iv: wire.iv, ct: wire.ct, deviceId: deviceId, purpose: purpose)

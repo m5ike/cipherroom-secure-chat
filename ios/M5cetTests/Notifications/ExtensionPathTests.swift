@@ -7,6 +7,7 @@
 
 import CryptoKit
 import Foundation
+import M5Crypto
 import M5Net
 import XCTest
 @testable import M5cet
@@ -20,8 +21,8 @@ final class ExtensionPathTests: XCTestCase {
         var mirror = NotifyMirror()
         mirror.appName = "Our Chat"
         store.saveNow(NotifyMirror.record, try NetJSON.parse(mirror.data))
-        _ = try fx.center.agreement.publicKeySPKI() // the encryption key exists from the enrolment on
-        let memory = fx.store
+        _ = try fx.center.agreement() // the encryption key exists from the enrolment on
+        let memory = fx.sharedStore
         return SysTierReader(shared: fx.center.paths.shared) { name in try? memory.read(name) }
     }
 
@@ -34,7 +35,7 @@ final class ExtensionPathTests: XCTestCase {
         XCTAssertEqual(ctx.serverKey, server.spki)
         XCTAssertEqual(ctx.prefs.appName, "Our Chat")
         // A notify message sealed for this device's key, signed by the server.
-        let enc = try fx.center.agreement.publicKeySPKI()
+        let enc = try fx.center.agreement().spki
         let w = server.wire(id: "n1", kind: "notify", payload: ["kind": "message", "privacy": "sender", "vars": ["sender": "Bob"],
                                                                "tpl": ["title": "{app}", "body": "{sender} wrote"]],
                             device: enc, deviceId: ctx.deviceId)
@@ -60,7 +61,11 @@ final class ExtensionPathTests: XCTestCase {
         let blind = SysTierReader(shared: fx.center.paths.shared) { _ in nil }
         XCTAssertThrowsError(try blind.context())
         // Another device's App Group: nothing.
-        XCTAssertThrowsError(try SysTierReader(shared: TempDir().url) { name in try? fx.store.read(name) }.context())
+        let shared = fx.sharedStore
+        XCTAssertThrowsError(try SysTierReader(shared: TempDir().url) { name in try? shared.read(name) }.context())
+        // The app-only group's items are not what the extension reads (the "sys" key is in the shared group).
+        let appOnly = fx.store
+        XCTAssertThrowsError(try SysTierReader(shared: fx.center.paths.shared) { name in try? appOnly.read(name) }.context())
         // A record swapped for another's does not open (AAD "SYS|<name>").
         let dir = fx.center.paths.shared.appendingPathComponent("sys")
         try FileManager.default.removeItem(at: dir.appendingPathComponent("notify-prefs.bin"))
@@ -77,7 +82,7 @@ final class ExtensionPathTests: XCTestCase {
         let wire = try XCTUnwrap(s.obj("checkin")?.arr("commands")?.first)
         var w: [String: String] = [:]
         for (k, v) in wire.objectValue ?? [:] { w[k] = v.stringValue }
-        let agree = KeyringEciesOpener(agreement: FixtureAgreement()).agree
+        let agree = KeyringEciesOpener(agreement: FixtureKeys.pair).agree
         let o = try PushOpener.open(w, deviceId: PushFixtures.deviceId, serverKey: PushFixtures.serverKey, now: PushFixtures.checkinTime, agree: agree)
         XCTAssertEqual(o.kind, "lock")
         XCTAssertEqual(o.payload["reason"] as? String, "lost")

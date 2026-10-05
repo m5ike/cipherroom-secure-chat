@@ -6,6 +6,7 @@
 
 import CryptoKit
 import Foundation
+import M5Crypto
 import M5Net
 import XCTest
 @testable import M5cet
@@ -27,12 +28,12 @@ final class DeviceServiceTests: XCTestCase {
         let enroll = try XCTUnwrap(rig.server.requests("/api/ios/enroll").first?.json)
         XCTAssertEqual(Set(enroll.objectValue!.keys).subtracting(["apnsToken", "voipToken", "apnsEnv"]),
                        Set(PushFixtures.ios.obj("enrollRequest")!.objectValue!.keys).subtracting(["apnsToken", "voipToken", "apnsEnv"]))
-        let spki = try FixtureSigner().publicKeySPKI()
+        let spki = FixtureKeys.spki
         XCTAssertTrue(P256Keys.verify(spki: spki, text: DeviceSigning.enrollString(signKey: spki, encKey: spki, time: enroll.int("time")),
                                       signature: enroll.str("proof")))
-        // The policy goes to Platform/Security as the server signed it (enrolment and check-in).
+        // The policy DeviceState verified goes to Platform/Security (enrolment and check-in; PolicyStore.adopt).
         XCTAssertEqual(rig.applied.count, 2)
-        XCTAssertNotNil(rig.applied[0].obj("policySigned"))
+        XCTAssertEqual(rig.applied[0].obj("lock")?.int("pinLength"), 6)
 
         // The check-in right after: signed as the server checks it.
         let checkin = try XCTUnwrap(rig.server.requests("/api/ios/checkin").first)
@@ -139,7 +140,7 @@ final class DeviceServiceTests: XCTestCase {
         rig.store.saveNow("config", st.json)
         let device = DeviceService(rig.device.deps, bundles: rig.device.bundles, events: rig.device.events)
         device.host = rig.host
-        let enc = try FixtureAgreement().publicKeySPKI()
+        let enc = FixtureKeys.spki
         func wire(_ id: String, _ kind: String, _ p: [String: Any] = [:], exp: Int64 = 0) -> NetJSON {
             server.netWire(id: id, kind: kind, payload: p, exp: exp, device: enc, deviceId: "ios_test0001")
         }
@@ -192,7 +193,7 @@ final class DeviceServiceTests: XCTestCase {
         rig.store.saveNow("config", DeviceState(server: PushFixtures.base, deviceId: "ios_test0001", serverKey: server.spki, serverKid: server.kid).json)
         let device = DeviceService(rig.device.deps, bundles: rig.device.bundles, events: rig.device.events)
         device.host = rig.host
-        let enc = try FixtureAgreement().publicKeySPKI()
+        let enc = FixtureKeys.spki
 
         // Signed by another key.
         let forger = TestControlServer()
@@ -226,7 +227,7 @@ final class DeviceServiceTests: XCTestCase {
         rig.store.saveNow("config", DeviceState(server: PushFixtures.base, deviceId: "ios_test0001", serverKey: server.spki, serverKid: server.kid).json)
         let device = DeviceService(rig.device.deps, bundles: rig.device.bundles, events: rig.device.events)
         device.host = rig.host
-        let enc = try FixtureAgreement().publicKeySPKI()
+        let enc = FixtureKeys.spki
         rig.server.override = { req in req.url.path == "/api/ios/ack" ? HTTPResponse(status: 503) : nil }
         _ = await device.handle(wire: server.netWire(id: "a1", kind: "lock", device: enc, deviceId: "ios_test0001"), via: "apns")
         XCTAssertEqual(rig.store.loadNow("acks")?.arr("list")?.first?.str("id"), "a1")
@@ -249,7 +250,7 @@ final class DeviceServiceTests: XCTestCase {
         deps.handoff = handoff
         let device = DeviceService(deps, bundles: rig.device.bundles, events: rig.device.events)
         device.host = rig.host
-        let enc = try FixtureAgreement().publicKeySPKI()
+        let enc = FixtureKeys.spki
         // The extension saw a wipe (its wire kept as it came) and showed a message.
         handoff.record(.init(id: "w1", kind: "wipe", shown: true, wire: server.wire(id: "w1", kind: "wipe", payload: ["reason": ""], device: enc,
                                                                                        deviceId: "ios_test0001"), at: 1_800_000_000_000))
@@ -313,7 +314,7 @@ final class DeviceServiceTests: XCTestCase {
 
     func testTheWipeReportIsSignedForLater() throws {
         let reporter = DeviceWipeReporter()
-        reporter.signer = FixtureSigner()
+        reporter.signer = { FixtureKeys.deviceSigner }
         reporter.update(DeviceState(server: "https://chat.example.com/m5", deviceId: "ios_x", serverKey: "k", serverKid: "k"))
         let body = Wiper.eventBody(reason: "remote", remote: true, attempts: 0, at: 5)
         let req = try XCTUnwrap(try reporter.signedEventsRequest(body: body))
@@ -321,7 +322,7 @@ final class DeviceServiceTests: XCTestCase {
         XCTAssertEqual(Data(base64Encoded: req.body), body)
         let canonical = DeviceSigning.requestString(method: "POST", pathAndQuery: "/m5/api/ios/events", time: req.headers["X-M5-Time"]!,
                                                     nonce: req.headers["X-M5-Nonce"]!, body: body)
-        XCTAssertTrue(P256Keys.verify(spki: try FixtureSigner().publicKeySPKI(), text: canonical, signature: req.headers["X-M5-Signature"]!))
+        XCTAssertTrue(P256Keys.verify(spki: FixtureKeys.spki, text: canonical, signature: req.headers["X-M5-Signature"]!))
         reporter.update(nil)
         XCTAssertNil(try reporter.signedEventsRequest(body: body), "not enrolled: nothing to report")
     }
