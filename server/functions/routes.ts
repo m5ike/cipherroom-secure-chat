@@ -15,10 +15,12 @@
 //                                  button | form | error | log, … } — a reply to the
 //                                  model's message, a click, a form, a browser error
 
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { answerRun, deliverWebhook, endInteractionsFor, execute, functionsPublicUrl, openInteractions, runErrorEndpoint, runEvents, triggerDurableWebhook, RunRefused, type ExecuteResult } from "./runner";
+import { answerRun, cancelRun, deliverWebhook, execute, functionsPublicUrl, openInteractions, runErrorEndpoint, runEvents, triggerDurableWebhook, RunRefused, type ExecuteResult } from "./runner";
+import { badInputDetails, commandView } from "./guide";
+import type { InputProblem } from "./inputs";
 import { argsToInputs, endpointOf, endpointTypes, endpointsOf, eventInputs, webhookByToken } from "./endpoints";
 import { callRecord, callbackOf, clientIp, inputsOf, LOG_BODY_MAX, maskPath, maskToken, postCallback } from "./webhook-log";
 import { accessLog } from "../access-log";
@@ -73,25 +75,22 @@ function moduleAccess(req: Request, caller: Caller, right?: Needs, log = true): 
   return checkAccess("functions", subject, { right, path: `${req.method} ${req.path}`, ip: (req.ip || "").replace(/^::ffff:/, ""), via: "app", log });
 }
 
-function commandView(model: Model, caller: Caller) {
-  return {
-    keyword: model.keyword,
-    name: model.name,
-    summary: model.summary,
-    runtime: model.runtime,
-    visibility: model.executors.chat.visibility,
-    mine: model.groups.length === 0 || model.groups.some((g) => caller.groups.includes(g)),
-    inputs: model.inputs.map((i) => ({ name: i.name, type: i.type, label: i.label, help: i.help, required: Boolean(i.required), default: i.default, values: i.values })),
-    // 5.3: the entry points a reply, a click or a form of this model's messages reach.
-    events: endpointTypes(model).filter((t) => t !== "execute" && t !== "webhook"),
-    model: model.id,
-  };
+/**
+ * Why a call could not run, as JSON: { code, message } and — a call with
+ * wrong parameters (6.11) — `problems` (every input that is wrong), and with
+ * `guide` (the chat's own command) the model as a `command` and its
+ * `usageLine`, so the app can show what is wrong, the definition and a guide.
+ */
+function errorOf(err: unknown, guide?: { model: Model; caller: Caller }): { status: number; code: string; message: string; extra: Record<string, unknown> } {
+  if (err instanceof RunRefused) {
+    const problems = err.code === "bad-input" && Array.isArray(err.details?.problems) ? err.details.problems as InputProblem[] : null;
+    const extra: Record<string, unknown> = problems ? (guide ? badInputDetails(guide.model, guide.caller, problems) : { problems }) : {};
+    return { status: err.code === "bad-input" ? 400 : err.code === "no-chain" ? 410 : 422, code: err.code, message: err.message, extra };
+  }
+  return { status: 500, code: "error", message: "The function could not run.", extra: {} };
 }
-
-function errorOf(err: unknown): { status: number; code: string; message: string } {
-  if (err instanceof RunRefused) return { status: err.code === "bad-input" ? 400 : err.code === "no-chain" ? 410 : 422, code: err.code, message: err.message };
-  return { status: 500, code: "error", message: "The function could not run." };
-}
+/** The JSON body of a refused call. */
+const errorBody = (e: ReturnType<typeof errorOf>) => ({ ok: false as const, code: e.code, message: e.message, ...e.extra });
 
 /** What a chat caller gets back from a run (or its error entry point's answer). */
 function doneBody(model: Model, out: ExecuteResult) {
@@ -103,20 +102,50 @@ function doneBody(model: Model, out: ExecuteResult) {
     ...(out.handled ? { failed: out.run.error ?? { type: "BadResult", message: "a result item was left out" }, handled: true } : {}),
     ms: out.run.ms, visibility: model.executors.chat.visibility,
     chain: out.chain, call: out.handled?.run.callId ?? out.call,
-    model: model.id, keyword: model.keyword, name: model.name, events: endpointTypes(model).filter((t) => t !== "execute" && t !== "webhook"),
+    model: model.id, keyword: model.keyword, name: model.name, icon: model.icon ?? "", events: endpointTypes(model).filter((t) => t !== "execute" && t !== "webhook"),
   };
 }
 
-/** Streams a run to a chat caller (SSE): start, progress, questions, outputs, then done or error. */
-async function streamRun(req: Request, res: Response, model: Model, start: (runId: string) => Promise<ExecuteResult>, precheck?: () => void): Promise<void> {
+/** 6.11: a run answered as plain JSON — its id up front, and the run cancelled if the caller leaves before the answer. */
+function cancelOnLeave(res: Response): string {
+  const runId = newId("run");
+  res.on("close", () => { if (!res.writableFinished) cancelRun(runId, "the caller left"); });
+  return runId;
+}
+
+/** SSE keep-alive: a comment line this often, so proxies keep the stream open. */
+const SSE_PING_MS = Math.max(1000, Number(process.env.FUNCTIONS_SSE_PING_MS) || 15_000);
+
+/**
+ * Streams a run to a chat caller (SSE): start, progress, questions, outputs,
+ * then exactly one `done` or `error` (6.11: never both, never twice — a
+ * failure while answering is not a second ending).
+ *
+ * The caller going away is the RESPONSE's "close" before it ended (6.11: a
+ * request's own "close" fires as soon as its body has been read, so the old
+ * listener there never saw a disconnect): the run's questions are cancelled
+ * and the run itself stops as "cancelled" — nobody is there for its answer.
+ */
+async function streamRun(_req: Request, res: Response, model: Model, start: (runId: string) => Promise<ExecuteResult>, opts: { caller: Caller; precheck?: () => void; guide?: boolean }): Promise<void> {
   const runId = newId("run");
   res.status(200);
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
-  const sse = (event: string, data: unknown) => { if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
-  const keepAlive = setInterval(() => { if (!res.writableEnded) res.write(": ping\n\n"); }, 15_000);
+  let ended = false; // the one done / error was written (or there is nobody left to write it to)
+  let gone = false;  // the caller left before the end
+  const write = (event: string, data: unknown) => { if (!gone && !res.writableEnded && !res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+  const sse = (event: string, data: unknown) => { if (!ended) write(event, data); };
+  const end = (event: "done" | "error", data: () => unknown) => {
+    if (ended) return;
+    ended = true;
+    let payload: unknown;
+    try { payload = data(); } catch { event = "error"; payload = { code: "error", message: "The function could not run." }; }
+    write(event, payload);
+  };
+  const keepAlive = setInterval(() => { if (!gone && !res.writableEnded) res.write(": ping\n\n"); }, SSE_PING_MS);
+  keepAlive.unref?.();
   const onRun = (ev: Record<string, unknown>) => {
     if (ev.runId !== runId) return;
     if (ev.type === "output") sse("output", ev.output);
@@ -124,21 +153,25 @@ async function streamRun(req: Request, res: Response, model: Model, start: (runI
     else if (ev.type === "interaction") sse("interaction", { runId, ...(ev.interaction as object) });
     else if (ev.type === "log") sse("log", ev);
   };
+  const stop = () => { runEvents.off("run", onRun); clearInterval(keepAlive); };
   runEvents.on("run", onRun);
-  // If the caller goes away, cancel the questions so the function stops waiting.
-  req.on("close", () => { runEvents.off("run", onRun); clearInterval(keepAlive); endInteractionsFor(runId); });
+  res.on("close", () => {
+    stop();
+    if (ended || res.writableFinished) return;
+    gone = true;
+    ended = true;
+    cancelRun(runId, "the caller left");
+  });
   try {
-    precheck?.(); // a bad argument is a clean error, not a stream
-    sse("start", { runId, keyword: model.keyword, name: model.name, visibility: model.executors.chat.visibility });
+    opts.precheck?.(); // a bad argument is a clean error, not a stream
+    sse("start", { runId, keyword: model.keyword, name: model.name, icon: model.icon ?? "", visibility: model.executors.chat.visibility });
     const out = await start(runId);
-    sse("done", doneBody(model, out));
+    end("done", () => doneBody(model, out));
   } catch (err) {
-    const e = errorOf(err);
-    sse("error", { code: e.code, message: e.message });
+    end("error", () => { const e = errorOf(err, opts.guide ? { model, caller: opts.caller } : undefined); return { code: e.code, message: e.message, ...e.extra }; });
   } finally {
-    runEvents.off("run", onRun);
-    clearInterval(keepAlive);
-    res.end();
+    stop();
+    if (!res.writableEnded) res.end();
   }
 }
 
@@ -195,11 +228,11 @@ export function registerFunctionsRoutes(app: Express): void {
 
     if (body.stream !== true) {
       try {
-        const out = await execute(model, inputs, caller, { executor: "chat" });
+        const out = await execute(model, inputs, caller, { executor: "chat", runId: cancelOnLeave(res) });
         return res.json(doneBody(model, out));
       } catch (err) {
-        const e = errorOf(err);
-        return res.status(e.status).json({ ok: false, code: e.code, message: e.message });
+        const e = errorOf(err, { model, caller });
+        return res.status(e.status).json(errorBody(e));
       }
     }
 
@@ -207,7 +240,7 @@ export function registerFunctionsRoutes(app: Express): void {
     // questions (m5.prompt / m5.form) arrive as they happen, and the caller
     // answers them via POST /runs/:id/events. The runId is known up front so
     // the caller can subscribe and answer before the run finishes.
-    await streamRun(req, res, model, (runId) => execute(model, inputs, caller, { executor: "chat", runId }), () => { validateInputs(model.inputs, inputs); });
+    await streamRun(req, res, model, (runId) => execute(model, inputs, caller, { executor: "chat", runId }), { caller, guide: true, precheck: () => { validateInputs(model.inputs, inputs); } });
   });
 
   // 5.3: the model's other entry points, from the app — a reply to its message,
@@ -244,7 +277,7 @@ export function registerFunctionsRoutes(app: Express): void {
       if (!errEp) return res.json({ ok: true, outputs: [] });
       const handled = await runErrorEndpoint(model, errEp, chain.id, { error: { type: str(e.type, 60) || "RenderError", message: str(e.message, 2000), ...(e.stack ? { stack: str(e.stack, 4000) } : {}) }, failed: { call: origin?.id ?? 0, type: origin?.type ?? "execute", parms: origin?.parms ?? {}, ...(typeof body.output === "number" ? { output: body.output } : {}) }, source: "client" }, caller, { executor: "chat", parent: origin?.run ?? null });
       if (!handled) return res.json({ ok: true, outputs: [] });
-      return res.json({ ok: true, runId: handled.run.id, status: handled.run.status, outputs: handled.outputs, error: handled.run.error, ms: handled.run.ms, visibility: model.executors.chat.visibility, chain: chain.id, call: handled.run.callId, model: model.id, keyword: model.keyword, name: model.name, events: endpointTypes(model).filter((t) => t !== "execute" && t !== "webhook"), fromError: true });
+      return res.json({ ok: true, runId: handled.run.id, status: handled.run.status, outputs: handled.outputs, error: handled.run.error, ms: handled.run.ms, visibility: model.executors.chat.visibility, chain: chain.id, call: handled.run.callId, model: model.id, keyword: model.keyword, name: model.name, icon: model.icon ?? "", events: endpointTypes(model).filter((t) => t !== "execute" && t !== "webhook"), fromError: true });
     }
 
     const ep = endpointOf(model, type as "response" | "button" | "form");
@@ -262,13 +295,13 @@ export function registerFunctionsRoutes(app: Express): void {
         const values = body.values && typeof body.values === "object" && !Array.isArray(body.values) ? body.values as Record<string, unknown> : {};
         inputs = eventInputs(ep, values, { name: str(body.name, 64), values, event });
       }
-    } catch (err) { const e = errorOf(err); return res.status(e.status).json({ ok: false, code: e.code, message: e.message }); }
+    } catch (err) { const e = errorOf(err); return res.status(e.status).json(errorBody(e)); }
     const run = (runId?: string) => execute(model, inputs, caller, { executor: "chat", endpoint: ep, chainId: chain.id, skipValidation: true, runId });
     if (body.stream !== true) {
-      try { return res.json(doneBody(model, await run())); }
-      catch (err) { const e = errorOf(err); return res.status(e.status).json({ ok: false, code: e.code, message: e.message }); }
+      try { return res.json(doneBody(model, await run(cancelOnLeave(res)))); }
+      catch (err) { const e = errorOf(err); return res.status(e.status).json(errorBody(e)); }
     }
-    await streamRun(req, res, model, (runId) => run(runId));
+    await streamRun(req, res, model, (runId) => run(runId), { caller });
   });
 
   // Programmatic API: run a model with its API bearer token, get outputs as JSON.
@@ -277,11 +310,11 @@ export function registerFunctionsRoutes(app: Express): void {
     await functionsStore.ready();
     const model = functionsStore.model(String(req.params.id));
     const api = model?.executors.api;
-    if (!model || !model.enabled || !api?.enabled || !api.token) return res.status(404).json({ ok: false, message: "No such API function." });
+    if (!model || !model.enabled || !api?.enabled || !api.token) return res.status(404).json({ ok: false, code: "no-command", message: "No such API function." });
     const header = req.header("authorization") || "";
     const given = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
     const apiLog = (decision: "allow" | "deny", reason: string) => accessLog.record({ at: Date.now(), module: "functions", subject: "api", kind: "api", decision, reason, right: `model:${model.keyword || model.id}`, path: `${req.method} ${req.path}`, ip: clientIp(req), via: "app" });
-    if (given.length !== api.token.length || !timingSafeEqual(Buffer.from(given), Buffer.from(api.token))) { apiLog("deny", "wrong token"); return res.status(401).json({ ok: false, message: "Wrong or missing API token." }); }
+    if (given.length !== api.token.length || !timingSafeEqual(Buffer.from(given), Buffer.from(api.token))) { apiLog("deny", "wrong token"); return res.status(401).json({ ok: false, code: "unauthorized", message: "Wrong or missing API token." }); }
     // 5.2: the module switched off in Modules & groups stops the API too (not only the chat and webhooks).
     if (clientConfigStore.get().modules.functions?.enabled === false) { apiLog("deny", "off"); return res.status(403).json({ ok: false, code: "module-disabled", message: "The Functions module is off." }); }
     apiLog("allow", "token");
@@ -290,7 +323,7 @@ export function registerFunctionsRoutes(app: Express): void {
     try {
       const out = await execute(model, inputs, caller, { executor: "api", skipValidation: true });
       res.status(out.run.status === "done" ? 200 : 500).json({ ok: out.run.status === "done", runId: out.run.id, status: out.run.status, outputs: out.outputs, error: out.run.error });
-    } catch (err) { const e = errorOf(err); res.status(e.status).json({ ok: false, code: e.code, message: e.message }); }
+    } catch (err) { const e = errorOf(err); res.status(e.status).json(errorBody(e)); }
   });
 
   // Answer a live question (m5.prompt / m5.form) of a running command.
@@ -298,7 +331,7 @@ export function registerFunctionsRoutes(app: Express): void {
     if (!switchState("functions").enabled) return res.status(404).json({ ok: false, code: "off", message: "The functions module is off." });
     const body = (req.body || {}) as Record<string, unknown>;
     const interactionId = typeof body.interactionId === "string" ? body.interactionId : "";
-    if (!interactionId) return res.status(400).json({ ok: false, message: "interactionId required." });
+    if (!interactionId) return res.status(400).json({ ok: false, code: "bad-request", message: "interactionId required." });
     const ok = answerRun(String(req.params.id), interactionId, body.value ?? null);
     if (!ok) return res.status(409).json({ ok: false, code: "no-question", message: "That question is not open (already answered, or timed out)." });
     res.json({ ok: true });
@@ -385,7 +418,7 @@ export function registerFunctionsRoutes(app: Express): void {
     // checked and typed (application/json), the rest passes as it came.
     let inputs: Record<string, unknown>;
     try { inputs = eventInputs(hook, inputsOf(call.parsedBody, req.query as Record<string, unknown>), { _webhook: { ...hookMeta(req), endpoint: hook.id, name: hook.name ?? "" } }, { keepExtra: true }); }
-    catch (err) { const e = errorOf(err); return answer(call, res, e.status, { ok: false, code: e.code, message: e.message }, log); }
+    catch (err) { const e = errorOf(err); return answer(call, res, e.status, errorBody(e), log); }
     const caller: Caller = { kind: "webhook", account: "", name: "webhook", groups: [], room: null, client: "webhook", lang: "en", tz: "UTC" };
     const runId = newId("run");
     call.runId = runId;
@@ -449,5 +482,17 @@ export function registerFunctionsRoutes(app: Express): void {
     const ok = answerRun(run.id, String(body.interaction ?? ""), body.value ?? null);
     if (!ok) return res.status(409).json({ ok: false, message: "That question is not open." });
     res.json({ ok: true });
+  });
+
+  // 6.11: what goes wrong before a handler answers — a body that is not JSON, one that is too
+  // large — is JSON with a code here too (the service's own handler answers without one).
+  app.use("/api/functions", (err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) return next(err);
+    const e = (err ?? {}) as { status?: number; statusCode?: number; type?: string; message?: string };
+    const status = Number(e.status || e.statusCode) || 500;
+    const code = e.type === "entity.parse.failed" ? "bad-json" : e.type === "entity.too.large" ? "too-large" : status < 500 ? "bad-request" : "error";
+    const message = e.type === "entity.parse.failed" ? "The request body is not valid JSON." : e.type === "entity.too.large" ? "The request body is too large." : status < 500 ? String(e.message || "Bad request").slice(0, 200) : "The function could not run.";
+    if (status >= 500) console.warn(`[functions] ${(err as Error)?.message ?? err}`);
+    res.status(status).json({ ok: false, code, message });
   });
 }

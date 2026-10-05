@@ -8,7 +8,7 @@
 
 import { randomBytes } from "node:crypto";
 import { fingerprint, functionsStore, newId } from "./store";
-import { parseEntry, ID_RE, KEYWORD_RE, NAME_RE, SEMVER_RE, type Endpoint, type FileMap, type Lang, type Model, type Package, type PackageManifest, type PackageVersion } from "./types";
+import { parseEntry, isModelIcon, ID_RE, KEYWORD_RE, NAME_RE, SEMVER_RE, USAGE_MAX, type Endpoint, type FileMap, type Lang, type Model, type Package, type PackageManifest, type PackageVersion } from "./types";
 import { endpointsOf, legacyWebhookOf, normalizeEndpoints, type EndpointError } from "./endpoints";
 import { sanitizeGrant } from "./adm-token";
 import type { AdminRole } from "../admin-users";
@@ -155,6 +155,23 @@ export function sanitizeGrants(raw: unknown): ModelGrants {
   return out;
 }
 
+/** 6.11: a model's icon as stored — a lucide name ("mail") or one emoji; "" = by its keyword. */
+export function cleanModelIcon(raw: unknown): string {
+  const v = String(raw ?? "").trim();
+  if (!v) return "";
+  if (!isModelIcon(v)) bad("bad-icon", "The icon is a lucide icon name (lower-case letters, digits and -, e.g. mail) or one emoji.");
+  return v;
+}
+
+/** 6.11: a model's usage guide as stored — plain text (line breaks kept, no control characters), at most USAGE_MAX characters. */
+export function cleanModelUsage(raw: unknown): string {
+  // eslint-disable-next-line no-control-regex
+  const v = String(raw ?? "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "").replace(/[ \t]+$/gm, "").trim();
+  const n = [...v].length;
+  if (n > USAGE_MAX) bad("bad-usage", `The usage text is at most ${USAGE_MAX} characters (it has ${n}).`);
+  return v;
+}
+
 const sameAdmin = (a?: ModelGrants["admin"], b?: ModelGrants["admin"]) =>
   Boolean(a?.enabled) === Boolean(b?.enabled) && (!a?.enabled || (a.role === b?.role && [...a.areas].sort().join() === [...(b?.areas ?? [])].sort().join()));
 
@@ -221,6 +238,9 @@ export function saveModel(input: Partial<Model> & { id?: string }, actor: string
     name: (input.name ?? existing?.name ?? "").trim() || bad("bad-name", "A model needs a name."),
     keyword,
     summary: (input.summary ?? existing?.summary ?? "").slice(0, 500),
+    // 6.11: its avatar as the sender of its answers, and its own guide.
+    icon: input.icon !== undefined ? cleanModelIcon(input.icon) : existing?.icon ?? "",
+    usage: input.usage !== undefined ? cleanModelUsage(input.usage) : existing?.usage ?? "",
     entry,
     onEvent: (input.onEvent ?? existing?.onEvent ?? "").trim(),
     runtime: input.runtime ?? existing?.runtime ?? "auto",

@@ -214,6 +214,8 @@ export async function execute({ topic } = {}) {
       return m5.out.markdown(`No command **/${t}**${near.length ? ` — did you mean ${near.map((x) => `**/${x.keyword}**`).join(", ")}?` : "."} Type **/help** for the list.`);
     }
     const md = [`## /${c.keyword} — ${c.name}`, c.summary || "", `\`${sig(c)}\``];
+    // 1.4 (6.11): the model's own guide, as its operator wrote it.
+    if (c.usage) md.push(`**How to use**\n\n\`\`\`text\n${String(c.usage).replace(/```/g, "ʼʼʼ")}\n\`\`\``);
     md.push(c.inputs.length ? table(["Parameter", "Type", "Required", "Default", "Choices / help"], c.inputs.map((i) => [`\`${i.name}\`${i.label ? ` (${i.label})` : ""}`, TYPE[i.type] || i.type, i.required ? "yes" : "no", i.default === null || i.default === undefined ? "" : String(i.default), [i.values.join(", "), i.help].filter(Boolean).join(" — ")])) : "_No parameters._");
     md.push(`**Examples**\n${example(c).map((e) => `- \`${e}\``).join("\n")}`);
     md.push(`**Output:** ${c.visibility === "room" ? "posted to the room" : "only for you"}${c.webhook ? " · also callable by **webhook**" : ""}${c.api ? " · also by **API**" : ""} · package \`${c.package}@${c.version}\``);

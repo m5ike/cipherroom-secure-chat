@@ -628,7 +628,8 @@ return function setup(host, ctxJson) {
       };
     })(),
     dns: {
-      resolve: (name, type) => acall("dns.resolve", String(name), type === undefined ? "A" : String(type)),
+      // 6.11: { timeoutMs } — how long the lookup may take (250 ms – 15 s; the server's default, 4 s).
+      resolve: (name, type, opts) => acall("dns.resolve", String(name), type === undefined || type === null ? "A" : String(type), opts && typeof opts === "object" && opts.timeoutMs ? { timeoutMs: Number(opts.timeoutMs) } : null),
     },
     // 5.2: the "/keyword" commands this run's caller may use (for /help, menus).
     functions: {

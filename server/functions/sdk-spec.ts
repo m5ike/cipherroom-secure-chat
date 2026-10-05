@@ -104,7 +104,7 @@ export const SDK_SPEC: SdkObject[] = [
     m("request", "await m5.http.request({ method, url, ... })", "await m5.http.request({...})", "Any method; returns { status, headers, text, json, body }.", true),
   ] },
   { name: "dns", doc: "DNS lookups.", methods: [
-    m("resolve", "await m5.dns.resolve(name, type)", "await m5.dns.resolve(name, type='A')", "A/AAAA/CNAME/MX/TXT/NS/SRV/CAA/PTR/SOA.", true),
+    m("resolve", "await m5.dns.resolve(name, type, { timeoutMs })", "await m5.dns.resolve(name, type='A', timeout_ms=None)", "A/AAAA/CNAME/MX/TXT/NS/SRV/CAA/PTR/SOA. Each lookup has a time limit (4 s by default; timeoutMs 250 ms – 15 s): no answer in time throws an error with code \"timeout\".", true),
   ] },
   { name: "webhook", doc: "A URL that resumes this run (or runs on_event later).", methods: [
     m("create", "await m5.webhook.create({ durable, ttl })", "await m5.webhook.create(durable=True)", "A URL bound to the run; durable → runs on_event later.", true),

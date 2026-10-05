@@ -25,6 +25,13 @@ const ICONS = [
   "play", "save", "upload", "download", "copy", "link-2", "refresh-cw", "trash-2", "plus", "search", "x",
   "external-link", "file-code", "code-xml", "undo-2", "redo-2", "list", "book-open", "send", "inbox", "zap", "shield-check",
   "radio", "clock", "filter", "bug", "square-terminal", "ellipsis", "chevrons-left", "chevrons-right",
+  // 6.11: a model's icon (its avatar in the chat) — the picker in Functions › Models, and the
+  // defaults by keyword (client/src/lib/system-messenger.ts DEFAULT_MODEL_ICONS)
+  "bot", "mail", "phone", "phone-call", "phone-forwarded", "message-square-text", "message-circle", "message-circle-more", "messages-square",
+  "hash", "globe", "network", "link", "app-window", "server", "database", "cloud-sun", "calculator", "languages", "sparkles",
+  "file-text", "credit-card", "receipt", "id-card", "nfc", "scan-line", "fingerprint-pattern", "qr-code", "code", "terminal",
+  "circle-help", "bell", "chart-bar", "dice-5", "calendar", "map-pin", "image", "music", "wrench", "cpu", "smartphone", "user",
+  "truck", "shopping-cart",
 ];
 
 const dir = join(import.meta.dirname, "..", "node_modules", "lucide-react", "dist", "esm", "icons");

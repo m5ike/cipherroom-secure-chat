@@ -65,6 +65,11 @@ proměnné ze skutečného prostředí mají přednost. `.env` je v `.dockerigno
 | `ACCOUNTS_MAX`             | 6.7: strop účtů (5000).                              |
 | `STORAGE_SESSION_BUDGET_MB`| 6.7: rozpočet anonymních databází relací (2048).     |
 | `FUNCTIONS_NFC_RUN_HOURS`  | 6.7: retence běhů funkcí, které četly kartu (24 h).  |
+| `FUNCTIONS_DNS_TIMEOUT_MS` | 6.11: limit jednoho `m5.dns.resolve` (4000; 250–15000). |
+| `FUNCTIONS_DNS_SERVERS`    | 6.11: jmenné servery funkcí („1.1.1.1, 8.8.8.8:53“; jinak systémové). |
+| `FUNCTIONS_SSE_PING_MS`    | 6.11: udržovací `: ping` streamu běhu (15000).       |
+| `FUNCTIONS_WAIT_NOTICE_MS` | 6.11: po kolika ms čekání na hostitele běh ohlásí `progress` „Waiting for …“ (10000). |
+| `FUNCTIONS_WAIT_EVERY_MS`  | 6.11: nejdelší ticho, než přijde další ohlášení (10000). |
 | `VONAGE_ALLOW_UNSIGNED_SMS`| 6.7: `1` = přijmout Vonage SMS bez podpisu.          |
 | `ANDROID_DESIGN_IMAGE_HOSTS`| 6.7: povolení hostitelé obrázků v designu Androidu (výchozí žádný). |
 | `NOTIFY_DIR`               | 6.7: nastavení upozornění (`$DATA_DIR/notify`).      |

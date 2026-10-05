@@ -15,11 +15,13 @@ import { endpointsOf } from "../endpoints";
 
 /** 5.3: the other entry points a built-in answers (its package exports a function of each name). */
 export type BuiltinEndpoint = { type: Exclude<EndpointType, "execute" | "webhook">; inputs?: InputSpec[] };
-/** off (6.0): installed switched off — the operator turns it on (telephony costs money). */
-export type BuiltinModel = { keyword: string; name: string; summary: string; inputs: InputSpec[]; visibility: "room" | "caller"; limits?: Partial<Model["limits"]>; endpoints?: BuiltinEndpoint[]; off?: boolean };
+/** off (6.0): installed switched off — the operator turns it on (telephony costs money).
+ *  icon, usage (6.11): its avatar as the sender of its answers (a lucide name — the same as
+ *  client/src/lib/system-messenger.ts DEFAULT_MODEL_ICONS where its keyword is listed there) and its guide. */
+export type BuiltinModel = { keyword: string; name: string; summary: string; inputs: InputSpec[]; visibility: "room" | "caller"; limits?: Partial<Model["limits"]>; endpoints?: BuiltinEndpoint[]; off?: boolean; icon: string; usage: string };
 export type BuiltinDef = { name: string; kind: "system" | "demo" | "library"; version: string; description: string; dependencies?: Record<string, string>; model?: BuiltinModel };
 
-const V = "1.3.0"; // 1.3 (6.6): /help nfc and /help html
+const V = "1.4.0"; // 1.3 (6.6): /help nfc and /help html · 1.4 (6.11): DNS with a time limit, /mail within a budget, /help shows a model's usage
 const NET = { netkit: V };
 const SLOW = { wallMs: 120_000, stepMs: 10_000, memoryMb: 256 };
 // 1.1 (5.3): a reply, a click, a form and an error reach every command.
@@ -28,15 +30,18 @@ const EVENTS = (reply: InputSpec[] = [], form: InputSpec[] = []): BuiltinEndpoin
 export const BUILTINS: readonly BuiltinDef[] = [
   { name: "netkit", kind: "library", version: V, description: "Network helpers for the demo commands: DNS, RDAP (whois), HTML, technologies, security headers, e-mail checks." },
   { name: "help", kind: "system", version: V, description: "The guide to the chat's commands: syntax, every command with its parameters and examples, webhooks, the API.",
-    model: { keyword: "help", name: "Help", summary: "How to use commands, and every command you may run with its parameters", visibility: "caller",
+    model: { keyword: "help", name: "Help", summary: "How to use commands, and every command you may run with its parameters", visibility: "caller", icon: "circle-help",
+      usage: "/help — every command you may run\n/help mail — one command: its parameters, examples and guide\n/help syntax · /help forms · /help nfc — a topic\n/help ? — the commands as buttons",
       inputs: [{ name: "topic", type: "string", label: "Command or topic", help: "a command (e.g. dns), or: syntax, results, endpoints, buttons, forms, browser, model, webhooks, tags, rooms, android, telephony, nfc, html, adm, all, ?" }],
       endpoints: [{ type: "response" }, { type: "button" }, { type: "error" }] } },
   { name: "whois", kind: "demo", version: V, description: "Who holds a domain or an IP address: registrar, dates, status, name servers, DNSSEC, abuse contact (RDAP).", dependencies: NET,
-    model: { keyword: "whois", name: "Whois", summary: "Who holds a domain or IP address (registrar, expiry, DNSSEC, abuse)", visibility: "caller", limits: SLOW,
+    model: { keyword: "whois", name: "Whois", summary: "Who holds a domain or IP address (registrar, expiry, DNSSEC, abuse)", visibility: "caller", limits: SLOW, icon: "globe",
+      usage: "/whois example.com — who holds a domain: registrar, dates, status, name servers, DNSSEC\n/whois 1.1.1.1 — who holds an IP address (its network, the abuse contact)\n/whois — a form asks for it",
       inputs: [{ name: "query", type: "string", label: "Domain or IP address", help: "example.com, 1.1.1.1" }],
       endpoints: EVENTS([], [{ name: "query", type: "string", required: true }]) } },
   { name: "dns", kind: "demo", version: V, description: "DNS records of a host: everything at once, or A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV, PTR.", dependencies: NET,
-    model: { keyword: "dns", name: "DNS lookup", summary: "DNS records: full, A, AAAA, MX, NS, CNAME, TXT, SOA, CAA, SRV, PTR", visibility: "caller", limits: SLOW,
+    model: { keyword: "dns", name: "DNS lookup", summary: "DNS records: full, A, AAAA, MX, NS, CNAME, TXT, SOA, CAA, SRV, PTR", visibility: "caller", limits: SLOW, icon: "globe",
+      usage: "/dns example.com — every record at once\n/dns example.com MX — one type (A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV, PTR)\n/dns 1.1.1.1 — the reverse name (PTR)\nA reply \"example.org TXT\" looks up another. A lookup without an answer in 4 s says so.",
       inputs: [
         { name: "name", type: "string", label: "Host name or IP address", help: "example.com" },
         { name: "type", type: "enum", label: "Record type", values: ["full", "A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "CAA", "SRV", "PTR"], default: "full" },
@@ -44,43 +49,58 @@ export const BUILTINS: readonly BuiltinDef[] = [
       // A reply "example.org MX" fills name and type; the form checks the host.
       endpoints: EVENTS([{ name: "name", type: "string" }, { name: "type", type: "string" }], [{ name: "name", type: "string", required: true }]) } },
   { name: "web", kind: "demo", version: V, description: "A web page analysed: status, speed, server and technologies, security headers, meta tags, robots.txt, sitemap, links, social networks.", dependencies: NET,
-    model: { keyword: "web", name: "Web analysis", summary: "A web page analysed: speed, technologies, security headers, SEO basics, links", visibility: "caller", limits: SLOW,
+    model: { keyword: "web", name: "Web analysis", summary: "A web page analysed: speed, technologies, security headers, SEO basics, links", visibility: "caller", limits: SLOW, icon: "app-window",
+      usage: "/web example.com — a page analysed: status, speed, technologies, security headers, SEO basics, links\n/web https://example.com/page — that very address\n/web — a form asks for it",
       inputs: [{ name: "url", type: "string", label: "Web address", help: "https://example.com or just example.com" }],
       endpoints: EVENTS([], [{ name: "url", type: "string", required: true }]) } },
   { name: "mail", kind: "demo", version: V, description: "A domain's e-mail: MX and provider, SPF, DKIM, DMARC, MTA-STS, TLS-RPT, BIMI — a score and advice.", dependencies: NET,
-    model: { keyword: "mail", name: "E-mail analysis", summary: "E-mail setup of a domain: MX, SPF, DKIM, DMARC, MTA-STS — score and advice", visibility: "caller", limits: SLOW,
+    model: { keyword: "mail", name: "E-mail analysis", summary: "E-mail setup of a domain: MX, SPF, DKIM, DMARC, MTA-STS — score and advice", visibility: "caller", limits: SLOW, icon: "mail",
+      usage: "/mail example.com — MX and provider, SPF, DKIM, DMARC, MTA-STS, TLS-RPT, BIMI: a score and advice\n/mail — a form asks for the domain\nWhat the DNS does not answer within about 20 s is shown as \"no answer in time\" — Check again later.",
       inputs: [{ name: "domain", type: "string", label: "Domain", help: "example.com" }],
       endpoints: EVENTS([], [{ name: "domain", type: "string", required: true }]) } },
   { name: "domain", kind: "demo", version: V, description: "The whole picture of a domain: registration, DNS, web, hosting, e-mail, social networks and links.", dependencies: NET,
-    model: { keyword: "domain", name: "Domain analysis", summary: "Everything about a domain: registrar, DNS, web, hosting, e-mail, social networks, links", visibility: "caller", limits: { ...SLOW, wallMs: 180_000 },
+    model: { keyword: "domain", name: "Domain analysis", summary: "Everything about a domain: registrar, DNS, web, hosting, e-mail, social networks, links", visibility: "caller", limits: { ...SLOW, wallMs: 180_000 }, icon: "server",
+      usage: "/domain example.com — registration, DNS, web, hosting, e-mail, social networks and links at once (it may take a minute)\n/domain — a form asks for the domain",
       inputs: [{ name: "domain", type: "string", label: "Domain", help: "example.com" }],
       endpoints: EVENTS([], [{ name: "domain", type: "string", required: true }]) } },
 ];
 
 /* 6.0: m5.telephony — one package per function, built as a flow (script/gen-telephony-flows.ts):
-   execute shows a form (checked in the browser), form calls the function, error says what went wrong. */
+   execute shows a form (checked in the browser), form calls the function, error says what went wrong.
+   6.11: /hlr takes the number in the command too (1.1.0) — execute answers at once. */
 const TEL_V = "1.0.0";
 const E164: InputSpec = { name: "to", type: "string", required: true, pattern: "^\\+[1-9][0-9]{6,14}$" };
 const TEL_FORM = (inputs: InputSpec[]): BuiltinEndpoint[] => [{ type: "form", inputs }, { type: "error" }];
 const TEL_LIMITS = { wallMs: 180_000, stepMs: 60_000 };
-const telModel = (keyword: string, name: string, summary: string, form: InputSpec[]): BuiltinModel => ({ keyword, name, summary, inputs: [], visibility: "caller", limits: TEL_LIMITS, endpoints: TEL_FORM(form), off: true });
+const telModel = (keyword: string, name: string, summary: string, form: InputSpec[], icon: string, usage: string, inputs: InputSpec[] = []): BuiltinModel => ({ keyword, name, summary, inputs, visibility: "caller", limits: TEL_LIMITS, endpoints: TEL_FORM(form), off: true, icon, usage });
+/** /hlr's own input (6.11): optional and unchecked here on purpose — the model checks the number itself, so a wrong one is answered with the form, prefilled. */
+const HLR_NUMBER: InputSpec = { name: "number", type: "string", label: "Number", help: "A phone number in the international form, e.g. +420603123456 (spaces are fine). Without it: a form." };
 const TELEPHONY: BuiltinDef[] = [
   { name: "tel-call", kind: "demo", version: TEL_V, description: "A phone call: says your text when answered, waits for the end, reports how it went (ring timeout 10 s).",
-    model: telModel("call", "Phone call", "Call a phone number and say something", [E164, { name: "text", type: "text", required: true }, { name: "timeout", type: "integer", min: 5, max: 60 }, { name: "from", type: "string" }]) },
+    model: telModel("call", "Phone call", "Call a phone number and say something", [E164, { name: "text", type: "text", required: true }, { name: "timeout", type: "integer", min: 5, max: 60 }, { name: "from", type: "string" }], "phone-call",
+      "/call — a form: the number (+420…), what to say, how long to ring; the call is placed and reported when it ends") },
   { name: "tel-sms", kind: "demo", version: TEL_V, description: "An SMS through the operator's provider; its delivery report comes back.",
-    model: telModel("sms", "SMS", "Send an SMS", [E164, { name: "text", type: "text", required: true, max: 1600 }, { name: "from", type: "string" }]) },
+    model: telModel("sms", "SMS", "Send an SMS", [E164, { name: "text", type: "text", required: true, max: 1600 }, { name: "from", type: "string" }], "message-square-text",
+      "/sms — a form: the recipient (+420…) and the text (up to 1600 characters); its delivery report comes back") },
   { name: "tel-whatsapp", kind: "demo", version: TEL_V, description: "A WhatsApp message: text within 24 hours, else an approved template.",
-    model: telModel("whatsapp", "WhatsApp", "Send a WhatsApp message", [E164, { name: "text", type: "text" }, { name: "template", type: "string" }, { name: "language", type: "string" }]) },
+    model: telModel("whatsapp", "WhatsApp", "Send a WhatsApp message", [E164, { name: "text", type: "text" }, { name: "template", type: "string" }, { name: "language", type: "string" }], "message-circle",
+      "/whatsapp — a form: the recipient (+420…) and a text (within 24 hours of their last message) or an approved template") },
   { name: "tel-viber", kind: "demo", version: TEL_V, description: "A Viber service message (Vonage).",
-    model: telModel("viber", "Viber", "Send a Viber service message", [E164, { name: "text", type: "text", required: true }, { name: "category", type: "enum", values: ["transaction", "promotion"] }]) },
+    model: telModel("viber", "Viber", "Send a Viber service message", [E164, { name: "text", type: "text", required: true }, { name: "category", type: "enum", values: ["transaction", "promotion"] }], "message-circle-more",
+      "/viber — a form: the recipient (+420…), the text and the category (transaction, promotion)") },
   { name: "tel-messenger", kind: "demo", version: TEL_V, description: "A Facebook Messenger message (Vonage or Meta).",
-    model: telModel("messenger", "Messenger", "Send a Facebook Messenger message", [{ name: "to", type: "string", required: true, pattern: "^[0-9]{5,32}$" }, { name: "text", type: "text", required: true }, { name: "tag", type: "string" }]) },
+    model: telModel("messenger", "Messenger", "Send a Facebook Messenger message", [{ name: "to", type: "string", required: true, pattern: "^[0-9]{5,32}$" }, { name: "text", type: "text", required: true }, { name: "tag", type: "string" }], "messages-square",
+      "/messenger — a form: the recipient's page-scoped id (digits) and the text") },
   { name: "tel-lookup", kind: "demo", version: TEL_V, description: "Everything about a phone number: numbering plan (free) and the providers' data, merged.",
-    model: telModel("lookup", "Number lookup", "Everything about a phone number", [{ name: "number", type: "string", required: true }, { name: "country", type: "string" }, { name: "offline", type: "boolean" }]) },
-  { name: "tel-hlr", kind: "demo", version: TEL_V, description: "An HLR query: connected, roaming, ported, network.",
-    model: telModel("hlr", "HLR", "Ask a number's home network", [{ name: "number", type: "string", required: true, pattern: "^\\+[1-9][0-9]{6,14}$" }]) },
+    model: telModel("lookup", "Number lookup", "Everything about a phone number", [{ name: "number", type: "string", required: true }, { name: "country", type: "string" }, { name: "offline", type: "boolean" }], "search",
+      "/lookup — a form: the number (+420…, or a national one with its country) — country, type, carrier, porting, roaming") },
+  { name: "tel-hlr", kind: "demo", version: "1.1.0", description: "An HLR query: connected, roaming, ported, network.",
+    model: telModel("hlr", "HLR", "Ask a number's home network", [{ name: "number", type: "string", required: true, pattern: "^\\+[1-9][0-9]{6,14}$" }], "phone",
+      "/hlr +420603123456 — that number's home network at once: connected, roaming, ported, network\n/hlr — a form asks for the number\nThe number goes in the international form (spaces are fine); a wrong one brings the form back with what you typed.",
+      [HLR_NUMBER]) },
   { name: "tel-did", kind: "demo", version: TEL_V, description: "Lends a phone number and a 5-digit code that connect a caller to a room member (audio, or speech ↔ text).",
-    model: telModel("phone-bridge", "Phone bridge", "Lend a phone number that connects a caller to a room member", [{ name: "room", type: "string", required: true }, { name: "member", type: "string", required: true }, { name: "minutes", type: "integer", min: 1, max: 120 }, { name: "mode", type: "enum", values: ["auto", "audio", "text"] }]) },
+    model: telModel("phone-bridge", "Phone bridge", "Lend a phone number that connects a caller to a room member", [{ name: "room", type: "string", required: true }, { name: "member", type: "string", required: true }, { name: "minutes", type: "integer", min: 1, max: 120 }, { name: "mode", type: "enum", values: ["auto", "audio", "text"] }], "phone-forwarded",
+      "/phone-bridge — a form: the room, the member, for how long, the mode; you get a number and a 5-digit code for the caller") },
 ];
 
 /* 6.3: m5.nfc — example packages built as flows (script/gen-nfc-flows.ts): each
@@ -88,22 +108,22 @@ const TELEPHONY: BuiltinDef[] = [
    result. Installed switched off — the person needs NFC access and a reader. */
 const NFC_V = "1.0.0";
 const NFC_LIMITS = { wallMs: 180_000, stepMs: 60_000 };
-const nfcModel = (keyword: string, name: string, summary: string, endpoints?: BuiltinEndpoint[]): BuiltinModel => ({ keyword, name, summary, inputs: [], visibility: "caller", limits: NFC_LIMITS, off: true, ...(endpoints ? { endpoints } : {}) });
+const nfcModel = (keyword: string, name: string, summary: string, icon: string, usage: string, endpoints?: BuiltinEndpoint[]): BuiltinModel => ({ keyword, name, summary, inputs: [], visibility: "caller", limits: NFC_LIMITS, off: true, icon, usage, ...(endpoints ? { endpoints } : {}) });
 /* 6.6: the NFC.EMV / NFC.e-ID tools as commands — their flows have an error function.
    /eid takes no key: the caller's device asks for the CAN / MRZ and keeps it. */
 const NFC: BuiltinDef[] = [
   { name: "nfc-scan", kind: "demo", version: NFC_V, description: "Scan a tapped card and show its public identity and NDEF (m5.nfc.scan).",
-    model: nfcModel("nfc-scan", "Scan a card", "Read a tapped card's identity and NDEF") },
+    model: nfcModel("nfc-scan", "Scan a card", "Read a tapped card's identity and NDEF", "scan-line", "/nfc-scan — tap a card to your phone (or a USB / Bluetooth reader): its identity and NDEF") },
   { name: "nfc-uid", kind: "demo", version: NFC_V, description: "Read only a card's UID / serial number (m5.nfc.read).",
-    model: nfcModel("nfc-uid", "Card UID", "Read only a card's UID / serial") },
+    model: nfcModel("nfc-uid", "Card UID", "Read only a card's UID / serial", "fingerprint-pattern", "/nfc-uid — tap a card: only its UID / serial number") },
   { name: "nfc-m5", kind: "demo", version: NFC_V, description: "Open an M5Cet card and list its records (m5.nfc.m5.read).",
-    model: nfcModel("nfc-open", "Open an M5Cet card", "List the records on an M5Cet card") },
+    model: nfcModel("nfc-open", "Open an M5Cet card", "List the records on an M5Cet card", "nfc", "/nfc-open — tap an M5Cet card: the records on it (each opens with its PIN or your account)") },
   { name: "nfc-emv", kind: "demo", version: NFC_V, description: "Read everything a payment card shows a terminal — applications, every record, counters, the transaction history — formatted in the chat (m5.nfc.emv.report). Read-only.",
-    model: nfcModel("emv", "Read a payment card (EMV)", "Everything a payment card shows a terminal, with its transaction history", [{ type: "error" }]) },
+    model: nfcModel("emv", "Read a payment card (EMV)", "Everything a payment card shows a terminal, with its transaction history", "credit-card", "/emv — tap a payment card: every application and record, the counters and the transaction history (read-only)", [{ type: "error" }]) },
   { name: "nfc-emv-history", kind: "demo", version: NFC_V, description: "The transactions a payment card keeps in its log, as a table (m5.nfc.emv.history). Read-only.",
-    model: nfcModel("emv-history", "Card transaction history", "The transactions a payment card keeps in its log", [{ type: "error" }]) },
+    model: nfcModel("emv-history", "Card transaction history", "The transactions a payment card keeps in its log", "receipt", "/emv-history — tap a payment card: the transactions it keeps in its log, as a table (read-only)", [{ type: "error" }]) },
   { name: "nfc-eid", kind: "demo", version: NFC_V, description: "Read your ID card or passport with its CAN or MRZ (PACE / BAC): every data group, the photo, the security check — formatted in the chat (m5.nfc.eid.report). Read-only.",
-    model: nfcModel("eid", "Read an e-ID / e-passport", "Every data group of your ID card or passport, with the photo", [{ type: "error" }]) },
+    model: nfcModel("eid", "Read an e-ID / e-passport", "Every data group of your ID card or passport, with the photo", "id-card", "/eid — tap your ID card or passport: your device asks for the CAN (or the MRZ) and reads every data group with the photo (read-only)", [{ type: "error" }]) },
 ];
 
 export const BUILTINS_ALL: readonly BuiltinDef[] = [...BUILTINS, ...TELEPHONY, ...NFC];
@@ -114,6 +134,19 @@ function filesOf(def: BuiltinDef): Record<string, string> {
   const files = { ...(SOURCES[def.name] ?? {}) };
   if (!files["README.md"]) files["README.md"] = `# ${def.name}\n\n${def.description}\n\n${def.model ? `Chat: \`/${def.model.keyword}\`${def.model.inputs.map((i) => ` [${i.name}]`).join("")}\n` : "A library: `import { … } from \"pkg:" + def.name + "\";`\n"}\n_A built-in M5cet package (${def.kind}), version ${def.version}._\n`;
   return files;
+}
+
+/**
+ * The model a built-in's keyword names — switched on or off (6.11: the
+ * store's modelByKeyword sees only the switched-on ones, so a built-in
+ * installed off, like the telephony and NFC commands, got a second model on
+ * every update instead of being moved to the new version). Its own model
+ * first, if another one shares the keyword.
+ */
+function modelOf(def: BuiltinDef): Model | null {
+  if (!def.model) return null;
+  const all = functionsStore.models().filter((m) => m.keyword === def.model!.keyword);
+  return all.find((m) => m.entry.startsWith(`${def.name}@`)) ?? all.find((m) => m.enabled) ?? all[0] ?? null;
 }
 
 export type InstallResult = { name: string; version: string; package: "created" | "updated" | "unchanged"; model: "created" | "updated" | "unchanged" | "none"; message?: string };
@@ -140,17 +173,19 @@ export function installBuiltin(name: string, actor: string, opts: { enableModel?
   let modelState: InstallResult["model"] = "none";
   if (def.model) {
     const entry = `${def.name}@${def.version}:index.js#execute`;
-    const existing = functionsStore.modelByKeyword(def.model.keyword);
+    const existing = modelOf(def);
     if (!existing) {
       saveModel({
         name: def.model.name, keyword: def.model.keyword, summary: def.model.summary, entry, runtime: "server", inputs: def.model.inputs, outputs: ["markdown"],
         limits: def.model.limits ?? {}, executors: { chat: { enabled: true, visibility: def.model.visibility }, console: { enabled: true } } as Model["executors"],
         groups: [], enabled: opts.enableModel !== false && !def.model.off, endpoints: builtinEndpoints(def.model, []),
+        icon: def.model.icon, usage: def.model.usage,
       }, actor);
       modelState = "created";
-    } else if (existing.entry.startsWith(`${def.name}@`) && (existing.entry !== entry || !sameEndpoints(existing, def.model))) {
+    } else if (existing.entry.startsWith(`${def.name}@`) && (existing.entry !== entry || !sameEndpoints(existing, def.model) || missingMeta(existing, def.model))) {
       // The operator's own webhooks stay; the built-in's entry points move to the new version.
-      saveModel({ id: existing.id, entry, inputs: def.model.inputs, endpoints: builtinEndpoints(def.model, endpointsOf(existing)) }, actor);
+      // 6.11: an icon or a usage text the operator set stays too — only a missing one is filled.
+      saveModel({ id: existing.id, entry, inputs: def.model.inputs, endpoints: builtinEndpoints(def.model, endpointsOf(existing)), ...metaFill(existing, def.model) }, actor);
       modelState = "updated";
     } else modelState = existing.entry.startsWith(`${def.name}@`) ? "unchanged" : "none";
     if (modelState === "none") out.push({ name: def.name, version: def.version, package: pkgState, model: "none", message: `/${def.model.keyword} is used by another model (“${existing!.name}”) — the package is installed without a model.` });
@@ -168,13 +203,31 @@ function sameEndpoints(existing: Model, m: BuiltinModel): boolean {
   const have = new Set(endpointsOf(existing).map((e) => `${e.type}:${e.fn}`));
   return (m.endpoints ?? []).every((e) => have.has(`${e.type}:index.js#${e.type}`));
 }
+/** 6.11: a built-in model installed before icons and usage texts has neither. */
+const missingMeta = (existing: Model, m: BuiltinModel) => (!existing.icon && Boolean(m.icon)) || (!existing.usage && Boolean(m.usage));
+const metaFill = (existing: Model, m: BuiltinModel): Partial<Model> => ({ ...(!existing.icon && m.icon ? { icon: m.icon } : {}), ...(!existing.usage && m.usage ? { usage: m.usage } : {}) });
+
+/**
+ * 6.11: once per installation, a built-in model that is already there (its
+ * package unchanged, so the install above skips it) gets the built-in's icon
+ * and usage text where it has none. Marked "<name>#meta" in the marker file,
+ * so an icon the operator clears later is not put back.
+ */
+const META_MARK = "6.11";
+function backfillMeta(def: BuiltinDef, actor: string): boolean {
+  if (!def.model) return false;
+  const existing = modelOf(def);
+  if (!existing || !existing.entry.startsWith(`${def.name}@`) || !missingMeta(existing, def.model)) return false;
+  saveModel({ id: existing.id, ...metaFill(existing, def.model) }, actor);
+  return true;
+}
 
 /** What the gallery shows: each built-in, whether it is installed, and at which version. */
 export function builtinCatalog() {
   return BUILTINS_ALL.map((def) => {
     const pkg = functionsStore.packageByName(def.name);
     const published = pkg ? functionsStore.versions(pkg.id).filter((v) => v.status === "published").map((v) => v.version) : [];
-    const model = def.model ? functionsStore.modelByKeyword(def.model.keyword) : null;
+    const model = modelOf(def);
     return { name: def.name, kind: def.kind, version: def.version, description: def.description, keyword: def.model?.keyword ?? null, summary: def.model?.summary ?? "", installed: Boolean(pkg), versions: published, current: published.includes(def.version), model: model ? { id: model.id, enabled: model.enabled, entry: model.entry } : null };
   });
 }
@@ -196,14 +249,24 @@ export async function seedBuiltins(actor = "system"): Promise<InstallResult[] | 
   try { done = JSON.parse(readFileSync(file, "utf8")) as Record<string, string>; } catch { /* first time */ }
   await functionsStore.ready();
   const results: InstallResult[] = [];
+  let marked = false;
   for (const def of BUILTINS_ALL) {
-    if (done[def.name] === def.version) continue;
+    if (done[def.name] === def.version) {
+      // 6.11: an install from before icons and usage texts gets them once.
+      if (def.model && done[`${def.name}#meta`] !== META_MARK) {
+        try { if (backfillMeta(def, actor)) results.push({ name: def.name, version: def.version, package: "unchanged", model: "updated" }); } catch (err) { console.warn(`[functions] ${def.name}: ${(err as Error).message}`); }
+        done[`${def.name}#meta`] = META_MARK;
+        marked = true;
+      }
+      continue;
+    }
     // Installed before at an older version: update it — unless the operator deleted it since.
-    if (done[def.name] && !functionsStore.packageByName(def.name)) { done[def.name] = def.version; continue; }
+    if (done[def.name] && !functionsStore.packageByName(def.name)) { done[def.name] = def.version; marked = true; continue; }
     try { results.push(...installBuiltin(def.name, actor)); } catch (err) { results.push({ name: def.name, version: def.version, package: "unchanged", model: "none", message: (err as Error).message }); }
     done[def.name] = def.version;
+    if (def.model) done[`${def.name}#meta`] = META_MARK; // the install filled them
   }
-  if (results.length) {
+  if (results.length || marked) {
     try { mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); writeFileSync(file, JSON.stringify(done, null, 2), { mode: 0o600 }); } catch { /* read-only: it retries next start */ }
   }
   return results;

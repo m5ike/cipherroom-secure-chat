@@ -21,6 +21,7 @@ process.env.FUNCTIONS_HTTP_ALLOW_LOCAL = "1";
 const { functionsStore } = await import("../server/functions/store");
 const { installBuiltin, builtinCatalog, BUILTINS, seedBuiltins } = await import("../server/functions/builtins");
 const { execute, closeRunner } = await import("../server/functions/runner");
+const { saveModel } = await import("../server/functions/packages");
 // @ts-expect-error — a plain .mjs script
 const { renderSources } = await import("../script/gen-builtins.mjs");
 
@@ -68,8 +69,8 @@ describe("built-in packages", () => {
       expect(c.current, def.name).toBe(true);
       if (def.model) expect(c.model?.enabled, def.name).toBe(true);
     }
-    const dns = functionsStore.versionByName("dns", "1.3.0")!;
-    expect(dns.manifest.dependencies).toEqual({ netkit: "1.3.0" });
+    const dns = functionsStore.versionByName("dns", "1.4.0")!;
+    expect(dns.manifest.dependencies).toEqual({ netkit: "1.4.0" });
     // A second seed does nothing; installing again changes nothing.
     expect(await seedBuiltins("test")).toEqual([]);
     expect(installBuiltin("whois", "test").every((r) => r.package === "unchanged")).toBe(true);
@@ -136,8 +137,8 @@ describe("built-in packages", () => {
     const marker = join(DATA, "functions", "builtins.json");
     writeFileSync(marker, JSON.stringify({ netkit: "1.0.0", help: "1.0.0", whois: "1.0.0", dns: "1.0.0", web: "1.0.0", mail: "1.0.0", domain: "1.0.0" }));
     const results = await seedBuiltins("test");
-    expect(results!.every((x) => x.package === "unchanged")).toBe(true); // 1.3.0 is there already
-    expect(JSON.parse(readFileSync(marker, "utf8")).dns).toBe("1.3.0");
+    expect(results!.every((x) => x.package === "unchanged")).toBe(true); // 1.4.0 is there already
+    expect(JSON.parse(readFileSync(marker, "utf8")).dns).toBe("1.4.0");
   }, 60_000);
 
   it("a missing input without anyone to ask is a clear error", async () => {
@@ -146,6 +147,40 @@ describe("built-in packages", () => {
     expect(r.run.status).toBe("failed");
     expect(r.run.error?.message).toMatch(/Domain is required/);
   }, 30_000);
+
+  it("6.11: every built-in model has an icon (the app's default where its keyword has one) and a usage text; /help shows it", async () => {
+    const { DEFAULT_MODEL_ICONS } = await import("../client/src/lib/system-messenger");
+    const { isModelIcon, USAGE_MAX } = await import("../server/functions/types");
+    const { BUILTINS_ALL } = await import("../server/functions/builtins");
+    for (const def of BUILTINS_ALL) {
+      if (!def.model) continue;
+      const { keyword, icon, usage } = def.model;
+      expect(isModelIcon(icon), keyword).toBe(true);
+      if (DEFAULT_MODEL_ICONS[keyword]) expect(icon, keyword).toBe(DEFAULT_MODEL_ICONS[keyword]);
+      expect(usage.startsWith(`/${keyword}`), keyword).toBe(true);
+      expect([...usage].length, keyword).toBeLessThanOrEqual(USAGE_MAX);
+      const m = functionsStore.models().find((x) => x.keyword === keyword)!;
+      expect({ icon: m.icon, usage: m.usage }, keyword).toEqual({ icon, usage });
+    }
+    const help = text((await run("help", { topic: "mail" })).outputs);
+    expect(help).toMatch(/\*\*How to use\*\*\n\n```text\n\/mail example\.com — MX and provider/);
+  }, 60_000);
+
+  it("6.11: an install from before icons gets them once; one the operator cleared later stays cleared", async () => {
+    const { writeFileSync } = await import("node:fs");
+    const marker = join(DATA, "functions", "builtins.json");
+    const whois = () => functionsStore.models().find((x) => x.keyword === "whois")!;
+    saveModel({ id: whois().id, icon: "", usage: "" }, "op");
+    const done = JSON.parse(readFileSync(marker, "utf8")) as Record<string, string>;
+    delete done["whois#meta"];
+    writeFileSync(marker, JSON.stringify(done));
+    const results = await seedBuiltins("test");
+    expect(results).toEqual([{ name: "whois", version: "1.4.0", package: "unchanged", model: "updated" }]);
+    expect(whois()).toMatchObject({ icon: "globe", usage: expect.stringMatching(/^\/whois example\.com/) });
+    saveModel({ id: whois().id, icon: "" }, "op");
+    expect(await seedBuiltins("test")).toEqual([]);
+    expect(whois().icon).toBe("");
+  }, 60_000);
 });
 
 describe.skipIf(process.env.NET_TESTS !== "1")("demos on the internet", () => {

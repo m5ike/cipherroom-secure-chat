@@ -760,7 +760,7 @@
   }
 
   function editModel(m) {
-    modelDraft = m ? JSON.parse(JSON.stringify(m)) : { id: "", name: "", keyword: "", summary: "", entry: "", onEvent: "", runtime: "server", inputs: [], outputs: ["markdown"], limits: {}, executors: { chat: { enabled: true, visibility: "room" }, console: { enabled: true } }, groups: [], enabled: false };
+    modelDraft = m ? JSON.parse(JSON.stringify(m)) : { id: "", name: "", keyword: "", summary: "", icon: "", usage: "", entry: "", onEvent: "", runtime: "server", inputs: [], outputs: ["markdown"], limits: {}, executors: { chat: { enabled: true, visibility: "room" }, console: { enabled: true } }, groups: [], enabled: false };
     tab = "models"; render();
   }
 
@@ -778,15 +778,19 @@
     const m = modelDraft;
     const form = h("div", { class: "fn-form card" });
     const ro = !writable();
-    const text = (label, key, ph, hint) => h("label", { class: "field" }, h("span", { class: "label" }, label), h("input", { class: "input", value: m[key] || "", placeholder: ph || "", disabled: ro, oninput: (e) => { m[key] = e.target.value; if (key === "keyword") hintEl.textContent = chatHint(); } }), hint ? h("span", { class: "muted small" }, hint) : null);
-    const chatHint = () => m.keyword ? `In the chat: /${m.keyword}${(m.inputs || []).filter((i) => i.required).map((i) => ` <${i.name}>`).join("")}` : "Without a keyword it is not a chat command.";
+    const text = (label, key, ph, hint) => h("label", { class: "field" }, h("span", { class: "label" }, label), h("input", { class: "input", value: m[key] || "", placeholder: ph || "", disabled: ro, oninput: (e) => { m[key] = e.target.value; if (key === "keyword") hintEl.textContent = chatHint(); if (key === "keyword" || key === "name") iconBox.refresh(); } }), hint ? h("span", { class: "muted small" }, hint) : null);
+    // 6.11: the usage line as the chat shows it (required inputs in <>, optional in []).
+    const chatHint = () => m.keyword ? `In the chat: /${m.keyword}${(m.inputs || []).map((i) => (i.required && (i.default === undefined || i.default === "") ? ` <${i.name}>` : ` [${i.name}]`)).join("")}` : "Without a keyword it is not a chat command.";
     const hintEl = h("span", { class: "muted small" }, chatHint());
+    const iconBox = iconField(m, ro);
 
     form.append(h("div", { class: "fn-side__head" }, h("strong", {}, m.id ? `Model: ${m.name || m.id}` : "New model"),
       h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: m.enabled, disabled: ro, onchange: (e) => { m.enabled = e.target.checked; } }), " enabled")));
 
     form.append(h("div", { class: "fn-grid2" }, text("Name", "name", "Weather"), h("div", {}, text("Keyword (chat: /keyword)", "keyword", "pocasi"), hintEl)));
     form.append(text("Summary", "summary", "What it does, shown in the /command hint"));
+    // 6.11: how it appears in the chat (its answers come from "system-messenger" with its name and icon) and its own guide.
+    form.append(iconBox.el, usageField(m, ro));
 
     // 5.3: the package version the model runs, and its entry points in it.
     const pkgs = data.packages.filter((p) => p.versions.length);
@@ -977,6 +981,88 @@
     } }, "▶ Test run");
     fs.append(grid, h("div", { class: "fn-row mt8" }, btn, h("span", { class: "muted small" }, "Runs the saved model as a test (inputs are checked by the schema).")), result);
     return fs;
+  }
+
+  /* ---- 6.11: a model's icon and usage ---- */
+
+  // The icons the picker offers (all in console-icons.js); any other lucide name may be typed.
+  const MODEL_ICONS = ["bot", "mail", "phone", "phone-call", "phone-forwarded", "message-square-text", "message-circle", "messages-square", "search", "hash",
+    "globe", "network", "link", "app-window", "server", "database", "shield-check", "activity", "clock", "calendar", "cloud-sun", "calculator", "languages",
+    "sparkles", "file-text", "book-open", "credit-card", "receipt", "id-card", "nfc", "scan-line", "fingerprint-pattern", "qr-code", "code", "terminal",
+    "circle-help", "bell", "chart-bar", "dice-5", "map-pin", "image", "music", "wrench", "cpu", "smartphone", "user", "truck", "shopping-cart", "play"];
+  const MODEL_EMOJI = ["🤖", "📞", "✉️", "🌐", "🔍", "💳", "🪪", "📊", "⏰", "🌦️", "🧮", "🎲", "⚙️", "🔔"];
+  // For the preview only: a mirror of client/src/lib/system-messenger.ts DEFAULT_MODEL_ICONS (the app's own pick by the keyword).
+  const DEFAULT_MODEL_ICONS = {
+    mail: "mail", email: "mail", hlr: "phone", lookup: "search", number: "hash", phone: "phone", call: "phone-call", sms: "message-square-text",
+    dns: "globe", whois: "globe", ip: "network", ping: "activity", http: "globe", url: "link", ssl: "shield-check", cert: "shield-check",
+    weather: "cloud-sun", time: "clock", calc: "calculator", translate: "languages", ai: "sparkles", ask: "sparkles", summary: "file-text",
+    emv: "credit-card", "emv-history": "receipt", eid: "id-card", nfc: "nfc", qr: "qr-code", code: "code", run: "play", help: "circle-help",
+    phone_bridge: "phone-forwarded", "phone-bridge": "phone-forwarded", remind: "bell", poll: "chart-bar", dice: "dice-5",
+  };
+  const ICON_NAME_RE = /^[a-z0-9-]{1,40}$/;
+  const EMOJI_RE = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|[#*0-9]️?⃣)/u;
+  /** One emoji (a single grapheme) — as the server checks it (types.ts isModelIcon). */
+  function isEmoji(v) {
+    if (!v || v.length > 32) return false;
+    let n;
+    try { n = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(v)].length; } catch { n = [...v].length; }
+    return n === 1 && EMOJI_RE.test(v);
+  }
+  const iconOk = (v) => !v || ICON_NAME_RE.test(v) || isEmoji(v);
+  const defaultIcon = (keyword) => { const k = String(keyword || "").toLowerCase(); return DEFAULT_MODEL_ICONS[k] || DEFAULT_MODEL_ICONS[k.split(/[-_]/)[0]] || "bot"; };
+  /** The avatar's colour, stable per keyword (system-messenger.ts modelColor). */
+  function modelColor(keyword) {
+    let hash = 0;
+    for (let i = 0; i < keyword.length; i++) hash = (hash * 31 + keyword.charCodeAt(i)) >>> 0;
+    const hue = hash % 360, s = 0.55, l = 0.45;
+    const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((hue / 60) % 2) - 1)), mm = l - c / 2;
+    const [r, g, b] = hue < 60 ? [c, x, 0] : hue < 120 ? [x, c, 0] : hue < 180 ? [0, c, x] : hue < 240 ? [0, x, c] : hue < 300 ? [x, 0, c] : [c, 0, x];
+    const to = (v) => Math.round((v + mm) * 255).toString(16).padStart(2, "0");
+    return `#${to(r)}${to(g)}${to(b)}`;
+  }
+  function avatar(icon, keyword) {
+    const el = h("span", { class: "fn-avatar", "aria-hidden": "true" });
+    el.style.backgroundColor = modelColor(String(keyword || "model").toLowerCase());
+    if (ICON_NAME_RE.test(icon)) el.append(window.M5Icons && window.M5Icons.has(icon) ? I(icon) : h("span", { class: "fn-avatar__txt" }, icon.slice(0, 2)));
+    else el.append(h("span", { class: "fn-avatar__emoji" }, icon));
+    return el;
+  }
+
+  /** The icon: a picker of lucide icons, a few emoji, a field for any lucide name or emoji, and a live preview of the answer's sender. */
+  function iconField(m, ro) {
+    const box = h("div", { class: "field" }, h("span", { class: "label" }, "Icon — the avatar of its answers in the chat (a lucide icon or one emoji; empty: picked by the keyword)"));
+    const preview = h("span", { class: "fn-icon-preview" });
+    const note = h("span", { class: "muted small" });
+    const input = h("input", { class: "input input--sm fn-mono fn-icon-input", value: m.icon || "", maxlength: 40, placeholder: "mail · 📞", disabled: ro, oninput: (e) => { m.icon = e.target.value.trim(); draw(); } });
+    const picks = h("div", { class: "fn-icon-picker", role: "listbox", "aria-label": "Icons" });
+    const set = (v) => { m.icon = v; input.value = v; draw(); };
+    function draw() {
+      const v = String(m.icon || "").trim();
+      const shown = v && iconOk(v) ? v : defaultIcon(m.keyword);
+      clear(preview);
+      preview.append(avatar(shown, m.keyword || m.name), h("span", { class: "fn-icon-preview__who" }, h("strong", {}, m.name || "Model"), h("span", { class: "muted small" }, " · system-messenger")));
+      note.classList.toggle("fn-icon-note--err", !iconOk(v));
+      note.textContent = !iconOk(v) ? "Not an icon: a lucide name (lower-case letters, digits and -) or one emoji."
+        : !v ? `Empty — the app uses “${shown}” by the keyword.`
+        : ICON_NAME_RE.test(v) && !(window.M5Icons && window.M5Icons.has(v)) ? `lucide “${v}” — not drawn in the console; the app shows it (an unknown name falls back to “bot”).` : "";
+      for (const b of picks.children) { const on = b.dataset.icon === v; b.classList.toggle("fn-icon-opt--on", on); b.setAttribute("aria-selected", on ? "true" : "false"); }
+    }
+    for (const name of MODEL_ICONS) picks.append(h("button", { type: "button", class: "fn-icon-opt", role: "option", title: name, dataset: { icon: name }, disabled: ro, onclick: () => set(name) }, I(name)));
+    for (const e of MODEL_EMOJI) picks.append(h("button", { type: "button", class: "fn-icon-opt fn-icon-opt--emoji", role: "option", title: e, dataset: { icon: e }, disabled: ro, onclick: () => set(e) }, e));
+    picks.append(h("button", { type: "button", class: "fn-icon-opt", role: "option", title: "none — by the keyword", dataset: { icon: "" }, disabled: ro, onclick: () => set("") }, "∅"));
+    box.append(h("div", { class: "fn-row fn-icon-row" }, preview, input, note), picks);
+    draw();
+    return { el: box, refresh: draw };
+  }
+
+  /** The usage text: the model's own short guide with examples (plain text, at most 500 characters). */
+  function usageField(m, ro) {
+    const count = h("span", { class: "muted small" });
+    const upd = () => { const n = [...String(m.usage || "")].length; count.textContent = `${n} / 500 — shown with a wrong call, in the command suggester and in /help <command>`; count.classList.toggle("fn-icon-note--err", n > 500); };
+    const ta = h("textarea", { class: "input fn-mono", rows: 3, maxlength: 500, disabled: ro, placeholder: "/mail example.com — checks the domain's e-mail\n/mail — a form asks for the domain", oninput: (e) => { m.usage = e.target.value; upd(); } });
+    ta.value = m.usage || "";
+    upd();
+    return h("label", { class: "field" }, h("span", { class: "label" }, "Usage — how to call it, with examples"), ta, count);
   }
 
   function groupsField(m, ro) {

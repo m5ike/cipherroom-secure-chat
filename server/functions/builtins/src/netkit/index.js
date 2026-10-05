@@ -36,10 +36,15 @@ export function registrable(host) {
 
 export const DNS_TYPES = ["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "CAA"];
 
-/** One lookup that never throws: { ok, records, error }. */
-export async function lookup(name, type) {
-  try { const records = await m5.dns.resolve(name, type); return { ok: true, records: records == null ? [] : records, error: "" }; }
-  catch (e) { return { ok: false, records: [], error: String((e && e.message) || e).replace(/^cannot resolve [^:]*: /, "") }; }
+/** One lookup that never throws: { ok, records, error, timeout }. 1.4 (6.11): a lookup has a time
+ *  limit (timeoutMs, else the server's 4 s) — without an answer in time it is { ok: false, timeout: true,
+ *  error: "no answer in time" } instead of holding the whole command. */
+export async function lookup(name, type, timeoutMs) {
+  try { const records = await m5.dns.resolve(name, type, timeoutMs ? { timeoutMs } : undefined); return { ok: true, records: records == null ? [] : records, error: "", timeout: false }; }
+  catch (e) {
+    if (e && e.code === "timeout") return { ok: false, records: [], error: "no answer in time", timeout: true };
+    return { ok: false, records: [], error: String((e && e.message) || e).replace(/^cannot resolve [^:]*: /, ""), timeout: false };
+  }
 }
 
 /** Several types at once. */
@@ -376,53 +381,83 @@ export function tagsOf(record) {
   return out;
 }
 
-/** MX, SPF, DKIM (common selectors), DMARC, MTA-STS, TLS-RPT, BIMI — and a score with advice. */
-export async function mailInfo(domain) {
+/** 1.4 (6.11): how long the e-mail checks may take in all (ms); what has not answered by then is "no answer in time". */
+export const MAIL_BUDGET_MS = 20000;
+/** …and one lookup within it. */
+const MAIL_LOOKUP_MS = 4000;
+
+/**
+ * MX, SPF, DKIM (common selectors), DMARC, MTA-STS, TLS-RPT, BIMI — and a score with advice.
+ * 1.4 (6.11): everything that does not wait for another answer is asked at once, within a budget
+ * (opts.budgetMs, default MAIL_BUDGET_MS, at most 25 s): a lookup without an answer in time is
+ * reported (`timeouts`, `late`) instead of holding the command — and is not taken for a missing record.
+ */
+export async function mailInfo(domain, opts = {}) {
   const d = cleanHost(domain);
-  const [mx, txt, dmarc, mtaSts, tlsRpt, bimi] = await Promise.all([
-    lookup(d, "MX"), lookup(d, "TXT"), lookup(`_dmarc.${d}`, "TXT"), lookup(`_mta-sts.${d}`, "TXT"), lookup(`_smtp._tls.${d}`, "TXT"), lookup(`default._bimi.${d}`, "TXT"),
+  const budget = Math.max(1000, Math.min(Number(opts.budgetMs) || MAIL_BUDGET_MS, 25000));
+  const until = Date.now() + budget;
+  const left = (cap) => Math.max(250, Math.min(cap, until - Date.now()));
+  const late = [];
+  const look = async (name, type, what) => { const r = await lookup(name, type, left(MAIL_LOOKUP_MS)); if (r.timeout && what) late.push(what); return r; };
+  // A selector nobody would use tells a wildcard (*._domainkey) from real keys.
+  const probe = `m5check${m5.id.nanoid(8).toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+  const [[mx, txt, dmarc, mtaSts, tlsRpt, bimi], dkimProbe] = await Promise.all([
+    Promise.all([look(d, "MX", "MX"), look(d, "TXT", "SPF (TXT)"), look(`_dmarc.${d}`, "TXT", "DMARC"), look(`_mta-sts.${d}`, "TXT", "MTA-STS"), look(`_smtp._tls.${d}`, "TXT", "TLS-RPT"), look(`default._bimi.${d}`, "TXT", "BIMI")]),
+    Promise.all([...DKIM_SELECTORS, probe].map(async (sel) => ({ sel, r: await look(`${sel}._domainkey.${d}`, "TXT") }))),
   ]);
   const txts = (txt.records || []).map(txtOf);
   const spf = txts.filter((t) => /^v=spf1(\s|$)/i.test(t));
   const dmarcRec = (dmarc.records || []).map(txtOf).find((t) => /^v=DMARC1/i.test(t)) || "";
   const dm = tagsOf(dmarcRec);
-  // A selector nobody would use tells a wildcard (*._domainkey) from real keys.
-  const probe = `m5check${m5.id.nanoid(8).toLowerCase().replace(/[^a-z0-9]/g, "")}`;
-  const dkimProbe = await Promise.all([...DKIM_SELECTORS, probe].map(async (sel) => ({ sel, r: await lookup(`${sel}._domainkey.${d}`, "TXT") })));
   const isKey = (x) => x.r.ok && (x.r.records || []).map(txtOf).some((t) => /(^|;)\s*(v=DKIM1|p=)/i.test(t));
   const wildcard = isKey(dkimProbe[dkimProbe.length - 1]);
   const keyText = (x) => (x.r.records || []).map(txtOf).join("");
   const revoked = (t) => /(^|;)\s*p=\s*(;|$)/i.test(t);
   const dkim = wildcard ? [] : dkimProbe.slice(0, -1).filter(isKey).map((x) => ({ selector: x.sel, key: keyText(x).slice(0, 80), revoked: revoked(keyText(x)) }));
   const dkimWildcard = wildcard ? { revoked: revoked(keyText(dkimProbe[dkimProbe.length - 1])), key: keyText(dkimProbe[dkimProbe.length - 1]).slice(0, 80) } : null;
+  const dkimLate = dkimProbe.slice(0, -1).filter((x) => x.r.timeout).length;
+  if (dkimLate) late.push(`DKIM (${dkimLate} of ${DKIM_SELECTORS.length} selectors)`);
   // "0 ." — a null MX (RFC 7505): the domain accepts no mail.
   const nullMx = (mx.records || []).length === 1 && !String(mx.records[0].exchange || "").replace(/\.$/, "");
   const mxList = nullMx ? [] : (mx.records || []).slice().sort((a, b) => a.priority - b.priority);
-  const mxHosts = await Promise.all(mxList.slice(0, 3).map(async (m) => ({ host: m.exchange, priority: m.priority, a: (await lookup(m.exchange, "A")).records || [] })));
-  let stsPolicy = "";
-  if ((mtaSts.records || []).length) {
-    try { const r = await m5.http.get(`https://mta-sts.${d}/.well-known/mta-sts.txt`, { timeoutMs: 8000 }); if (r.ok) stsPolicy = (r.text || "").trim(); } catch (e) { stsPolicy = ""; }
-  }
+  // What waits for an answer above: the MX hosts' addresses and the MTA-STS policy — together, within what is left.
+  const stsFetch = async () => {
+    if (!(mtaSts.records || []).length || until - Date.now() < 500) { if ((mtaSts.records || []).length) late.push("MTA-STS policy"); return ""; }
+    try { const r = await m5.http.get(`https://mta-sts.${d}/.well-known/mta-sts.txt`, { timeoutMs: left(8000) }); return r.ok ? (r.text || "").trim() : ""; }
+    catch (e) { if (e && e.code === "timeout") late.push("MTA-STS policy"); return ""; }
+  };
+  const [mxHosts, stsPolicy] = await Promise.all([
+    Promise.all(mxList.slice(0, 3).map(async (m) => ({ host: m.exchange, priority: m.priority, a: (await look(m.exchange, "A", `${m.exchange} A`)).records || [] }))),
+    stsFetch(),
+  ]);
+  const timeouts = { mx: mx.timeout, spf: txt.timeout, dmarc: dmarc.timeout, dkim: dkimLate === DKIM_SELECTORS.length, mtaSts: mtaSts.timeout, tlsRpt: tlsRpt.timeout, bimi: bimi.timeout };
   const spfText = spf[0] || "";
   const spfAll = (/([~?+-])all\b/.exec(spfText) || [])[1] || "";
   const spfLookups = (spfText.match(/\b(include|a|mx|ptr|exists|redirect)[:=]?/gi) || []).length;
   const provider = mailProvider(mxList.map((m) => m.exchange).join(" "), spfText);
   const advice = [];
+  const noAnswer = (what) => advice.push(`${what}: the DNS gave no answer in time — check again later.`);
   let score = 0;
-  if (nullMx) advice.push("Null MX (0 .): the domain says it accepts no e-mail.");
+  if (timeouts.mx) noAnswer("MX");
+  else if (nullMx) advice.push("Null MX (0 .): the domain says it accepts no e-mail.");
   else if (mxList.length) score += 15; else advice.push("No MX record: the domain cannot receive e-mail (or uses A-record fallback).");
-  if (spf.length === 1) { score += 20; if (spfAll === "-" || spfAll === "~") score += 5; else advice.push("SPF ends with ?all/+all (or nothing): tighten it to ~all or -all."); if (spfLookups > 10) advice.push(`SPF needs ${spfLookups} DNS lookups; more than 10 fails.`); }
+  if (timeouts.spf) noAnswer("SPF");
+  else if (spf.length === 1) { score += 20; if (spfAll === "-" || spfAll === "~") score += 5; else advice.push("SPF ends with ?all/+all (or nothing): tighten it to ~all or -all."); if (spfLookups > 10) advice.push(`SPF needs ${spfLookups} DNS lookups; more than 10 fails.`); }
   else if (spf.length > 1) advice.push("More than one SPF record: receivers treat that as an error — merge them.");
   else advice.push("No SPF record: add one listing who may send for the domain (v=spf1 … ~all).");
-  if (dmarcRec) { score += 20; if (dm.p === "reject" || dm.p === "quarantine") score += 10; else advice.push("DMARC policy is p=none: move to quarantine or reject once reports look clean."); if (!dm.rua) advice.push("DMARC has no rua= address: you get no aggregate reports."); }
+  if (timeouts.dmarc) noAnswer("DMARC");
+  else if (dmarcRec) { score += 20; if (dm.p === "reject" || dm.p === "quarantine") score += 10; else advice.push("DMARC policy is p=none: move to quarantine or reject once reports look clean."); if (!dm.rua) advice.push("DMARC has no rua= address: you get no aggregate reports."); }
   else advice.push("No DMARC record (_dmarc): publish at least v=DMARC1; p=none; rua=mailto:…");
   if (dkim.some((k) => !k.revoked)) score += 15;
   else if (dkimWildcard) advice.push(dkimWildcard.revoked ? "DKIM: a wildcard with an empty key (p=) — every selector is revoked: the domain sends no signed mail." : "DKIM: a wildcard record answers every selector.");
-  else advice.push(`No DKIM key under the common selectors (${DKIM_SELECTORS.length} tried) — it may use another selector.`);
-  if ((mtaSts.records || []).length) score += 5; else advice.push("No MTA-STS: sending servers may fall back to unencrypted delivery.");
-  if ((tlsRpt.records || []).length) score += 5; else advice.push("No TLS-RPT (_smtp._tls): you do not hear about TLS delivery failures.");
+  else if (timeouts.dkim) noAnswer("DKIM");
+  else advice.push(`No DKIM key under the common selectors (${DKIM_SELECTORS.length - dkimLate} answered of ${DKIM_SELECTORS.length} tried) — it may use another selector.`);
+  if (timeouts.mtaSts) noAnswer("MTA-STS");
+  else if ((mtaSts.records || []).length) score += 5; else advice.push("No MTA-STS: sending servers may fall back to unencrypted delivery.");
+  if (timeouts.tlsRpt) noAnswer("TLS-RPT");
+  else if ((tlsRpt.records || []).length) score += 5; else advice.push("No TLS-RPT (_smtp._tls): you do not hear about TLS delivery failures.");
   if ((bimi.records || []).length) score += 5;
-  return { domain: d, nullMx, dkimWildcard, mx: mxList, mxHosts, provider, spf, spfAll, spfLookups, dmarc: dmarcRec, dmarcTags: dm, dkim, mtaSts: (mtaSts.records || []).map(txtOf), stsPolicy, tlsRpt: (tlsRpt.records || []).map(txtOf), bimi: (bimi.records || []).map(txtOf), score: Math.min(100, score), advice };
+  return { domain: d, nullMx, dkimWildcard, mx: mxList, mxHosts, provider, spf, spfAll, spfLookups, dmarc: dmarcRec, dmarcTags: dm, dkim, mtaSts: (mtaSts.records || []).map(txtOf), stsPolicy, tlsRpt: (tlsRpt.records || []).map(txtOf), bimi: (bimi.records || []).map(txtOf), score: Math.min(100, score), advice, timeouts, late };
 }
 
 export function mailProvider(mx, spf) {

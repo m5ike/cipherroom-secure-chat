@@ -165,10 +165,28 @@ function send(child: Child, msg: ToSandbox): void {
 
 export type PoolOptions = { warmPerLang?: number };
 
+/** 6.11: how long a cancelled run may take to stop on its own before its process is killed. */
+const CANCEL_GRACE_MS = 2000;
+
 export class SandboxPool {
   private warm: Record<Lang, Child[]> = { js: [], py: [] };
   private warmTarget: number;
   private closed = false;
+  /** 6.11: the runs in progress (by run id) and how to stop each. */
+  private active = new Map<string, (why: string) => void>();
+
+  /**
+   * 6.11: stops a run (its caller went away): the sandbox is told to cancel —
+   * its waiting host calls fail, the interpreter stops — and is killed if it
+   * has not stopped within a moment. The run ends as `Cancelled`. False when
+   * no such run is in progress here.
+   */
+  cancel(runId: string, why = "the run was cancelled"): boolean {
+    const stop = this.active.get(runId);
+    if (!stop) return false;
+    stop(why);
+    return true;
+  }
 
   constructor(opts: PoolOptions = {}) {
     this.warmTarget = Math.max(0, opts.warmPerLang ?? 1);
@@ -201,7 +219,12 @@ export class SandboxPool {
 
   /** Runs one spec to completion; enforces wall time and memory by killing. */
   async run(spec: RunSpec, handlers: RunHandlers): Promise<RunResult> {
-    const child = await this.take(spec.lang, spec.limits.memoryMb);
+    // A cancel that comes while the process is being taken is kept for the start.
+    const early = { why: null as string | null };
+    this.active.set(spec.id, (why) => { early.why = why; });
+    let child: Child;
+    try { child = await this.take(spec.lang, spec.limits.memoryMb); }
+    catch (err) { this.active.delete(spec.id); throw err; }
     const engine = child.engine;
     const started = Date.now();
     const grace = 2000;
@@ -221,7 +244,16 @@ export class SandboxPool {
           finally { if (--pauseDepth === 0) pausedTotal += Date.now() - pausedSince; }
         },
       };
-      const finish = (r: RunResult) => { if (settled) return; settled = true; clearInterval(watch); clearTimeout(hardStop); child.onMessage = null; this.retire(child); resolve(r); };
+      const finish = (r: RunResult) => { if (settled) return; settled = true; clearInterval(watch); clearTimeout(hardStop); if (cancelTimer) clearTimeout(cancelTimer); if (this.active.get(spec.id) === cancel) this.active.delete(spec.id); child.onMessage = null; this.retire(child); resolve(r); };
+      // 6.11: cancelled — the sandbox stops its waiting calls and its interpreter; a process that does not, is killed.
+      let cancelTimer: ReturnType<typeof setTimeout> | null = null;
+      const cancel = (why: string) => {
+        if (settled || cancelTimer) return;
+        send(child, { t: "cancel" });
+        cancelTimer = setTimeout(() => { kill(child); finish({ ok: false, error: { type: "Cancelled", message: why }, ms: Date.now() - started, memMb: Math.round(rss / 1048576), engine }); }, CANCEL_GRACE_MS);
+        cancelTimer.unref?.();
+      };
+      this.active.set(spec.id, cancel);
 
       const watch = setInterval(() => {
         rss = readRss(child.proc.pid);
@@ -266,6 +298,7 @@ export class SandboxPool {
         }
       };
       send(child, { t: "run", spec });
+      if (early.why !== null) cancel(early.why);
     });
   }
 
