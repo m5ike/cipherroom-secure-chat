@@ -14,6 +14,8 @@ enum Bootstrap {
         PushCenter.install(into: model)
         // Platform/Calls — model.voip = … (CallKit + PushKit; reports every VoIP push).
         CallSystem.shared.install(into: model)
+        // Platform/Watch — the Apple Watch companion (WatchConnectivity; only while unlocked and turned on).
+        WatchBridge.install(into: model)
         // Platform/Notifications — UNUserNotificationCenter delegate, categories, neutral texts.
         Notifier.install(into: model)
         // Platform/NFC, Voice, Location, Contacts, Files — on demand from the screens.
