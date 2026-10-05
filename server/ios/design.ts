@@ -14,7 +14,11 @@
 // switch in Settings › Notifications (setting watch.on — M5Design's
 // SettingsModel / SettingSchema: off by default, a private area no design
 // action may change) and the texts only the iOS app says (IOS_STRINGS: the
-// watch app's, the system NFC sheet's). The iOS app ships this design
+// watch app's, the system NFC sheet's). Android's texts that describe what
+// only Android does (conversation shortcuts, the system call log, Firebase,
+// Google's password manager…) say what the iOS app does instead
+// (IOS_WORDING), and the rows of what iOS cannot do at all are left out
+// (IOS_REMOVED_NODES). The iOS app ships this design
 // (script/ios-assets.ts → ios/Design/m5/, copied by the Xcode build phase
 // "Copy design assets"). The design's scope has no platform variable ($app is
 // name / version / code / bundle on both apps): a design is one platform's
@@ -278,9 +282,229 @@ export const IOS_STRINGS: Record<string, Texts> = {
     "Številki se NE ujemata — to ni ista naprava.",
     "Numerot EIVÄT täsmää – tämä ei ole sama laite.",
   ),
+
+  /* -------- Settings › Security: what protects the PIN (Vault.pinKeyLevel "secure-enclave" — Android: strongbox / tee) */
+  "set.security.pinKey.secure-enclave": T(
+    "Secure Enclave (security chip)", "Secure Enclave (bezpečnostní čip)", "Secure Enclave (Sicherheitschip)",
+    "Secure Enclave (chip de seguridad)", "Secure Enclave (chip di sicurezza)", "Secure Enclave (puce de sécurité)",
+    "Secure Enclave (bezpečnostný čip)", "Secure Enclave (varnostni čip)", "Secure Enclave (turvasiru)",
+  ),
 };
 
-const findNode = (node: ANode, id: string): ANode | null => {
+/* ============================================ Android's words, iOS's ways */
+
+/**
+ * Android's texts that describe what only Android does, in the words of what
+ * the iOS app does instead (each checked against the iOS code):
+ *
+ * - conversations.*: Android publishes conversation shortcuts (launcher,
+ *   Share sheet, widgets); iOS has Communication Notifications and donated
+ *   INSendMessageIntents (Platform/Notifications/Conversations.swift): the
+ *   sender's name and initials, grouped by room, Siri's suggestions; off or
+ *   locked → the donations are deleted, no names.
+ * - notify.lockScreenHide: iOS has no per-notification lock-screen visibility
+ *   (Shared/LockScreen.swift): neutral text when previews show always, else
+ *   the system hides the preview.
+ * - notify.channel.android: the server's app channel ("android") wakes the
+ *   account's iOS devices too (server/notify/channels.ts).
+ * - notify.noFcm: $notify.push is APNs (DeviceService.pushMode "apns").
+ * - set.security.blocked: iOS cannot forbid screenshots (ScreenPrivacy.swift).
+ * - passkey.*, set.user.boundHint: the iOS password manager is the Passwords
+ *   app (iCloud Keychain, PRF since iOS 18); the server association is
+ *   apple-app-site-association (AccountDialogs.swift, server/ios/app-site.ts).
+ * - settings.callLog, calllog.*: CallKit's Recents in the Phone app
+ *   (CallKitBridge includesCallsInRecents) — no call log permission, nothing
+ *   another app reads, a tap calls back (CallSystem INStartCallIntent); the
+ *   permission and erase rows are not in the iOS design (IOS_REMOVED_NODES).
+ * - nfc.hold / nfc.work.tapScan / nfc.model.hold: the iPhone's NFC antenna is
+ *   at its top edge (as nfc.ios.hold); nfc.tpl.none: console › iOS › Define.
+ * - look.mic.blocked: the iOS Settings app's path.
+ */
+export const IOS_WORDING: Record<string, Texts> = {
+  /* -------------------------------------- Settings › Notifications */
+  "conversations.section": T("Conversations", "Konverzace", "Unterhaltungen", "Conversaciones", "Conversazioni", "Conversations", "Konverzácie", "Pogovori", "Keskustelut"),
+  "conversations.on": T(
+    "Rooms as conversations", "Místnosti jako konverzace", "Räume als Unterhaltungen", "Salas como conversaciones", "Stanze come conversazioni",
+    "Salles comme conversations", "Miestnosti ako konverzácie", "Sobe kot pogovori", "Huoneet keskusteluina",
+  ),
+  "conversations.hint": T(
+    "Message notifications show who wrote (their name and initials), grouped by room, and iOS learns the rooms from them for Siri's suggestions. Switching this off removes everything iOS has learnt.",
+    "Oznámení zpráv ukážou, kdo psal (jméno a iniciály), seskupená podle místností, a iOS se z nich naučí místnosti pro návrhy Siri. Vypnutím se všechno, co se iOS naučil, odebere.",
+    "Nachrichten-Benachrichtigungen zeigen, wer geschrieben hat (Name und Initialen), nach Räumen gruppiert, und iOS lernt daraus die Räume für die Siri-Vorschläge. Ausschalten entfernt alles, was iOS gelernt hat.",
+    "Las notificaciones de mensajes muestran quién escribió (nombre e iniciales), agrupadas por sala, y iOS aprende de ellas las salas para las sugerencias de Siri. Al desactivarlo se quita todo lo que iOS ha aprendido.",
+    "Le notifiche dei messaggi mostrano chi ha scritto (nome e iniziali), raggruppate per stanza, e iOS impara da esse le stanze per i suggerimenti di Siri. Disattivando questa opzione si rimuove tutto ciò che iOS ha imparato.",
+    "Les notifications de messages indiquent qui a écrit (nom et initiales), regroupées par salle, et iOS en apprend les salles pour les suggestions de Siri. La désactiver supprime tout ce qu’iOS a appris.",
+    "Upozornenia na správy ukážu, kto písal (meno a iniciály), zoskupené podľa miestností, a iOS sa z nich naučí miestnosti pre návrhy Siri. Vypnutím sa všetko, čo sa iOS naučil, odstráni.",
+    "Obvestila o sporočilih pokažejo, kdo je pisal (ime in začetnice), združena po sobah, iOS pa se iz njih nauči sobe za predloge Siri. Z izklopom se odstrani vse, kar se je iOS naučil.",
+    "Viesti-ilmoitukset näyttävät, kuka kirjoitti (nimi ja nimikirjaimet), huoneittain ryhmiteltyinä, ja iOS oppii niistä huoneet Sirin ehdotuksia varten. Tämän poistaminen käytöstä poistaa kaiken, mitä iOS on oppinut.",
+  ),
+  "conversations.names.hint": T(
+    "iOS (notifications, Siri's suggestions) gets a room's name only while the app is unlocked and notifications may name the room (Privacy above). Otherwise a conversation has no name, and as soon as the app locks, iOS forgets the named ones. They never hold message content or the room's key.",
+    "Název místnosti iOS dostane (oznámení, návrhy Siri) jen když je aplikace odemčená a oznámení smí místnost jmenovat (Soukromí výše). Jinak konverzace název nemá, a jakmile se aplikace zamkne, iOS pojmenované konverzace zapomene. Obsah zpráv ani klíč místnosti v nich nikdy není.",
+    "iOS (Benachrichtigungen, Siri-Vorschläge) erhält einen Raumnamen nur, solange die App entsperrt ist und Benachrichtigungen den Raum nennen dürfen (Privatsphäre oben). Sonst hat eine Unterhaltung keinen Namen, und sobald die App sperrt, vergisst iOS die benannten. Nachrichteninhalte oder der Schlüssel des Raums sind nie darin.",
+    "iOS (notificaciones, sugerencias de Siri) recibe el nombre de una sala solo mientras la app está desbloqueada y las notificaciones pueden nombrar la sala (Privacidad, arriba). En caso contrario, la conversación no tiene nombre, y en cuanto la app se bloquea, iOS olvida las que tenían nombre. Nunca contienen el contenido de los mensajes ni la clave de la sala.",
+    "iOS (notifiche, suggerimenti di Siri) riceve il nome di una stanza solo mentre l’app è sbloccata e le notifiche possono indicare il nome della stanza (Privacy sopra). Altrimenti la conversazione non ha nome e, non appena l’app si blocca, iOS dimentica quelle con nome. Non contengono mai il contenuto dei messaggi né la chiave della stanza.",
+    "iOS (notifications, suggestions de Siri) ne reçoit le nom d’une salle que lorsque l’app est déverrouillée et que les notifications peuvent nommer la salle (Confidentialité ci-dessus). Sinon, la conversation n’a pas de nom, et dès que l’app se verrouille, iOS oublie celles qui en avaient un. Elles ne contiennent jamais le contenu des messages ni la clé de la salle.",
+    "Názov miestnosti iOS dostane (upozornenia, návrhy Siri) len vtedy, keď je aplikácia odomknutá a upozornenia smú miestnosť pomenovať (Súkromie vyššie). Inak konverzácia názov nemá, a hneď ako sa aplikácia zamkne, iOS pomenované konverzácie zabudne. Obsah správ ani kľúč miestnosti v nich nikdy nie je.",
+    "iOS (obvestila, predlogi Siri) dobi ime sobe samo, dokler je aplikacija odklenjena in smejo obvestila sobo poimenovati (Zasebnost zgoraj). Sicer pogovor nima imena, in takoj ko se aplikacija zaklene, iOS pozabi poimenovane. Nikoli ne vsebujejo vsebine sporočil ali ključa sobe.",
+    "iOS (ilmoitukset, Sirin ehdotukset) saa huoneen nimen vain, kun sovellus on avattu ja ilmoitukset saavat nimetä huoneen (Yksityisyys yllä). Muuten keskustelulla ei ole nimeä, ja heti kun sovellus lukittuu, iOS unohtaa nimetyt. Niissä ei koskaan ole viestin sisältöä tai huoneen avainta.",
+  ),
+  "notify.lockScreenHide": T(
+    "Hide content on the lock screen", "Skrýt obsah na zamčené obrazovce", "Inhalt auf dem Sperrbildschirm ausblenden", "Ocultar el contenido en la pantalla de bloqueo",
+    "Nascondi il contenuto nella schermata di blocco", "Masquer le contenu sur l’écran de verrouillage", "Skryť obsah na zamknutej obrazovke", "Skrij vsebino na zaklenjenem zaslonu",
+    "Piilota sisältö lukitusnäytöllä",
+  ),
+  "notify.lockScreenHide.hint": T(
+    "Message notifications show no content on the lock screen: when iOS always shows previews there (Settings › Notifications), they carry only a neutral text; otherwise iOS hides their preview there. While the app is locked, this is always so.",
+    "Oznámení zpráv na zamčené obrazovce neukážou obsah: když tam iOS ukazuje náhledy vždy (Nastavení › Oznámení), nesou jen neutrální text; jinak jejich náhled na zamčené obrazovce skryje iOS. Dokud je zamčená aplikace, platí to vždy.",
+    "Nachrichten-Benachrichtigungen zeigen auf dem Sperrbildschirm keinen Inhalt: Zeigt iOS dort Vorschauen immer an (Einstellungen › Mitteilungen), tragen sie nur einen neutralen Text; sonst blendet iOS ihre Vorschau dort aus. Solange die App gesperrt ist, gilt das immer.",
+    "Las notificaciones de mensajes no muestran su contenido en la pantalla de bloqueo: si iOS muestra allí siempre las previsualizaciones (Ajustes › Notificaciones), solo llevan un texto neutro; si no, iOS oculta allí su previsualización. Mientras la app está bloqueada, siempre es así.",
+    "Le notifiche dei messaggi non mostrano il contenuto nella schermata di blocco: se iOS lì mostra sempre le anteprime (Impostazioni › Notifiche), contengono solo un testo neutro; altrimenti iOS ne nasconde l’anteprima. Mentre l’app è bloccata, è sempre così.",
+    `Les notifications de messages n’affichent aucun contenu sur l’écran de verrouillage${NB}: si iOS y affiche toujours les aperçus (Réglages › Notifications), elles ne portent qu’un texte neutre${NB}; sinon, iOS y masque leur aperçu. Tant que l’app est verrouillée, c’est toujours le cas.`,
+    "Upozornenia na správy na zamknutej obrazovke neukážu obsah: keď tam iOS ukazuje náhľady vždy (Nastavenia › Hlásenia), nesú len neutrálny text; inak ich náhľad na zamknutej obrazovke skryje iOS. Kým je aplikácia zamknutá, platí to vždy.",
+    "Obvestila o sporočilih na zaklenjenem zaslonu ne prikažejo vsebine: če iOS tam predogled prikazuje vedno (Nastavitve › Obvestila), vsebujejo samo nevtralno besedilo; sicer iOS njihov predogled tam skrije. Dokler je aplikacija zaklenjena, je to vedno tako.",
+    "Viesti-ilmoitukset eivät näytä sisältöä lukitusnäytöllä: jos iOS näyttää esikatselut siellä aina (Asetukset › Ilmoitukset), niissä on vain neutraali teksti; muuten iOS piilottaa niiden esikatselun siellä. Kun sovellus on lukittu, näin on aina.",
+  ),
+  "notify.channel.android": T(
+    "M5cet app (iOS, Android)", "Aplikace M5cet (iOS, Android)", "M5cet-App (iOS, Android)", "App M5cet (iOS, Android)", "App M5cet (iOS, Android)",
+    "App M5cet (iOS, Android)", "Aplikácia M5cet (iOS, Android)", "Aplikacija M5cet (iOS, Android)", "M5cet-sovellus (iOS, Android)",
+  ),
+  "notify.noFcm": T(
+    "Apple's push service (APNs) is not available — the server has no APNs key or this device has no push token: nothing wakes a closed app; a notification comes only another way (e-mail) if you have one, and nothing is kept for later.",
+    "Push přes Apple (APNs) tu není — server nemá klíč APNs nebo toto zařízení nemá token pro push: zavřenou aplikaci nic neprobudí; upozornění přijde jen jinou cestou (e-mail), pokud ji máte, a nic se neodkládá na později.",
+    "Der Push-Dienst von Apple (APNs) ist nicht verfügbar — der Server hat keinen APNs-Schlüssel oder dieses Gerät kein Push-Token: Nichts weckt eine geschlossene App; eine Benachrichtigung kommt nur auf einem anderen Weg (E-Mail), falls vorhanden, und nichts wird für später aufgehoben.",
+    "El servicio push de Apple (APNs) no está disponible: el servidor no tiene clave de APNs o este dispositivo no tiene token push. Nada despierta a una app cerrada; una notificación solo llega por otra vía (correo electrónico) si tienes una, y nada se guarda para más tarde.",
+    "Il servizio push di Apple (APNs) non è disponibile — il server non ha una chiave APNs o questo dispositivo non ha un token push: nulla sveglia un’app chiusa; una notifica arriva solo in un altro modo (e-mail) se ne hai uno, e nulla viene conservato per dopo.",
+    `Le service push d’Apple (APNs) n’est pas disponible — le serveur n’a pas de clé APNs ou cet appareil n’a pas de jeton push${NB}: rien ne réveille une app fermée${NB}; une notification n’arrive que par un autre moyen (e-mail) si vous en avez un, et rien n’est conservé pour plus tard.`,
+    "Push cez Apple (APNs) tu nie je — server nemá kľúč APNs alebo toto zariadenie nemá token pre push: zatvorenú aplikáciu nič nezobudí; upozornenie príde len inou cestou (e-mail), ak ju máte, a nič sa neodkladá na neskôr.",
+    "Potisna storitev Apple (APNs) ni na voljo — strežnik nima ključa APNs ali ta naprava nima žetona za potisna obvestila: zaprte aplikacije nič ne prebudi; obvestilo prispe samo po drugi poti (e-pošta), če jo imate, in nič se ne shranjuje za pozneje.",
+    "Applen push-palvelu (APNs) ei ole käytettävissä – palvelimella ei ole APNs-avainta tai tällä laitteella ei ole push-tunnusta: mikään ei herätä suljettua sovellusta; ilmoitus tulee vain toista kautta (sähköposti), jos sellainen on, eikä mitään säilytetä myöhempää varten.",
+  ),
+
+  /* ------------------------------------------ Settings › Security */
+  "set.security.blocked": T(
+    "not allowed — hidden in recordings and the app switcher; a screenshot is reported",
+    "nepovolené — skryté při nahrávání a v přepínači aplikací; snímek se nahlásí",
+    "nicht erlaubt — in Aufnahmen und im App-Umschalter verborgen; ein Bildschirmfoto wird gemeldet",
+    "no permitidas: ocultas en grabaciones y en el selector de apps; una captura se notifica",
+    "non consentiti — nascosti nelle registrazioni e nel selettore app; uno screenshot viene segnalato",
+    `non autorisées — masquées dans les enregistrements et le sélecteur d’apps${NB}; une capture est signalée`,
+    "nepovolené — skryté pri nahrávaní a v prepínači aplikácií; snímka sa nahlási",
+    "ni dovoljeno — skrito pri snemanju in v preklopniku aplikacij; posnetek se sporoči",
+    "ei sallittu – piilotettu tallenteissa ja sovellusten vaihtajassa; kuvakaappauksesta ilmoitetaan",
+  ),
+
+  /* ------------------------------------------------- passkeys (iOS) */
+  "passkey.unsupported": T(
+    "This device has no password manager that handles passkeys. Turn one on in Settings › General › AutoFill & Passwords (e.g. the Passwords app).",
+    "V tomto zařízení není správce hesel, který by uměl passkeys. Zapněte ho v Nastavení › Obecné › Automatické vyplňování a hesla (např. aplikaci Hesla).",
+    "Auf diesem Gerät gibt es keinen Passwortmanager, der Passkeys unterstützt. Schalten Sie einen unter Einstellungen › Allgemein › Automatisch ausfüllen & Passwörter ein (z. B. die App „Passwörter“).",
+    "Este dispositivo no tiene un gestor de contraseñas que admita llaves de acceso. Activa uno en Ajustes › General › Autorrelleno y contraseñas (p. ej., la app Contraseñas).",
+    "Questo dispositivo non ha un gestore di password che gestisca le passkey. Attivane uno in Impostazioni › Generali › Inserimento automatico e password (ad es. l’app Password).",
+    "Cet appareil n’a pas de gestionnaire de mots de passe prenant en charge les clés d’accès. Activez-en un dans Réglages › Général › Remplissage automatique et mots de passe (p. ex. l’app Mots de passe).",
+    "V tomto zariadení nie je správca hesiel, ktorý by vedel pracovať s prístupovými kľúčmi. Zapnite ho v Nastaveniach › Všeobecné › Automatické vypĺňanie a heslá (napr. aplikáciu Heslá).",
+    "Ta naprava nima upravitelja gesel, ki podpira ključe za dostop. Vklopite ga v Nastavitve › Splošno › Samodejno izpolnjevanje in gesla (npr. aplikacijo Gesla).",
+    "Tässä laitteessa ei ole salasanojen hallintaa, joka käsittelee pääsyavaimia. Ota sellainen käyttöön kohdassa Asetukset › Yleiset › Automaattitäyttö ja salasanat (esim. Salasanat-app).",
+  ),
+  "passkey.rpText": T(
+    "Passkeys on iPhone and iPad only work when the server {host} publishes https://{host}/.well-known/apple-app-site-association naming this app (the operator sets APNS_TEAM_ID) and the app was built for that domain. Send the server's operator the line below.",
+    "Passkeye na iPhonu a iPadu fungují jen tehdy, když server {host} zveřejní https://{host}/.well-known/apple-app-site-association se záznamem této aplikace (provozovatel nastaví APNS_TEAM_ID) a aplikace je sestavená pro tuto doménu. Pošlete provozovateli serveru řádek níže.",
+    "Passkeys funktionieren auf iPhone und iPad nur, wenn der Server {host} https://{host}/.well-known/apple-app-site-association mit dieser App veröffentlicht (der Betreiber setzt APNS_TEAM_ID) und die App für diese Domain gebaut ist. Senden Sie dem Betreiber des Servers die Zeile unten.",
+    "Las llaves de acceso en iPhone y iPad solo funcionan cuando el servidor {host} publica https://{host}/.well-known/apple-app-site-association con esta app (el operador configura APNS_TEAM_ID) y la app se ha compilado para ese dominio. Envía al operador del servidor la línea de abajo.",
+    "Le passkey su iPhone e iPad funzionano solo se il server {host} pubblica https://{host}/.well-known/apple-app-site-association con questa app (l’operatore imposta APNS_TEAM_ID) e l’app è stata compilata per quel dominio. Invia all’operatore del server la riga qui sotto.",
+    "Les clés d’accès sur iPhone et iPad ne fonctionnent que si le serveur {host} publie https://{host}/.well-known/apple-app-site-association avec cette app (l’opérateur définit APNS_TEAM_ID) et si l’app a été compilée pour ce domaine. Envoyez à l’opérateur du serveur la ligne ci-dessous.",
+    "Prístupové kľúče na iPhone a iPade fungujú len vtedy, keď server {host} zverejní https://{host}/.well-known/apple-app-site-association so záznamom tejto aplikácie (prevádzkovateľ nastaví APNS_TEAM_ID) a aplikácia je zostavená pre túto doménu. Pošlite prevádzkovateľovi servera riadok nižšie.",
+    "Ključi za dostop v iPhonu in iPadu delujejo samo, če strežnik {host} objavi https://{host}/.well-known/apple-app-site-association z zapisom te aplikacije (upravljavec nastavi APNS_TEAM_ID) in je aplikacija zgrajena za to domeno. Upravljavcu strežnika pošljite spodnjo vrstico.",
+    "Pääsyavaimet toimivat iPhonessa ja iPadissa vain, jos palvelin {host} julkaisee osoitteessa https://{host}/.well-known/apple-app-site-association tämän sovelluksen (ylläpitäjä asettaa APNS_TEAM_ID:n) ja sovellus on käännetty tälle verkkotunnukselle. Lähetä palvelimen ylläpitäjälle alla oleva rivi.",
+  ),
+
+  /* ----------------------------------------------- Settings › Calls */
+  "settings.callLog": T(
+    "Calls in the Phone app's history", "Hovory v historii aplikace Telefon", "Anrufe im Verlauf der Telefon-App", "Llamadas en el historial de la app Teléfono",
+    "Chiamate nella cronologia dell’app Telefono", "Appels dans l’historique de l’app Téléphone", "Hovory v histórii aplikácie Telefón", "Klici v zgodovini aplikacije Telefon",
+    "Puhelut Puhelin-apin historiassa",
+  ),
+  "calllog.hint": T(
+    "Calls of the rooms show in the Phone app's call history: incoming, outgoing and missed, with their time and whether they had video. iOS may sync it to your other devices with the same Apple Account. An entry has no number: tapping it calls the room again through this app.",
+    "Hovory z místností se ukážou v historii hovorů aplikace Telefon: příchozí, odchozí i zmeškané, s časem a příznakem videa. iOS ji může synchronizovat do vašich dalších zařízení se stejným Apple účtem. Položka nemá číslo: klepnutím na ni místnosti zavoláte znovu přes tuto aplikaci.",
+    "Anrufe der Räume erscheinen im Anrufverlauf der Telefon-App: eingehend, ausgehend und verpasst, mit Zeit und ob mit Video. iOS kann ihn mit Ihren anderen Geräten mit demselben Apple Account synchronisieren. Ein Eintrag hat keine Nummer: Ein Tippen darauf ruft den Raum über diese App erneut an.",
+    "Las llamadas de las salas aparecen en el historial de llamadas de la app Teléfono: entrantes, salientes y perdidas, con su hora y si tenían vídeo. iOS puede sincronizarlo con tus otros dispositivos con la misma cuenta de Apple. Una entrada no tiene número: al tocarla vuelves a llamar a la sala a través de esta app.",
+    "Le chiamate delle stanze compaiono nella cronologia chiamate dell’app Telefono: in arrivo, in uscita e perse, con ora e se avevano il video. iOS può sincronizzarla sugli altri tuoi dispositivi con lo stesso Account Apple. Una voce non ha un numero: toccandola richiami la stanza tramite questa app.",
+    `Les appels des salles apparaissent dans l’historique des appels de l’app Téléphone${NB}: entrants, sortants et manqués, avec leur heure et la présence de vidéo. iOS peut le synchroniser avec vos autres appareils utilisant le même compte Apple. Une entrée n’a pas de numéro${NB}: la toucher rappelle la salle via cette app.`,
+    "Hovory z miestností sa ukážu v histórii hovorov aplikácie Telefón: prichádzajúce, odchádzajúce aj zmeškané, s časom a príznakom videa. iOS ju môže synchronizovať do vašich ďalších zariadení s rovnakým Apple účtom. Položka nemá číslo: klepnutím na ňu miestnosti zavoláte znova cez túto aplikáciu.",
+    "Klici iz sob se prikažejo v zgodovini klicev aplikacije Telefon: dohodni, odhodni in zgrešeni, z uro in oznako, ali so imeli video. iOS jo lahko sinhronizira z vašimi drugimi napravami z istim računom Apple. Vnos nima številke: če ga tapnete, sobo prek te aplikacije pokličete znova.",
+    "Huoneiden puhelut näkyvät Puhelin-apin puheluhistoriassa: saapuvat, lähtevät ja vastaamatta jääneet, aikoineen ja tietona siitä, oliko niissä video. iOS voi synkronoida sen muihin laitteisiisi, joissa on sama Apple-tili. Merkinnässä ei ole numeroa: sen napauttaminen soittaa huoneeseen uudelleen tämän sovelluksen kautta.",
+  ),
+  "calllog.name.hint": T(
+    "While the app is locked, only the app's name is ever written.", "Dokud je aplikace zamčená, zapíše se vždy jen jméno aplikace.",
+    "Solange die App gesperrt ist, wird immer nur der Name der App geschrieben.", "Mientras la app está bloqueada, solo se anota el nombre de la app.",
+    "Finché l’app è bloccata, viene scritto solo il nome dell’app.", "Tant que l’app est verrouillée, seul le nom de l’app est inscrit.",
+    "Kým je aplikácia zamknutá, zapíše sa vždy len názov aplikácie.", "Dokler je aplikacija zaklenjena, se vedno zapiše samo ime aplikacije.",
+    "Kun sovellus on lukittu, kirjoitetaan aina vain sovelluksen nimi.",
+  ),
+
+  /* ------------------------------------------------------------- NFC */
+  "nfc.hold": T(
+    "Hold a card or a phone near the top of the iPhone…", "Přiložte kartu nebo telefon k horní části iPhonu…", "Karte oder Telefon an den oberen Teil des iPhone halten…",
+    "Acerca una tarjeta o un teléfono a la parte superior del iPhone…", "Avvicina una carta o un telefono alla parte superiore dell’iPhone…",
+    "Approchez une carte ou un téléphone du haut de l’iPhone…", "Priložte kartu alebo telefón k hornej časti iPhonu…",
+    "Prislonite kartico ali telefon na zgornji del iPhona …", "Pidä korttia tai puhelinta iPhonen yläosaa vasten…",
+  ),
+  "nfc.work.tapScan": T(
+    "Tap Scan and hold a card near the top of the iPhone.", "Klepněte na Sken a přiložte kartu k horní části iPhonu.", "Auf Scan tippen und eine Karte an den oberen Teil des iPhone halten.",
+    "Toca Escanear y acerca una tarjeta a la parte superior del iPhone.", "Tocca Scansiona e avvicina una carta alla parte superiore dell’iPhone.",
+    "Touchez Scan et approchez une carte du haut de l’iPhone.", "Klepnite na Sken a priložte kartu k hornej časti iPhonu.",
+    "Tapnite Skeniraj in prislonite kartico na zgornji del iPhona.", "Napauta Skannaa ja pidä korttia iPhonen yläosaa vasten.",
+  ),
+  // The sheet's line in the app (NfcModelSheet) — the system sheet's own words (nfc.ios.hold).
+  "nfc.model.hold": IOS_STRINGS["nfc.ios.hold"],
+
+  /* ------------------------------------------------- the microphone */
+  "look.mic.blocked": T(
+    "The microphone is blocked for the app — allow it in Settings › Apps › M5cet › Microphone.",
+    "Mikrofon je pro aplikaci zakázaný — povolte ho v Nastavení › Aplikace › M5cet › Mikrofon.",
+    "Das Mikrofon ist für die App gesperrt — erlauben Sie es unter Einstellungen › Apps › M5cet › Mikrofon.",
+    "El micrófono está bloqueado para la app: permítelo en Ajustes › Apps › M5cet › Micrófono.",
+    "Il microfono è bloccato per l’app — consentilo in Impostazioni › App › M5cet › Microfono.",
+    "Le micro est bloqué pour l’app — autorisez-le dans Réglages › Apps › M5cet › Micro.",
+    "Mikrofón je pre aplikáciu zakázaný — povoľte ho v Nastaveniach › Aplikácie › M5cet › Mikrofón.",
+    "Mikrofon je za aplikacijo blokiran — dovolite ga v Nastavitve › Aplikacije › M5cet › Mikrofon.",
+    "Mikrofoni on estetty sovellukselta – salli se kohdassa Asetukset › Apit › M5cet › Mikrofoni.",
+  ),
+};
+
+/**
+ * Android's passkey texts name Android's password managers (Google Password
+ * Manager, Samsung Pass); on iOS the one with PRF is the Passwords app
+ * (iCloud Keychain). The rest of each sentence stays Android's.
+ */
+const PASSWORDS_APP: Record<Locale, [string, string][]> = {
+  en: [["Google Password Manager or Samsung Pass", "the Passwords app"], ["Google Password Manager", "the Passwords app"]],
+  cs: [["ze Správce hesel Google", "z aplikace Hesla"], ["Správce hesel Google nebo Samsung Pass", "aplikace Hesla"], ["Správce hesel Google", "aplikace Hesla"]],
+  de: [["dem Google Passwortmanager", "der App „Passwörter“"], ["Google Passwortmanager oder Samsung Pass", "die App „Passwörter“"], ["Google Passwortmanager", "die App „Passwörter“"]],
+  es: [["el Gestor de contraseñas de Google o Samsung Pass", "la app Contraseñas"], ["el Gestor de contraseñas de Google", "la app Contraseñas"]],
+  it: [["Gestore delle password di Google o Samsung Pass", "l’app Password"], ["Gestore delle password di Google", "l’app Password"]],
+  fr: [["Gestionnaire de mots de passe Google ou Samsung Pass", "l’app Mots de passe"], ["Gestionnaire de mots de passe Google", "l’app Mots de passe"]],
+  sk: [["zo Správcu hesiel Google", "z aplikácie Heslá"], ["Správca hesiel Google alebo Samsung Pass", "aplikácia Heslá"], ["Správca hesiel Google", "aplikácia Heslá"]],
+  sl: [["iz Googlovega upravitelja gesel", "iz aplikacije Gesla"], ["Googlov upravitelj gesel ali Samsung Pass", "aplikacija Gesla"], ["Googlov upravitelj gesel", "aplikacija Gesla"]],
+  fi: [["Google Password Manager tai Samsung Pass", "Salasanat-app"], ["Google Password Manager", "Salasanat-app"]],
+};
+
+/** The passkey texts that name a password manager. */
+export const IOS_PASSKEY_KEYS = ["passkey.addNoPrf", "passkey.boundText", "passkey.noPrf", "passkey.orphan", "passkey.unknownHint", "set.user.boundHint"];
+
+const swap = (text: string, pairs: [string, string][]): string => pairs.reduce((s, [from, to]) => s.split(from).join(to), text);
+
+for (const key of IOS_PASSKEY_KEYS) {
+  IOS_WORDING[key] = Object.fromEntries(LANGS.map((l) => [l, swap(DEFAULT_DESIGN.strings[l][key], PASSWORDS_APP[l])])) as Texts;
+}
+// The APDU templates are Define's (console › iOS › Define — the same set as Android's).
+IOS_WORDING["nfc.tpl.none"] = Object.fromEntries(LANGS.map((l) => [l, DEFAULT_DESIGN.strings[l]["nfc.tpl.none"].replace("→ Android →", "→ iOS →")])) as Texts;
+
+/** Elements of Android's screens iOS cannot do: Settings › Calls' call log permission and erasing the system call log. */
+export const IOS_REMOVED_NODES: Record<string, string[]> = { "settings.calls": ["calllog-perm", "calllog-erase"] };
+
+const findNode =(node: ANode, id: string): ANode | null => {
   if (node.id === id) return node;
   for (const c of node.children ?? []) { const f = findNode(c, id); if (f) return f; }
   return null;
@@ -325,13 +549,29 @@ function addWatchSwitch(screens: Record<string, ANode>): void {
   parent.children = kids;
 }
 
+/** IOS_REMOVED_NODES out of their screens. */
+function removeNodes(screens: Record<string, ANode>): void {
+  for (const [screen, ids] of Object.entries(IOS_REMOVED_NODES)) {
+    const root = screens[screen];
+    if (!root) continue;
+    for (const id of ids) {
+      const parent = parentOf(root, id);
+      if (parent?.children) parent.children = parent.children.filter((c) => c.id !== id);
+    }
+  }
+}
+
 /** Android's default design (deep copy — Android's own stays as it is) with the iOS look and the iOS-only items. */
 function iosDefaultDesign(): AndroidDesign {
   const d = structuredClone(DEFAULT_DESIGN);
   d.theme = IOS_THEME;
   d.animations = IOS_ANIMATIONS;
   addWatchSwitch(d.screens);
-  for (const lang of LANGS) for (const [key, texts] of Object.entries(IOS_STRINGS)) d.strings[lang][key] = texts[lang];
+  removeNodes(d.screens);
+  for (const lang of LANGS) {
+    for (const [key, texts] of Object.entries(IOS_STRINGS)) d.strings[lang][key] = texts[lang];
+    for (const [key, texts] of Object.entries(IOS_WORDING)) d.strings[lang][key] = texts[lang];
+  }
   d.rev = "default";
   return d;
 }

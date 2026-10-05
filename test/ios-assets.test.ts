@@ -11,7 +11,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { iosAssets } from "../server/ios/assets";
-import { IOS_DEFAULT_DESIGN, IOS_STRINGS, IOS_WATCH_SETTING, sanitizeIosDesign } from "../server/ios/design";
+import { IOS_DEFAULT_DESIGN, IOS_PASSKEY_KEYS, IOS_REMOVED_NODES, IOS_STRINGS, IOS_WATCH_SETTING, IOS_WORDING, sanitizeIosDesign } from "../server/ios/design";
 import { DEFAULT_DESIGN, LANGS, LIMITS, sanitizeDesign, type ANode } from "../server/android/design";
 import { androidAssets } from "../server/android/assets";
 import { mainDictionary } from "../client/src/lib/i18n";
@@ -80,8 +80,22 @@ describe("the iOS-only items", () => {
     expect(row.if).toBeUndefined();
   });
 
+  it("Settings › Calls has no call log permission or erase rows (iOS has neither); the rest is Android's", () => {
+    const ids = (t: ANode) => walk(t).map((n) => n.id);
+    for (const [screen, gone] of Object.entries(IOS_REMOVED_NODES)) {
+      for (const id of gone) {
+        expect(ids(android.screens[screen]), `${screen} ${id}`).toContain(id);
+        expect(ids(ios.screens[screen]), `${screen} ${id}`).not.toContain(id);
+      }
+      // (the rows with their children)
+      expect(ids(ios.screens[screen])).toEqual(ids(android.screens[screen]).filter((id) => !gone.some((g) => id === g || id.startsWith(g + "-"))));
+    }
+  });
+
   it("every other screen, menu and library is Android's; Android's design has none of it", () => {
-    for (const id of Object.keys(android.screens)) if (id !== "settings.notify") expect(ios.screens[id], id).toEqual(android.screens[id]);
+    for (const id of Object.keys(android.screens)) {
+      if (id !== "settings.notify" && !IOS_REMOVED_NODES[id]) expect(ios.screens[id], id).toEqual(android.screens[id]);
+    }
     expect(ios.menus).toEqual(android.menus);
     expect(ios.libraries).toEqual(android.libraries);
     const a = JSON.stringify(android);
@@ -92,16 +106,40 @@ describe("the iOS-only items", () => {
     expect(read("android", "app", "src", "main", "assets", "m5", "default-design.json")).not.toContain(IOS_WATCH_SETTING);
   });
 
-  it("the texts in all nine languages, placeholders as English's, Android's texts unchanged", () => {
+  it("the texts in all nine languages, placeholders as English's, Android's texts unchanged but the iOS wording", () => {
     for (const l of LANGS) {
       for (const [key, texts] of Object.entries(IOS_STRINGS)) {
         expect(texts[l]?.trim(), `${l} ${key}`).toBeTruthy();
         expect(ios.strings[l][key], `${l} ${key}`).toBe(texts[l]);
         expect(tokens(texts[l]), `${l} ${key}`).toBe(tokens(texts.en));
       }
-      for (const [key, text] of Object.entries(android.strings[l])) expect(ios.strings[l][key], `${l} ${key}`).toBe(text);
+      for (const [key, texts] of Object.entries(IOS_WORDING)) {
+        expect(texts[l]?.trim(), `${l} ${key}`).toBeTruthy();
+        expect(ios.strings[l][key], `${l} ${key}`).toBe(texts[l]);
+        // Android's key, other words, the same placeholders as Android's
+        expect(android.strings[l][key], `${l} ${key}`).toBeDefined();
+        expect(texts[l], `${l} ${key}`).not.toBe(android.strings[l][key]);
+        expect(tokens(texts[l]), `${l} ${key}`).toBe(tokens(android.strings.en[key]));
+      }
+      for (const [key, text] of Object.entries(android.strings[l])) if (!IOS_WORDING[key]) expect(ios.strings[l][key], `${l} ${key}`).toBe(text);
     }
     expect(IOS_STRINGS["nfc.ios.step"].en).toBe("{0}/{1} · {2}");
+  });
+
+  it("says nothing of Android's own platform where the iOS app shows it", () => {
+    const android_ = /Android|Firebase|\bFCM\b|Google|Samsung|StrongBox|widget|home screen|assetlinks/i;
+    for (const l of LANGS) {
+      for (const [key, texts] of Object.entries(IOS_WORDING)) {
+        // the app channel wakes Android devices too — its name says so
+        if (key === "notify.channel.android") continue;
+        expect(texts[l], `${l} ${key}`).not.toMatch(android_);
+      }
+      for (const key of IOS_PASSKEY_KEYS) expect(ios.strings[l][key], `${l} ${key}`).toMatch(/Hesla|Heslá|Gesla|Passwords|Passwörter|Contraseñas|Password|Mots de passe|Salasanat/);
+    }
+    // Every text the iOS design's screens, menus and libraries name.
+    const used = new Set([...JSON.stringify([ios.screens, ios.menus, ios.libraries]).matchAll(/_\(?'([A-Za-z0-9_.-]+)'/g)].map((m) => m[1]));
+    expect(used.size).toBeGreaterThan(300);
+    for (const l of LANGS) for (const key of used) expect(ios.strings[l][key] ?? "", `${l} ${key}`).not.toMatch(android_);
   });
 
   it("covers every key the iOS app asks for with an English fallback (watch app, NFC sheet)", () => {

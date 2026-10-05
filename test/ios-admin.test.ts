@@ -113,9 +113,10 @@ describe("the iOS design", () => {
   it("is Android's default design with the iOS look, and passes the same checks", () => {
     const clean = design.sanitizeIosDesign(design.IOS_DEFAULT_DESIGN);
     expect(Object.keys(clean.screens).sort()).toEqual([...androidDesign.SCREEN_IDS].sort());
-    // The screens are Android's, but Settings › Notifications has the Apple Watch switch (test/ios-assets.test.ts).
-    const { "settings.notify": iosNotify, ...iosScreens } = clean.screens;
-    const { "settings.notify": androidNotify, ...androidScreens } = androidDesign.sanitizeDesign(androidDesign.DEFAULT_DESIGN).screens;
+    // The screens are Android's, but Settings › Notifications has the Apple Watch switch and Settings › Calls lacks
+    // what iOS cannot do (test/ios-assets.test.ts).
+    const { "settings.notify": iosNotify, "settings.calls": _iosCalls, ...iosScreens } = clean.screens;
+    const { "settings.notify": androidNotify, "settings.calls": _androidCalls, ...androidScreens } = androidDesign.sanitizeDesign(androidDesign.DEFAULT_DESIGN).screens;
     expect(iosScreens).toEqual(androidScreens);
     expect(JSON.stringify(iosNotify)).toContain('"setting":"watch.on"');
     expect(JSON.stringify(androidNotify)).not.toContain("watch.on");
