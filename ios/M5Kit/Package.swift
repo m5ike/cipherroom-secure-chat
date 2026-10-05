@@ -20,7 +20,7 @@ let package = Package(
         .target(name: "M5Proto", dependencies: ["M5Core", "M5Crypto"], path: "Sources/M5Proto"),
         .target(name: "M5Net", dependencies: ["M5Core", "M5Crypto", "M5Proto"], path: "Sources/M5Net"),
         .target(name: "M5Design", dependencies: ["M5Core"], path: "Sources/M5Design"),
-        .target(name: "M5NFC", dependencies: ["M5Core", "M5Crypto"], path: "Sources/M5NFC"),
+        .target(name: "M5NFC", dependencies: ["M5Core", "M5Crypto"], path: "Sources/M5NFC", exclude: ["README.md"]),
         .testTarget(name: "M5CoreTests", dependencies: ["M5Core"], path: "Tests/M5CoreTests"),
         .testTarget(name: "M5CryptoTests", dependencies: ["M5Crypto", "M5Core"], path: "Tests/M5CryptoTests"),
         .testTarget(name: "M5ProtoTests", dependencies: ["M5Proto", "M5Crypto", "M5Core"], path: "Tests/M5ProtoTests"),
