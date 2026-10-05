@@ -80,6 +80,23 @@ export class MediaE2ee {
     this.keyed.add(peerId);
   }
 
+  /** 6.12 (protocol 4, § 9): our fresh key for this call direction (sent to the peer first). */
+  setSendKey4(peerId: string, raw: Uint8Array, epoch: number): void {
+    const worker = this.ensure();
+    if (!worker) { raw.fill(0); return; }
+    worker.postMessage({ type: "send4", peerId, raw, epoch });
+    raw.fill(0);
+    this.keyed.add(peerId);
+  }
+
+  /** 6.12: the peer's `media` message — its key for the frames it sends us. */
+  addRecvKey4(peerId: string, inner: unknown): void {
+    const worker = this.ensure();
+    if (!worker) return;
+    worker.postMessage({ type: "recv4", peerId, inner });
+    this.keyed.add(peerId);
+  }
+
   forget(peerId: string): void {
     this.worker?.postMessage({ type: "forget", peerId });
     this.keyed.delete(peerId);

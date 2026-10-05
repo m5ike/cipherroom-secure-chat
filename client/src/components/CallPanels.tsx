@@ -18,8 +18,8 @@ export function PeerList({ peers, lang, presence, onInfo }: { peers: PeerView[];
   const seen = (id: string) => (presence ? presenceView(presence.factsOf(id), now, lang) : { presence: "", presenceLabel: "", seenText: "" });
   // A held member's own entry (the server's) stands for them, not a closed peer left behind.
   const list = [
-    ...peers.filter((p) => !presence?.isHeld(p.id)).map((p) => ({ id: p.id, name: p.name, short: p.id.slice(-12), status: p.status as string, audio: p.audio as string, ...seen(p.id) })),
-    ...(presence?.held([], []) ?? []).map((h) => ({ id: h.peerId, name: h.name, short: h.peerId.slice(-12), status: "away", audio: "off", ...seen(h.peerId) })),
+    ...peers.filter((p) => !presence?.isHeld(p.id)).map((p) => ({ id: p.id, name: p.name, short: p.id.slice(-12), status: p.status as string, audio: p.audio as string, unproven: p.proven === false, ...seen(p.id) })),
+    ...(presence?.held([], []) ?? []).map((h) => ({ id: h.peerId, name: h.name, short: h.peerId.slice(-12), status: "away", audio: "off", unproven: false, ...seen(h.peerId) })),
   ];
   return renderLayout(tree, {
     ...base,

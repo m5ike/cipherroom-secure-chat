@@ -253,14 +253,65 @@ export function RoomSecurityPanel({
 type TrustPanelProps = PanelBaseProps & {
   peerFingerprints: Record<string, Fingerprint>;
   roomFingerprint?: string | null;
+  /** 6.12: key transparency for this server, and the protocol each member speaks. */
+  p4?: P4TrustInfo;
 };
 
-export function TrustPanel({ open, onClose, peerFingerprints, roomFingerprint, lang }: TrustPanelProps) {
+/** 6.12 (docs/protocol-v4.md § 14, § 1): what the security panel shows of protocol 4. */
+export type P4TrustInfo = {
+  kt: { state: "off" | "ok" | "alert" | "unknown"; size?: number; alert?: { kind: string; at: number; detail: string } | null };
+  onKtDismiss: () => void;
+  peers: Array<{ id: string; name: string; protocol: "pending" | 3 | 4 | "refused"; proven?: boolean }>;
+};
+
+/** 6.12: key transparency — a persistent red alert on a rewritten history or a split view — and each member's protocol. */
+export function P4TrustSection({ info, lang }: { info: P4TrustInfo; lang: Lang }) {
+  const kt = info.kt;
+  const alert = kt.state === "alert" && kt.alert ? kt.alert : null;
+  const label = (p: P4TrustInfo["peers"][number]) => t(lang, p.protocol === 4 ? "p4.peers.p4" : p.protocol === 3 ? "p4.peers.p3" : p.protocol === "refused" ? "p4.peers.refused" : "p4.peers.pending");
+  return (
+    <section className="mb-4 space-y-3" data-testid="p4-trust">
+      <div>
+        <h3 className="text-sm font-semibold">{t(lang, "p4.kt.title")}</h3>
+        {alert ? (
+          <div role="alert" data-testid="kt-alert" data-kind={alert.kind} className="mt-1 rounded-xl border border-destructive bg-destructive/10 p-3 text-sm font-semibold text-destructive">
+            <p>{t(lang, `p4.kt.alert.${alert.kind}`).replace("{detail}", alert.detail)}</p>
+            <p className="mt-1 text-xs font-normal">{new Date(alert.at).toLocaleString(lang)}</p>
+            <button type="button" className="acc-btn acc-btn--small mt-2" onClick={info.onKtDismiss} data-testid="kt-dismiss">{t(lang, "p4.kt.dismiss")}</button>
+          </div>
+        ) : (
+          <p className="mt-1 text-xs text-muted-foreground" data-testid="kt-state" data-state={kt.state}>
+            {kt.state === "ok" ? t(lang, "p4.kt.ok").replace("{size}", String(kt.size ?? 0)) : kt.state === "off" ? t(lang, "p4.kt.off") : t(lang, "p4.kt.unknown")}
+          </p>
+        )}
+      </div>
+      <div>
+        <h3 className="text-sm font-semibold">{t(lang, "p4.peers.title")}</h3>
+        {info.peers.length === 0 ? (
+          <p className="mt-1 text-xs text-muted-foreground">{t(lang, "p4.peers.none")}</p>
+        ) : (
+          <ul className="mt-1 space-y-1 text-sm" data-testid="p4-peers">
+            {info.peers.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-2" data-testid={`p4-peer-${p.id}`} data-protocol={String(p.protocol)}>
+                <span className="font-medium">{p.name}</span>
+                <span className={`rounded-full px-2 text-[11px] ${p.protocol === 4 ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : p.protocol === "refused" ? "bg-destructive/15 text-destructive" : "bg-amber-500/15 text-amber-700 dark:text-amber-300"}`}>{label(p)}</span>
+                {p.proven === false && <span className="rounded-full bg-amber-500/15 px-2 text-[11px] text-amber-700 dark:text-amber-300" title={t(lang, "p4.unproven.title")}>{t(lang, "p4.unproven")}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+export function TrustPanel({ open, onClose, peerFingerprints, roomFingerprint, lang, p4 }: TrustPanelProps) {
   const stored = loadFingerprints();
   const entries = Object.entries({ ...stored, ...peerFingerprints });
   const { tree, base } = useLayoutBase("panel.trust", lang);
   return (
     <Modal open={open} onClose={onClose} title={lang === "cs" ? "Důvěra & DTLS otisky" : lang === "de" ? "Vertrauen & DTLS-Fingerprints" : "Trust & DTLS fingerprints"}>
+      {p4 && <P4TrustSection info={p4} lang={lang} />}
       {renderLayout(tree, {
         ...base,
         data: {

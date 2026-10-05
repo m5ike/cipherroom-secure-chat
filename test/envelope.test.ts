@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { deriveRoomKey, encryptEnvelope } from "../client/src/lib/crypto";
 import {
-  createReplayGuard, deriveRoomKeys, isSealedSignal, openMessage, openSignal, sealMessage, sealSignal, type RoomKeys,
+  createReplayGuard, deriveRoomKeys, isSealedSignal, openMessage, openSignal, OldEnvelopeError, sealMessage, sealSignal, type RoomKeys,
 } from "../client/src/lib/envelope";
 import { createPinStore, loadIdentity, safetyNumber, verifySignature, _resetIdentityForTests, type Identity } from "../client/src/lib/identity";
 import { handleIncomingFrame, newIncomingRegistry, sendFile, type FileProof, type FileTransferEnvelope } from "../client/src/lib/file-transfer";
@@ -62,11 +62,12 @@ describe("chat envelopes", () => {
     await expect(openMessage(keys, env)).rejects.toThrow(/id mismatch/);
   });
 
-  it("still reads a version 1 envelope from an old client", async () => {
+  it("6.12 (F-20): no longer opens a version 1 envelope from a very old client", async () => {
     const legacyKey = await deriveRoomKey("alpha", "correct horse");
     const env = await encryptEnvelope(legacyKey, payload);
-    const opened = await openMessage<typeof payload>(await deriveRoomKeys("alpha", "correct horse", FAST), env);
-    expect(opened).toMatchObject({ version: 1, signer: null, payload });
+    const err = await openMessage<typeof payload>(await deriveRoomKeys("alpha", "correct horse", FAST), env).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OldEnvelopeError);
+    expect((err as OldEnvelopeError).version).toBe(1);
   });
 
   it("drops a replayed message id", () => {
@@ -191,7 +192,7 @@ describe("version 3 keys (Argon2id)", () => {
     expect(a.check).toBe(b.check);
   });
 
-  it("seal v3 envelopes and still open a v2 one queued by 3.0 with the same passphrase", async () => {
+  it("seal v3 envelopes; 6.12 (F-20): a v2 one queued by 3.0 is no longer opened", async () => {
     const v3 = await deriveRoomKeys("alpha", "correct horse", LIGHT);
     const payload = { id: "m-3", text: "hi" };
     const env = await sealMessage(v3, "m-3", payload);
@@ -201,7 +202,9 @@ describe("version 3 keys (Argon2id)", () => {
     const v2 = await deriveRoomKeys("alpha", "correct horse", { kdf: "pbkdf2" });
     const old = await sealMessage(v2, "m-2", { id: "m-2", text: "queued" });
     expect(old.v).toBe(2);
-    expect((await openMessage(v3, old)).payload).toMatchObject({ text: "queued" });
+    const err = await openMessage(v3, old).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OldEnvelopeError);
+    expect((err as OldEnvelopeError).version).toBe(2);
   }, 30_000);
 
   it("carry files with the v3 keys", async () => {

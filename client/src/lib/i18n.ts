@@ -14,6 +14,7 @@ import { VOICE_I18N } from "./i18n-voice";
 import { PROFILE_I18N } from "./i18n-profile";
 import { START_I18N } from "./i18n-start";
 import { SUGGEST_I18N } from "./i18n-suggest";
+import { P4_I18N } from "./i18n-p4";
 // Simple i18n. Strings live in this file; no extra deps. Add keys as needed.
 
 export type Lang = "cs" | "en" | "de";
@@ -1445,9 +1446,9 @@ const de: Dict = {
 };
 
 const dicts: Record<Lang, Dict> = {
-  cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs, ...SECURITY_I18N.cs, ...APP_I18N.cs, ...CONNECTIONS_I18N.cs, ...IDENTITY_I18N.cs, ...BUBBLES_I18N.cs, ...NFC_I18N.cs, ...REGISTRATION_I18N.cs, ...PRESENCE_I18N.cs, ...LOCATION_I18N.cs, ...NOTIFY_I18N.cs, ...VOICE_I18N.cs, ...PROFILE_I18N.cs, ...START_I18N.cs, ...SUGGEST_I18N.cs },
-  en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en, ...SECURITY_I18N.en, ...APP_I18N.en, ...CONNECTIONS_I18N.en, ...IDENTITY_I18N.en, ...BUBBLES_I18N.en, ...NFC_I18N.en, ...REGISTRATION_I18N.en, ...PRESENCE_I18N.en, ...LOCATION_I18N.en, ...NOTIFY_I18N.en, ...VOICE_I18N.en, ...PROFILE_I18N.en, ...START_I18N.en, ...SUGGEST_I18N.en },
-  de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de, ...SECURITY_I18N.de, ...APP_I18N.de, ...CONNECTIONS_I18N.de, ...IDENTITY_I18N.de, ...BUBBLES_I18N.de, ...NFC_I18N.de, ...REGISTRATION_I18N.de, ...PRESENCE_I18N.de, ...LOCATION_I18N.de, ...NOTIFY_I18N.de, ...VOICE_I18N.de, ...PROFILE_I18N.de, ...START_I18N.de, ...SUGGEST_I18N.de },
+  cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs, ...SECURITY_I18N.cs, ...APP_I18N.cs, ...CONNECTIONS_I18N.cs, ...IDENTITY_I18N.cs, ...BUBBLES_I18N.cs, ...NFC_I18N.cs, ...REGISTRATION_I18N.cs, ...PRESENCE_I18N.cs, ...LOCATION_I18N.cs, ...NOTIFY_I18N.cs, ...VOICE_I18N.cs, ...PROFILE_I18N.cs, ...START_I18N.cs, ...SUGGEST_I18N.cs, ...P4_I18N.cs },
+  en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en, ...SECURITY_I18N.en, ...APP_I18N.en, ...CONNECTIONS_I18N.en, ...IDENTITY_I18N.en, ...BUBBLES_I18N.en, ...NFC_I18N.en, ...REGISTRATION_I18N.en, ...PRESENCE_I18N.en, ...LOCATION_I18N.en, ...NOTIFY_I18N.en, ...VOICE_I18N.en, ...PROFILE_I18N.en, ...START_I18N.en, ...SUGGEST_I18N.en, ...P4_I18N.en },
+  de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de, ...SECURITY_I18N.de, ...APP_I18N.de, ...CONNECTIONS_I18N.de, ...IDENTITY_I18N.de, ...BUBBLES_I18N.de, ...NFC_I18N.de, ...REGISTRATION_I18N.de, ...PRESENCE_I18N.de, ...LOCATION_I18N.de, ...NOTIFY_I18N.de, ...VOICE_I18N.de, ...PROFILE_I18N.de, ...START_I18N.de, ...SUGGEST_I18N.de, ...P4_I18N.de },
 };
 
 export function detectLang(stored: string | undefined): Lang {

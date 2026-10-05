@@ -60,11 +60,16 @@ export type ChatMessage = {
   replyTo?: { id: string; senderName: string; text: string };
   /** Original author when this message was forwarded. */
   forwardedFrom?: string;
-  /** Crypto version the message arrived in (envelope.ts). */
-  cryptoVersion?: 1 | 2 | 3;
+  /** Crypto version the message arrived in (envelope.ts); 4 = protocol 4 (6.12). */
+  cryptoVersion?: 1 | 2 | 3 | 4;
   /** Which key sealed it: a sender key (forward secret), a pair key
-   *  (private), or the room key (sender-keys.ts). */
-  sealedWith?: "sender-key" | "pair" | "room";
+   *  (private), or the room key (sender-keys.ts). 6.12, protocol 4
+   *  (docs/protocol-v4.md): "p4-sk" a sender-key chain handed out over the pair
+   *  ratchet, "p4-pair" the pair ratchet itself (private), "p4-mailbox" sealed
+   *  for the recipient device's mailbox (relayed while away). */
+  sealedWith?: SealedWith;
+  /** 6.12: my message — every way it went out was sealed (the info view lists them). */
+  sealedHow?: SealedWith[];
   /** Who signed it, and how that compares with what we saw before. */
   identity?: MessageIdentity;
   /** 6.2: hidden in this view since `at` until `until` (ms; 0 = until the
@@ -82,7 +87,19 @@ export type ChatMessage = {
   kind?: "note";
 };
 
-/** verified: signed, key as pinned (or first seen) · changed: signed, but
- *  another key than before for this name · invalid: signature fails ·
- *  unsigned: an older client, no signature at all. */
-export type MessageIdentity = { state: "verified" | "changed" | "invalid" | "unsigned"; kid?: string; fingerprint?: string; account?: boolean; checked?: boolean };
+export type SealedWith = "sender-key" | "pair" | "room" | "p4-sk" | "p4-pair" | "p4-mailbox";
+
+/** 6.12 (docs/protocol-v4.md § 12.1): new: the key is not verified (first seen
+ *  with `firstSeen`, else seen before and never compared) · verified: the user
+ *  compared the safety number / scanned the QR code (`checked`) · changed:
+ *  another key than pinned for this name, or a revoked device — held behind a
+ *  warning until accepted (`accepted`) · invalid: signature or certificate
+ *  fails · unsigned: an older client. `account`: certified by an account key
+ *  (the state is the account's); `protocol: 3` an older peer; `certV1` a
+ *  certificate without expiry. History stored before 6.12 may say "verified"
+ *  without `checked`: that meant "same key as before", and is shown so. */
+export type MessageIdentity = {
+  state: "new" | "verified" | "changed" | "invalid" | "unsigned";
+  kid?: string; fingerprint?: string; account?: boolean; checked?: boolean;
+  firstSeen?: boolean; protocol?: 3 | 4; certV1?: boolean; revoked?: boolean; accepted?: boolean;
+};

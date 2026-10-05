@@ -14,10 +14,21 @@
 // Only receiving happens here; writing is for the room on screen. Files and
 // calls of a background room are not taken (the channel does not announce
 // "bin" or "media"), a notice says so when someone sends a file.
+//
+// 6.12: protocol 4 here too (p4-session.ts, the same session layer as the
+// room on screen): hello v4, pair ratchets, sender keys v4, private messages
+// in the ratchet, the downgrade rule, protocol 3 for older peers; the join
+// carries the proof of the room key (§ 13); accepted ids go to the device's
+// persistent replay window (§ 11); a first-seen key is "new", never "verified".
 
 import { deriveRoomKeys, isSealedSignal, openMessage, openSignal, sealSignal, type Envelope, type RoomKeys } from "./envelope";
-import { SenderKeyStore, envelopeKind, type Hello } from "./sender-keys";
+import { SenderKeyStore, envelopeKind } from "./sender-keys";
 import { loadIdentity, type Identity } from "./identity";
+import { buildHubProof, hubSeed, type RatchetInner, type ReplayGuard } from "./p4";
+import { isP4RoomEnvelope, P4Room, type HelloLocal } from "./p4-session";
+import { TrustBook } from "./p4-trust";
+import { deviceReplay } from "./p4-store";
+import { deviceMailbox, helloAccountOf } from "./p4-away";
 import { validatePayload } from "./validate";
 import type { ChatMessage } from "./chat-types";
 import { newId } from "./id";
@@ -58,6 +69,10 @@ export type HubDeps = {
   makePeer: (config: RTCConfiguration) => RTCPeerConnection;
   derive: (room: string, passphrase: string) => Promise<RoomKeys>;
   identity: () => Promise<Identity | null>;
+  /** 6.12: our hello's mailbox bundle / account / tree head, the downgrade markers, the replay window (defaults: none, in memory). */
+  p4Local?: (identity: Identity) => Promise<HelloLocal>;
+  book?: { p4Seen(pk: string): boolean; markP4(pk: string): void };
+  replay?: ReplayGuard | null;
 };
 
 export type HubEvent = { type: "change" } | { type: "message"; key: string; label: string; message: ChatMessage }
@@ -90,6 +105,9 @@ export class BackgroundRoom {
   private readonly peers = new Map<string, PeerLink>();
   private readonly names = new Map<string, string>();
   private readonly store = new SenderKeyStore();
+  /** 6.12: protocol 4 with this room's peers (made with the keys and our identity). */
+  private p4: P4Room | null = null;
+  private readonly book: { p4Seen(pk: string): boolean; markP4(pk: string): void };
   private readonly seen = new Set<string>();
   private stopped = false;
   private attempts = 0;
@@ -103,7 +121,33 @@ export class BackgroundRoom {
     try { socket.send(JSON.stringify(frame)); return true; } catch { return false; }
   });
 
-  constructor(readonly target: HubTarget, private readonly deps: HubDeps, private readonly emit: (event: HubEvent) => void) {}
+  constructor(readonly target: HubTarget, private readonly deps: HubDeps, private readonly emit: (event: HubEvent) => void) {
+    this.book = deps.book ?? new TrustBook(null);
+  }
+
+  /** The protocol-4 session layer for these keys (text only: no "bin", no "media"). */
+  private session(): P4Room | null {
+    const keys = this.keys;
+    const identity = this.identity;
+    if (!keys || !identity) return null;
+    if (this.p4 && this.p4.keys === keys) return this.p4;
+    this.p4?.clear();
+    this.p4 = new P4Room({
+      keys, identity, v3: this.store,
+      selfId: () => this.myId,
+      send: (peerId, text) => { const send = this.peers.get(peerId)?.send; if (!send) return false; send(text); return true; },
+      helloExtra: () => ({ caps: [] }),
+      local: () => (this.deps.p4Local ? this.deps.p4Local(identity) : { mb: null, acc: null, sth: null }),
+      book: this.book,
+      events: {
+        inner: (peerId, inner) => this.inner(peerId, inner),
+        refused: (_peerId, why) => { if (why === "key-mismatch") { this.status = "mismatch"; this.changed(); } },
+        close: (peerId) => { try { this.peers.get(peerId)?.channel?.close(); } catch { /* closed */ } },
+        downgrade: (peerId) => { try { this.peers.get(peerId)?.channel?.close(); } catch { /* closed */ } },
+      },
+    });
+    return this.p4;
+  }
 
   /** 6.7: the app went to the background or came back (presence, last seen). */
   setForeground(on: boolean): void {
@@ -138,6 +182,9 @@ export class BackgroundRoom {
     this.status = "joined";
   }
 
+  /** 6.12: the protocol each peer speaks (tests, diagnostics). */
+  protocolOf(peerId: string) { return this.p4?.protocolOf(peerId) ?? "pending"; }
+
   private connect(): void {
     if (this.stopped || !this.keys) return;
     this.status = "connecting";
@@ -147,11 +194,8 @@ export class BackgroundRoom {
     this.socket = socket;
     socket.onopen = () => {
       this.attempts = 0;
-      socket.send(JSON.stringify({
-        type: "join", protocol: 2, room: this.keys!.roomId, name: this.target.name,
-        peerId: this.myId || newId("peer"), ...(this.resume ? { resume: this.resume } : {}), away: false, foreground: this.foreground,
-      }));
-      this.presence.reset({ away: false, foreground: this.foreground });
+      // 6.12 (§ 13): the join waits for the server's hello and its nonce (3 s at most).
+      setTimeout(() => { void this.join(socket, null); }, 3000);
       if (this.ping) clearInterval(this.ping);
       this.ping = setInterval(() => { try { socket.send(JSON.stringify({ type: "ping", t: Date.now() })); } catch { /* closing */ } }, 25_000);
     };
@@ -172,6 +216,27 @@ export class BackgroundRoom {
     };
   }
 
+  private readonly joined = new WeakSet<WebSocket>();
+  private seed: Promise<Uint8Array> | null = null;
+
+  /** The join, once per socket — with the proof that we hold the room key over the socket's nonce (§ 13). */
+  private async join(socket: WebSocket, nonce: string | null): Promise<void> {
+    if (this.joined.has(socket) || !this.keys) return;
+    this.joined.add(socket);
+    const keys = this.keys;
+    let proof: { pub: string; sig: string } | null = null;
+    if (nonce && keys.version === 3 && keys.roomId.startsWith("r3.")) {
+      try { proof = await buildHubProof(await (this.seed ??= hubSeed(keys)), keys.roomId, nonce); } catch { proof = null; }
+    }
+    if (this.socket !== socket || socket.readyState !== 1) return;
+    socket.send(JSON.stringify({
+      type: "join", protocol: 2, room: keys.roomId, name: this.target.name,
+      peerId: this.myId || newId("peer"), ...(this.resume ? { resume: this.resume } : {}), away: false, foreground: this.foreground,
+      ...(proof ? { proof } : {}),
+    }));
+    this.presence.reset({ away: false, foreground: this.foreground });
+  }
+
   private scheduleRetry(): void {
     if (this.stopped) return;
     const cap = Math.min(120_000, 1000 * 2 ** Math.min(this.attempts, 12));
@@ -182,6 +247,7 @@ export class BackgroundRoom {
 
   private async frame(f: Record<string, unknown>): Promise<void> {
     switch (f.type) {
+      case "hello": if (this.socket) await this.join(this.socket, typeof f.nonce === "string" ? f.nonce : null); return;
       case "joined": {
         this.myId = String(f.peerId ?? this.myId);
         this.resume = typeof f.resume === "string" ? f.resume : "";
@@ -268,7 +334,7 @@ export class BackgroundRoom {
 
   private dropPeer(peerId: string): void {
     const link = this.peers.get(peerId);
-    this.store.forgetPeer(peerId);
+    if (this.p4) this.p4.peerLeft(peerId); else this.store.forgetPeer(peerId);
     this.peers.delete(peerId);
     if (link) { try { link.channel?.close(); } catch { /* closed */ } try { link.pc?.close(); } catch { /* closed */ } }
     this.changed();
@@ -284,7 +350,8 @@ export class BackgroundRoom {
     link.send = send;
     if (!this.keys) return;
     this.identity ??= await this.deps.identity().catch(() => null);
-    if (this.identity) send(JSON.stringify({ ...(await this.store.hello(this.keys, this.identity, this.myId, peerId)), caps: [] }));
+    // 6.12: a hello v4 (with the protocol-3 fields an older peer reads).
+    await this.session()?.open(peerId);
     this.changed();
   }
 
@@ -298,38 +365,65 @@ export class BackgroundRoom {
     if (!raw || typeof raw !== "object") return;
     if (raw.kind === "hello") {
       if (!this.identity) return;
-      const refused = await this.store.acceptHello(keys, this.identity, raw as unknown as Hello, peerId, this.myId);
-      if (refused === "key-mismatch") { this.status = "mismatch"; this.changed(); return; }
-      if (refused) return;
       if (typeof raw.user === "string") link.name = link.name || raw.user;
-      const sk = await this.store.senderKeyFor(keys, this.myId, peerId);
-      if (sk && link.send) link.send(JSON.stringify(sk));
+      await this.session()?.handle(peerId, raw);
       return;
     }
-    if (raw.kind === "sender-key") { await this.store.acceptSenderKey(keys, raw as { iv: string; ct: string }, peerId, this.myId); return; }
+    const p4 = this.session();
+    // p4-kem, p4 frames, p4-reset, a protocol-3 sender key.
+    if (p4 && (await p4.handle(peerId, raw))) return;
+    if (p4?.protocolOf(peerId) === "refused") return;
     if (typeof raw.kind === "string") {
       if (raw.kind === "file-meta") this.note(link.name);
       return; // file frames, key-check: not for a background room
     }
+    if (isP4RoomEnvelope(raw)) {
+      if (!p4) return;
+      try { await this.accept(peerId, await p4.openRoom<unknown>(peerId, raw), 4, "p4-sk"); } catch { /* not ours to open */ }
+      return;
+    }
     const envelope = raw as unknown as Envelope;
     const sealedWith = envelopeKind(envelope);
+    // A protocol-4 peer never seals with protocol-3 session keys.
+    if (sealedWith !== "room" && p4?.protocolOf(peerId) === 4) return;
     let opened: { payload: unknown; signer: { valid: boolean } | null; version?: number };
     try {
       opened = sealedWith === "sender-key" ? await this.store.openLive<unknown>(keys, envelope, peerId)
         : sealedWith === "pair" ? await this.store.openPrivate<unknown>(keys, envelope, peerId, this.myId)
         : await openMessage<unknown>(keys, envelope);
     } catch { return; }
+    await this.accept(peerId, opened, 3, sealedWith);
+  }
+
+  /** A private message in a peer's ratchet (§ 5.7 `msg`); media and file keys are not for a background room. */
+  private async inner(peerId: string, inner: RatchetInner): Promise<void> {
+    if (inner.t !== "msg" || !this.p4) return;
+    const m = inner as { id?: unknown; p?: unknown };
+    if (typeof m.id !== "string" || !m.p || typeof m.p !== "object" || (m.p as { id?: unknown }).id !== m.id) return;
+    await this.accept(peerId, { payload: m.p, signer: this.p4.signer(peerId) }, 4, "p4-pair");
+  }
+
+  /** An opened payload: checked, fresh, kept and counted. */
+  private async accept(peerId: string, opened: { payload: unknown; signer: { valid: boolean; account?: { valid: boolean } } | null }, version: 3 | 4, sealedWith: NonNullable<ChatMessage["sealedWith"]>): Promise<void> {
+    const link = this.peers.get(peerId);
+    const keys = this.keys;
+    if (!link || !keys) return;
     const p = validatePayload(opened.payload, { transportSender: peerId, myId: this.myId });
     if (!p || this.seen.has(p.id)) return;
     this.seen.add(p.id);
     if (this.seen.size > 20_000) this.seen.delete(this.seen.values().next().value!);
+    // 6.12 (§ 11): the device's persistent replay window.
+    const replay = this.deps.replay ?? null;
+    if (replay && (await replay.check(keys.roomId, p.id, (opened.payload as { createdAt?: unknown }).createdAt).catch(() => "ok")) !== "ok") return;
     if (p.kind === "audio-status" || p.kind === "receipt") return;
     if (p.senderName) link.name = p.senderName;
+    // § 12.1: a key seen here is not verified (the room on screen pins and compares).
+    const valid = opened.signer ? opened.signer.valid && opened.signer.account?.valid !== false : false;
     const message: ChatMessage = {
       id: p.id, senderId: p.senderId, senderName: p.senderName, text: p.text, createdAt: p.createdAt, mine: false, secure: true,
       attachment: p.attachment, flags: p.flags, to: p.to, replyTo: p.replyTo, forwardedFrom: p.forwardedFrom,
-      cryptoVersion: 3, sealedWith,
-      identity: opened.signer ? { state: opened.signer.valid ? "verified" : "invalid" } : { state: "unsigned" },
+      cryptoVersion: version, sealedWith,
+      identity: opened.signer ? { state: valid ? "new" : "invalid", protocol: version, ...(opened.signer.account ? { account: true } : {}) } : { state: "unsigned", protocol: version },
     };
     this.messages.push(message);
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
@@ -357,6 +451,8 @@ export class BackgroundRoom {
     }
     for (const link of this.peers.values()) { try { link.channel?.close(); } catch { /* closed */ } try { link.pc?.close(); } catch { /* closed */ } }
     this.peers.clear();
+    this.p4?.clear();
+    this.p4 = null;
     this.store.clear();
     this.status = "offline";
     return this.messages.splice(0);
@@ -456,5 +552,12 @@ export function createRoomHub(wsUrl: (server?: string) => string, rtcConfig: () 
     makePeer: (config) => new RTCPeerConnection(config),
     derive: (room, passphrase) => deriveRoomKeys(room, passphrase),
     identity: () => loadIdentity(),
+    // 6.12: the device's mailbox bundle and account in our hellos, its downgrade markers and replay window.
+    p4Local: async (identity) => {
+      const current = await deviceMailbox(identity).current().catch(() => null);
+      return { mb: current?.bundle ?? null, acc: helloAccountOf(identity.attestation), sth: null };
+    },
+    book: new TrustBook(),
+    replay: deviceReplay().guard,
   }, limit);
 }

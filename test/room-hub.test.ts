@@ -51,8 +51,9 @@ async function channel() {
   const sent: Array<Record<string, unknown>> = [];
   await room.handleChannelOpen("p-alice", (t) => sent.push(JSON.parse(t)));
   const aliceStore = new SenderKeyStore();
-  // Alice checks our hello, sends hers and her sender key.
-  expect(sent[0]).toMatchObject({ kind: "hello", v: 3, check: keys.check, caps: [] });
+  // Alice (a 6.11 client, protocol 3) checks our hello — 6.12: a hello v4 that carries the
+  // protocol-3 fields she reads — sends hers and her sender key.
+  expect(sent[0]).toMatchObject({ kind: "hello", v: 4, check: keys.check, caps: ["p4"] });
   expect(await aliceStore.acceptHello(keys, alice, sent[0] as never, "p-me", "p-alice")).toBeNull();
   await room.handleChannelText("p-alice", JSON.stringify(await aliceStore.hello(keys, alice, "p-alice", "p-me")));
   expect(sent[1]).toMatchObject({ kind: "sender-key" });
@@ -70,7 +71,7 @@ describe("a background room", () => {
     await room.handleChannelText("p-alice", JSON.stringify(env));
     await room.handleChannelText("p-alice", JSON.stringify(env)); // the same again
     expect(room.messages.map((m) => m.text)).toEqual(["ahoj"]);
-    expect(room.messages[0]).toMatchObject({ sealedWith: "sender-key", identity: { state: "verified" }, mine: false });
+    expect(room.messages[0]).toMatchObject({ sealedWith: "sender-key", identity: { state: "new", protocol: 3 }, mine: false }); // 6.12: never "verified" by itself
     expect(room.unread).toBe(1);
     expect(room.view()).toMatchObject({ users: 2, unread: 1, last: { sender: "Alice", text: "ahoj" } });
     expect(events).toContain("message");
