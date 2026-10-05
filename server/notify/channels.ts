@@ -19,6 +19,9 @@ import { sendWebPush, isWebPushReady, type WebPushOptions, type WebPushResult } 
 import { androidStore, newId, type Command, type Device } from "../android/store";
 import { commandWire, TTL_S } from "../android/commands";
 import { fcmReady, fcmSend, type FcmOptions, type FcmResult } from "../android/fcm";
+import { iosStore, type IosDevice } from "../ios/store";
+import { sendIosNotify } from "../ios/commands";
+import { apnsReady } from "../ios/apns";
 import type { NotifyChannel, NotifyKind, NotifyGroup, NotifyLang, NotifyPrivacy } from "../../client/src/lib/notify-template";
 import type { NotifyConfig } from "./config";
 import { openSmtpPassword } from "./config";
@@ -80,6 +83,16 @@ export const maskEmail = (address: string): string => {
 
 /* ------------------------------------------------------------------ android */
 
+/**
+ * 6.14: the app channel ("android" — the id the users' settings already
+ * name) wakes the account's linked iOS devices (ios_…) too, over APNs
+ * (server/ios/commands.ts): the same sealed, signed "notify" message.
+ */
+export type IosNotifyDeps = {
+  device: (id: string) => IosDevice | null;
+  send: (device: IosDevice, payload: NotifyPayload) => Promise<{ ok: boolean; status?: number; error?: string; unregistered?: boolean }>;
+};
+
 export type AndroidDeps = {
   store: NotifyStore;
   device: (id: string) => Device | null;
@@ -88,6 +101,7 @@ export type AndroidDeps = {
   ready: () => { ready: boolean; reason: string };
   send: (token: string, data: Record<string, string>, opts: FcmOptions) => Promise<FcmResult>;
   wire: (device: Pick<Device, "id" | "encKey">, command: Command) => Record<string, string>;
+  ios?: IosNotifyDeps;
 };
 
 export const defaultAndroidDeps = (store: NotifyStore): AndroidDeps => ({
@@ -98,21 +112,42 @@ export const defaultAndroidDeps = (store: NotifyStore): AndroidDeps => ({
   ready: fcmReady,
   send: fcmSend,
   wire: (device, command) => commandWire(device, command) as unknown as Record<string, string>,
+  ios: { device: (id) => iosStore.devices.get(id), send: sendIosNotify },
 });
 
 export function androidChannel(deps: AndroidDeps): Channel {
   return {
     id: "android",
-    ready: () => deps.ready(),
+    ready: () => {
+      const fcm = deps.ready();
+      if (fcm.ready || !deps.ios) return fcm;
+      // 6.14: the channel is usable when either transport is.
+      const apns = apnsReady();
+      return apns.ready ? { ready: true, reason: "" } : fcm;
+    },
     async targets(accountId) {
       await androidStore.ready().catch(() => undefined);
+      if (deps.ios) await iosStore.ready().catch(() => undefined);
       return deps.store.devices(accountId).length;
     },
     async send({ accountId, payload }) {
       await androidStore.ready().catch(() => undefined);
+      if (deps.ios) await iosStore.ready().catch(() => undefined);
       const out: Attempt[] = [];
       for (const link of deps.store.devices(accountId)) {
         const t0 = Date.now();
+        if (deps.ios && link.deviceId.startsWith("ios_")) {
+          const device = deps.ios.device(link.deviceId);
+          const target = device ? `${device.id} (${device.name || device.modelName || device.model || "iOS"})` : link.deviceId;
+          if (!device || device.status !== "active") {
+            deps.store.unlinkDevice(link.deviceId);
+            out.push({ channel: "android", target, ok: false, error: device ? `the device is ${device.status}` : "no such device", gone: true, ms: elapsed(t0) });
+            continue;
+          }
+          const r = await deps.ios.send(device, payload);
+          out.push({ channel: "android", target, ok: r.ok, ...(r.status ? { status: r.status } : {}), ...(r.error ? { error: r.error } : {}), ms: elapsed(t0) });
+          continue;
+        }
         const device = deps.device(link.deviceId);
         const target = device ? `${device.id} (${device.name || device.model || "Android"})` : link.deviceId;
         if (!device || device.status !== "active") {

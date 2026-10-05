@@ -1,7 +1,7 @@
 // 6.2: a person hid or deleted a message in their own view.
 //
 //   POST /api/chat/message-audit        the web app (a Bearer token when signed in)
-//   POST /api/android/message-audit     the Android app (signed by the device key;
+//   POST /api/android/message-audit     the Android app, and (6.14) /api/ios/message-audit the iOS app (signed by the device key;
 //                                       registered in server/android/routes.ts)
 //
 // The message itself never leaves the device and is never sent here — the
@@ -53,7 +53,7 @@ export function sanitizeMessageAudit(raw: unknown): MessageAuditInput | null {
 }
 
 /** Who did it, as the audit journal names them. */
-export type MessageActor = { actor: string; accountId?: string; deviceId?: string; ip?: string; via: "web" | "android"; claimedClient?: string };
+export type MessageActor = { actor: string; accountId?: string; deviceId?: string; ip?: string; via: "web" | "android" | "ios"; claimedClient?: string };
 
 export function recordMessageAction(input: MessageAuditInput, who: MessageActor): void {
   audit.add({

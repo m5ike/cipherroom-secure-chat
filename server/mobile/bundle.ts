@@ -1,0 +1,233 @@
+// Builds (Android 6.0; shared with iOS since 6.14): a design frozen into a
+// bundle a device installs.
+//
+//   compile   design → files (manifest, theme, animations, screens, menus,
+//             strings, libraries, assets) → M5PK container → gzip
+//   encrypt   AES-256-GCM segments under a fresh content key (CEK)
+//   sign      ECDSA P-256 over the header (the server's mobile key)
+//   deploy    per device: the CEK wrapped with its encryption key (ECIES);
+//             a deploy file for several devices carries one wrap for each
+//
+// The encrypted file is kept in $DATA_DIR/<platform>/builds/<id>.m5ab, the
+// CEK sealed with the storage master key in the build's row. The format is
+// the same on both platforms; a BuildTarget says whose store, design and
+// key label a build belongs to (android/bundle.ts, ios/bundle.ts).
+
+import { gunzipSync, gzipSync } from "node:zlib";
+import { readFileSync } from "node:fs";
+import { openValue, sealValue } from "../storage/keys";
+import {
+  bundleFile, openBundleBody, packContainer, parseBundleFile, sealBundle, sha256, unpackContainer, wrapBundleKey,
+  type BundleHeader, type ContainerEntry,
+} from "./crypto";
+import { DEFAULT_DESIGN, designRev, sanitizeDesign, type AndroidDesign } from "../android/design";
+import { ACTIONS_67, ELEMENTS_67 } from "../android/design-67";
+import { ACTIONS_68, ELEMENTS_68 } from "../android/design-68";
+import { ACTIONS_610, ELEMENTS_610 } from "../android/design-610";
+import { ACTIONS_611, ELEMENTS_611 } from "../android/design-611";
+import { ACTIONS_612, ELEMENTS_612 } from "../android/design-612";
+import { newId, type BaseDevice, type Build, type MobileStore } from "./store";
+
+/** versionCode of an app version: 6.0.0 → 60000 (major·10000 + minor·100 + patch). */
+export function versionCodeOf(version: string): number {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  return m ? Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]) : 0;
+}
+
+/** The oldest app that reads bundle format 1. */
+export const MIN_APP_CODE = 60000;
+
+const json = (v: unknown) => Buffer.from(JSON.stringify(v), "utf8");
+
+/** The files of a design, in the order the app reads them. */
+export function designFiles(design: AndroidDesign): ContainerEntry[] {
+  const files: ContainerEntry[] = [
+    ["app.json", json(design.app)],
+    ["theme.json", json(design.theme)],
+    ["animations.json", json(design.animations)],
+  ];
+  for (const [id, tree] of Object.entries(design.screens)) files.push([`screens/${id}.json`, json(tree)]);
+  for (const [id, items] of Object.entries(design.menus)) files.push([`menus/${id}.json`, json(items)]);
+  for (const [lang, table] of Object.entries(design.strings)) files.push([`strings/${lang}.json`, json(table)]);
+  for (const [name, lib] of Object.entries(design.libraries)) files.push([`lib/${name}.json`, json(lib)]);
+  for (const [name, asset] of Object.entries(design.assets)) files.push([`assets/${name}`, Buffer.from(asset.data, "base64")]);
+  return files;
+}
+
+export type Manifest = {
+  format: 1; id: string; number: number; version: string; channel: string; created: number; minAppCode: number;
+  designRev: string; notes: string; files: Record<string, { size: number; sha256: string }>;
+  screens: string[]; languages: string[]; libraries: string[]; assets: Record<string, string>;
+};
+
+/** The whole plain content: container of manifest + files, gzipped. */
+export function compileDesign(design: AndroidDesign, meta: Omit<Manifest, "format" | "files" | "screens" | "languages" | "libraries" | "assets" | "designRev">): { plaintext: Buffer; manifest: Manifest } {
+  const files = designFiles(design);
+  const manifest: Manifest = {
+    format: 1, ...meta, designRev: designRev(design),
+    files: Object.fromEntries(files.map(([path, data]) => [path, { size: data.length, sha256: sha256(data).toString("hex") }])),
+    screens: Object.keys(design.screens), languages: Object.keys(design.strings), libraries: Object.keys(design.libraries),
+    assets: Object.fromEntries(Object.entries(design.assets).map(([name, a]) => [name, a.mime])),
+  };
+  const container = packContainer([["manifest.json", json(manifest)], ...files]);
+  return { plaintext: gzipSync(container, { level: 9 }), manifest };
+}
+
+/** Reads a plain content back: the manifest checked against every file. */
+export function readContent(plaintext: Buffer): { manifest: Manifest; files: Map<string, Buffer> } {
+  const entries = unpackContainer(gunzipSync(plaintext, { maxOutputLength: 64 * 1024 * 1024 }));
+  if (!entries.length || entries[0][0] !== "manifest.json") throw new Error("the bundle has no manifest");
+  const manifest = JSON.parse(entries[0][1].toString("utf8")) as Manifest;
+  const files = new Map(entries.slice(1));
+  for (const [path, info] of Object.entries(manifest.files)) {
+    const data = files.get(path);
+    if (!data || data.length !== info.size || sha256(data).toString("hex") !== info.sha256) throw new Error(`bundle file ${path} does not match its manifest`);
+  }
+  return { manifest, files };
+}
+
+/** The design inside a content (to look at, or to restore in the console); `defaults` fill what it lacks (the platform's default design). */
+export function designOfContent(files: Map<string, Buffer>, defaults: AndroidDesign = DEFAULT_DESIGN): AndroidDesign {
+  const read = (path: string) => { const b = files.get(path); return b ? JSON.parse(b.toString("utf8")) as unknown : undefined; };
+  const pick = (prefix: string) => Object.fromEntries([...files.keys()].filter((p) => p.startsWith(prefix) && p.endsWith(".json")).map((p) => [p.slice(prefix.length, -5), read(p)]));
+  return sanitizeDesign({
+    format: 1, app: read("app.json"), theme: read("theme.json"), animations: read("animations.json"),
+    screens: pick("screens/"), menus: pick("menus/"), strings: pick("strings/"), libraries: pick("lib/"),
+    assets: Object.fromEntries([...files.entries()].filter(([p]) => p.startsWith("assets/")).map(([p, data]) => [p.slice(7), { mime: mimeOf(p), data: data.toString("base64") }])),
+  }, defaults);
+}
+
+const mimeOf = (path: string) => (/\.png$/i.test(path) ? "image/png" : /\.webp$/i.test(path) ? "image/webp" : /\.jpe?g$/i.test(path) ? "image/jpeg" : /\.gif$/i.test(path) ? "image/gif" : /\.otf$/i.test(path) ? "font/otf" : /\.ttf$/i.test(path) ? "font/ttf" : "image/png");
+
+/** Whose builds: the platform's store, its design, the label its content keys are sealed under, its oldest app. */
+export type BuildTarget<D extends BaseDevice, R extends { id: string }> = {
+  store: MobileStore<D, R>;
+  /** The design a new build freezes when none is given. */
+  design: () => AndroidDesign;
+  /** The design's defaults (what designOfContent fills in). */
+  defaults: AndroidDesign;
+  /** Build ids: bld_… (Android), ibld_… (iOS). */
+  idPrefix: string;
+  /** The AAD the content key is sealed under in the build's row (android:build:<id>, ios:build:<id>). */
+  cekAad: (id: string) => string;
+  /** The oldest app of the platform that reads bundle format 1. */
+  minAppCode: number;
+  /** The oldest app a design runs on (each platform's gating). */
+  designMinAppCode: (design: AndroidDesign) => number;
+};
+
+/** The app code each design version's own elements and actions need (an older app draws an unknown element as nothing), newest first. */
+const NEEDS: Array<{ code: number; elements: Set<string>; actions: Set<string> }> = [
+  { code: 61200, elements: new Set(ELEMENTS_612.map((e) => e.el)), actions: new Set(ACTIONS_612.map((a) => a.action)) },
+  { code: 61100, elements: new Set(ELEMENTS_611.map((e) => e.el)), actions: new Set(ACTIONS_611.map((a) => a.action)) },
+  { code: 61000, elements: new Set(ELEMENTS_610.map((e) => e.el)), actions: new Set(ACTIONS_610.map((a) => a.action)) },
+  { code: 60800, elements: new Set(ELEMENTS_68.map((e) => e.el)), actions: new Set(ACTIONS_68.map((a) => a.action)) },
+  { code: 60700, elements: new Set(ELEMENTS_67.map((e) => e.el)), actions: new Set(ACTIONS_67.map((a) => a.action)) },
+];
+
+/**
+ * 6.13: the app that knows the nine languages (core/Locales.java). The texts
+ * themselves need no newer app — an older one reads its three languages (cs,
+ * en, de) from the same tables and never picks another; a bundle's extra
+ * tables and "key#few" forms are ignored there. What it cannot do is switch to
+ * a language it does not know: a design whose `lang.set` (a menu item, an
+ * element's event, a library step) names es, it, fr, sk, sl, fi or "system"
+ * needs the 6.13 app — an older one would silently do nothing.
+ */
+export const LOCALES_APP_CODE = 61300;
+const OLD_APP_LANGS = new Set(["cs", "en", "de"]);
+
+export function needsLocalesApp(design: AndroidDesign): boolean {
+  let needs = false;
+  const visit = (v: unknown, depth: number): void => {
+    if (needs || depth > 64 || !v || typeof v !== "object") return;
+    if (Array.isArray(v)) { for (const x of v) visit(x, depth + 1); return; }
+    const o = v as Record<string, unknown>;
+    if ((o.action === "lang.set" || o.do === "lang.set") && typeof o.arg === "string" && !OLD_APP_LANGS.has(o.arg.trim())) { needs = true; return; }
+    for (const x of Object.values(o)) visit(x, depth + 1);
+  };
+  visit({ screens: design.screens, menus: design.menus, libraries: design.libraries }, 0);
+  return needs;
+}
+
+/**
+ * The oldest app a design runs on: one that uses a 6.7 element (the room rows'
+ * `swipe`) or action needs the 6.7 app, a 6.8 one the 6.8 app — so an older
+ * phone keeps the build it has instead of getting parts it cannot draw.
+ */
+export function designMinAppCode(design: AndroidDesign): number {
+  if (needsLocalesApp(design)) return LOCALES_APP_CODE;
+  const json = JSON.stringify(design);
+  const els = [...json.matchAll(/"el":"([^"]+)"/g)].map((m) => m[1]);
+  const acts = [...json.matchAll(/"action":"([^"]+)"/g)].map((m) => m[1]);
+  for (const v of NEEDS) if (els.some((e) => v.elements.has(e)) || acts.some((a) => v.actions.has(a))) return v.code;
+  return MIN_APP_CODE;
+}
+
+export type BuildOptions = { notes?: string; channel?: string; by: string; minAppCode?: number; appVersion: string; design?: AndroidDesign };
+
+export function createBuildFor<D extends BaseDevice, R extends { id: string }>(target: BuildTarget<D, R>, opts: BuildOptions): Build {
+  const store = target.store;
+  const design = opts.design ?? target.design();
+  const number = Math.max(0, ...store.builds.list({ limit: 1 }).map((b) => b.number)) + 1;
+  const id = newId(target.idPrefix);
+  const channel = ["stable", "beta", "dev"].includes(opts.channel ?? "") ? opts.channel! : "stable";
+  const created = Date.now();
+  const minAppCode = Math.max(target.minAppCode, target.designMinAppCode(design), Math.round(opts.minAppCode ?? target.minAppCode));
+  const version = `${opts.appVersion}-b${number}`;
+  const notes = (opts.notes ?? "").slice(0, 2000);
+  const { plaintext, manifest } = compileDesign(design, { id, number, version, channel, created, minAppCode, notes });
+  const signer = store.signingKey();
+  const { header, body, cek } = sealBundle({ id, number, version, channel, created, minAppCode }, plaintext, { privateKey: signer.privateKey, kid: signer.kid });
+  const file = bundleFile(header, body);
+  store.writeFileAtomic(store.buildFile(id), file);
+  const { recipients: _r, ...headerNoRecipients } = header;
+  const build: Build = {
+    id, number, version, channel, status: "ready", notes, createdAt: created, createdBy: opts.by, publishedAt: null,
+    minAppCode, designRev: manifest.designRev, size: plaintext.length, fileSize: file.length, sha256: header.sha256,
+    cekSealed: sealValue(cek.toString("base64"), target.cekAad(id)).toString("base64"),
+    header: headerNoRecipients,
+    summary: { screens: manifest.screens, files: Object.keys(manifest.files).length, languages: manifest.languages, libraries: manifest.libraries },
+  };
+  cek.fill(0);
+  store.builds.put(build);
+  return build;
+}
+
+function buildCek(cekAad: (id: string) => string, build: Build): Buffer {
+  const b64 = openValue(Buffer.from(build.cekSealed, "base64"), cekAad(build.id));
+  if (!b64) throw new Error("the build's key cannot be opened (storage master key changed?)");
+  return Buffer.from(b64, "base64");
+}
+
+/** The build's file with the content key wrapped for these devices. */
+export function deployFileFor<D extends BaseDevice, R extends { id: string }>(target: BuildTarget<D, R>, build: Build, devices: Array<Pick<BaseDevice, "id" | "encKey">>): Buffer {
+  const { header, body } = parseBundleFile(readFileSync(target.store.buildFile(build.id)));
+  const cek = buildCek(target.cekAad, build);
+  try {
+    const withRecipients: BundleHeader = { ...header, recipients: devices.map((d) => wrapBundleKey(cek, header, d)) };
+    return bundleFile(withRecipients, body);
+  } finally {
+    cek.fill(0);
+  }
+}
+
+/** The build's content, decrypted on the server (the console's inspector). */
+export function buildContentFor<D extends BaseDevice, R extends { id: string }>(target: BuildTarget<D, R>, build: Build): { manifest: Manifest; files: Map<string, Buffer> } {
+  const { header, body } = parseBundleFile(readFileSync(target.store.buildFile(build.id)));
+  const cek = buildCek(target.cekAad, build);
+  try {
+    return readContent(openBundleBody(header, body, cek));
+  } finally {
+    cek.fill(0);
+  }
+}
+
+/** The channels a device of this channel takes builds and releases from (dev takes everything). */
+export const channelOrder = (channel: string): string[] => (channel === "dev" ? ["dev", "beta", "stable"] : channel === "beta" ? ["beta", "stable"] : ["stable"]);
+
+/** The newest published build a device of this app version and channel may install. */
+export function latestBuildIn<D extends BaseDevice, R extends { id: string }>(store: MobileStore<D, R>, appCode: number, channel: string): Build | null {
+  const order = channelOrder(channel);
+  return store.builds.list({ limit: 200, filter: (b) => b.status === "published" && b.minAppCode <= appCode && order.includes(b.channel) })[0] ?? null;
+}

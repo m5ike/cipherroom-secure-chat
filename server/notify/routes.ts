@@ -25,6 +25,7 @@ import { rateLimit } from "express-rate-limit";
 import type { AccountRecord, AccountStore } from "../accounts/store";
 import type { Device } from "../android/store";
 import { androidStore } from "../android/store";
+import { iosStore } from "../ios/store";
 import { adminName } from "../admin-auth";
 import { consoleGuard, requireModule } from "../access";
 import { audit } from "../monitor/audit";
@@ -79,6 +80,11 @@ function baseUrlOf(req: Request): string {
 async function endpointsOf(deps: NotifyRouteDeps, accountId: string) {
   const config = deps.config.get();
   const devices = deps.store.devices(accountId).map((l) => {
+    // 6.14: an iOS device (ios_…) is linked the same way; it wakes over APNs.
+    if (l.deviceId.startsWith("ios_")) {
+      const d = iosStore.devices.get(l.deviceId);
+      return { id: l.deviceId, name: d?.name || d?.modelName || d?.model || "iOS", model: d?.model ?? "", lastSeen: d?.lastSeen ?? 0, fcm: false, apns: Boolean(d?.apnsToken), platform: "ios", linkedAt: l.at };
+    }
     const d = androidStore.devices.get(l.deviceId);
     return { id: l.deviceId, name: d?.name || d?.model || "Android", model: d?.model ?? "", lastSeen: d?.lastSeen ?? 0, fcm: Boolean(d?.fcmToken), linkedAt: l.at };
   });
@@ -93,8 +99,8 @@ async function endpointsOf(deps: NotifyRouteDeps, accountId: string) {
   };
 }
 
-/** The Android device's request to be woken for an account (or not any more). */
-export function androidNotifyLink(store: NotifyStore, accounts: AccountStore, device: Device, body: Record<string, unknown>): { status: number; json: Record<string, unknown> } {
+/** The Android device's (6.14: or iOS device's) request to be woken for an account (or not any more). */
+export function androidNotifyLink(store: NotifyStore, accounts: AccountStore, device: Pick<Device, "id">, body: Record<string, unknown>, channel: "android" | "ios" = "android"): { status: number; json: Record<string, unknown> } {
   const on = body.on !== false;
   if (!on) {
     const n = store.unlinkDevice(device.id);
@@ -105,7 +111,7 @@ export function androidNotifyLink(store: NotifyStore, accounts: AccountStore, de
   const account = accounts.resolveToken(token);
   if (!account) return { status: 401, json: { ok: false, code: "signed-out", message: "Sign in with your passkey first." } };
   store.linkDevice(account.id, device.id, token);
-  accounts.addAudit(account.id, "push-linked", { devices: store.devices(account.id).length, channel: "android" });
+  accounts.addAudit(account.id, "push-linked", { devices: store.devices(account.id).length, channel });
   audit.add({ category: "account", event: "notify.device.linked", accountId: account.id, target: device.id });
   return { status: 200, json: { ok: true, linked: true } };
 }

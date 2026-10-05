@@ -110,6 +110,7 @@ app.use("/api/admin/menu-config", bearerFirst, express.json({ limit: "1mb" }));
 // design (screens, strings, small assets) is bigger than the default.
 app.use("/api/admin/android/releases/upload", bearerFirst, express.raw({ type: () => true, limit: "300mb" }));
 app.use("/api/admin/android/design", bearerFirst, express.json({ limit: "8mb" }));
+app.use("/api/admin/ios/design", bearerFirst, express.json({ limit: "8mb" }));
 // 4.0.5: the Layout builder saves whole element trees.
 app.use("/admin/layout", express.json({ limit: "4mb" }));
 // Package drafts and imports are bigger than the default 256 kB.

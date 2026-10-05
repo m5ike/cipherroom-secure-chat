@@ -1,0 +1,25 @@
+// Shared build settings of every target in ios/M5cet.xcodeproj (the project-level
+// base configuration; targets inherit it). See ios/README.md.
+
+// Version and build number from package.json (ios/scripts/sync-version.mjs).
+#include "Version.xcconfig"
+
+// Signing. Simulator builds need none (`CODE_SIGNING_ALLOWED=NO`). For a device,
+// TestFlight or the App Store, the team comes from the environment
+// (M5CET_DEVELOPMENT_TEAM=ABCDE12345 xcodebuild …) or from Signing.xcconfig next
+// to this file (git-ignored; copy Signing.xcconfig.example). Never commit a team.
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM = $(M5CET_DEVELOPMENT_TEAM)
+
+// The passkey (webcredentials) domain of the server this build is for: the
+// associated domain in M5cet.entitlements (webcredentials:$(M5_WEBCREDENTIALS_DOMAIN)).
+// The server must serve /.well-known/apple-app-site-association naming the app
+// (TEAMID.cz.m5cet.app). Set M5CET_WEBCREDENTIALS_DOMAIN=chat.example.com in the
+// environment or M5_WEBCREDENTIALS_DOMAIN in Signing.xcconfig.
+M5_WEBCREDENTIALS_DOMAIN = $(M5CET_WEBCREDENTIALS_DOMAIN:default=m5cet.invalid)
+
+// The App Group and the keychain group the app shares with its notification extension.
+M5_APP_GROUP = group.cz.m5cet.app
+
+// Local, git-ignored overrides (team, domain) — optional.
+#include? "Signing.xcconfig"

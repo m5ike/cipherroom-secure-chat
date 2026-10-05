@@ -1,0 +1,145 @@
+# =============================================================================
+# M5cet for iPhone, iPad and Apple Watch (6.14, docs/ios-architecture.md).
+#
+#   m5kit   swift test of the logic package (ios/M5Kit) on macOS — the vectors
+#           of the web client and the Android app, byte for byte
+#   app     the version check (package.json → ios/Config/Version.xcconfig),
+#           the iOS app built and its XCTest suite run on an iPhone simulator,
+#           an unsigned build for devices, and the watch app built for the
+#           watchOS simulator (build only: runners may have no watchOS runtime)
+#
+# Nothing is signed and nothing signed is uploaded (CODE_SIGNING_ALLOWED=NO);
+# only the test result bundle of a failed run is kept. Signing for devices,
+# TestFlight and the App Store happens on a developer's Mac (ios/README.md).
+#
+# Supply chain (6.12, F-29): third-party actions pinned to full commit SHAs;
+# the WebRTC package is pinned to an exact version in the project and
+# ios/M5cet.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved.
+# =============================================================================
+
+name: iOS
+
+on:
+  push:
+    branches: [master, 'release/**', 'feature/**']
+    paths:
+      - 'ios/**'
+      - 'android/app/src/main/assets/m5/**'
+      - 'android/app/src/main/res/**'
+      - 'android/app/src/test/resources/**'
+      - 'test/vectors/**'
+      - 'test/fixtures/**'
+      - 'package.json'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - 'android/app/src/main/assets/m5/**'
+      - 'android/app/src/main/res/**'
+      - 'android/app/src/test/resources/**'
+      - 'test/vectors/**'
+      - 'test/fixtures/**'
+      - 'package.json'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  m5kit:
+    name: M5Kit (swift test)
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Select Xcode (26 or newer)
+        run: |
+          set -euo pipefail
+          xcode="$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -vi beta | sort -V | tail -1 || true)"
+          [ -n "$xcode" ] || xcode=/Applications/Xcode.app
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          major="$(xcodebuild -version | awk 'NR==1 { split($2, v, "."); print v[1] }')"
+          [ "$major" -ge 26 ] || { echo "::error::Xcode 26 or newer is needed (iOS 26 SDK, Swift 6.2 tools)"; exit 1; }
+
+      - name: swift test
+        run: swift test --package-path ios/M5Kit
+
+  app:
+    name: iOS app (build, test, watch)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Select Xcode (26 or newer)
+        run: |
+          set -euo pipefail
+          xcode="$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -vi beta | sort -V | tail -1 || true)"
+          [ -n "$xcode" ] || xcode=/Applications/Xcode.app
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          major="$(xcodebuild -version | awk 'NR==1 { split($2, v, "."); print v[1] }')"
+          [ "$major" -ge 26 ] || { echo "::error::Xcode 26 or newer is needed (iOS 26 SDK, Swift 6.2 tools)"; exit 1; }
+
+      - name: Version follows package.json
+        run: node ios/scripts/sync-version.mjs --check
+
+      - name: Pick an iPhone simulator (iOS 26+)
+        id: sim
+        run: |
+          set -euo pipefail
+          id="$(xcrun simctl list devices available -j | python3 -c '
+          import json, re, sys
+          best = None
+          for runtime, devices in json.load(sys.stdin)["devices"].items():
+              m = re.search(r"iOS-(\d+)-(\d+)", runtime)
+              if not m or (int(m[1]), int(m[2])) < (26, 0):
+                  continue
+              for d in devices:
+                  if d["name"].startswith("iPhone") and d.get("isAvailable", True):
+                      key = (int(m[1]), int(m[2]))
+                      if best is None or key > best[0]:
+                          best = (key, d["udid"], d["name"])
+          print(best[1] if best else "")
+          ')"
+          if [ -z "$id" ]; then echo "::error::no iPhone simulator with iOS 26+"; xcrun simctl list devices available; exit 1; fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices | grep "$id"
+
+      - name: Build and test (iPhone simulator, unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/M5cet.xcodeproj -scheme M5cet \
+            -destination "id=${{ steps.sim.outputs.id }}" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/M5cet.xcresult" \
+            build test CODE_SIGNING_ALLOWED=NO
+
+      - name: Build for devices (unsigned, not uploaded)
+        run: |
+          xcodebuild -project ios/M5cet.xcodeproj -scheme M5cet \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            build CODE_SIGNING_ALLOWED=NO
+
+      - name: Watch app (watchOS simulator, build only)
+        run: |
+          xcodebuild -project ios/M5cet.xcodeproj -scheme M5cetWatch -sdk watchsimulator \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            build CODE_SIGNING_ALLOWED=NO
+
+      - name: Keep the test results of a failed run
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: M5cet-xcresult
+          path: ${{ runner.temp }}/M5cet.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
