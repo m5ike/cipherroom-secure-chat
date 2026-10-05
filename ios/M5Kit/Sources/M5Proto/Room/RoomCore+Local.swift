@@ -158,6 +158,20 @@ public extension RoomCore {
         return m
     }
 
+    /// A local message the app built itself (its id known to the UI at once: a command's call, a model's answer).
+    func addLocal(_ m: ChatMessage) {
+        if message(m.id) != nil { return }
+        add(m, fresh: false)
+        events.roomChanged()
+    }
+
+    /// 6.12 (F-16): the app locked with the room staying connected — the history leaves the memory (it was saved);
+    /// what arrives now goes to the lock inbox and stays in the list until the unlock restores the rest.
+    func dropAll() {
+        messages.removeAll()
+        events.roomChanged()
+    }
+
     /// A received file's bubble (the app's transfer made it): arrived now, fresh for the notifications.
     func addFile(_ m: ChatMessage) {
         var m = m

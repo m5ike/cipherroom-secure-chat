@@ -35,6 +35,8 @@ protocol LockInboxWriting: Sendable {
     var active: Bool { get }
     /// One item (LockedRooms.message / state / pin / resume / call) sealed into the open generation.
     @discardableResult func seal(_ item: JSONObject) -> Bool
+    /// A received file (checked in full) kept for the unlock: its slots file moves into the inbox, the item carries its key.
+    func keepFile(room: String, id: String, key: Bytes, slots: URL, chunkSize: Int, total: Int, size: Int64, lengths: [Int], root: String, p4: Bool) -> Bool
 }
 
 /// What the core needs of the device's security.
@@ -66,6 +68,28 @@ protocol CoreSecurity: AnyObject {
     func chatIdentity(create: Bool) -> ChatIdentity?
     /// A call keeps the data key until it ends.
     var inCall: (@MainActor () -> Bool) { get set }
+    /// Where the lock inbox kept a received file (lockbox/files/<id>.part), nil when there is no inbox.
+    func keptFileURL(id: String) -> URL?
+    /// Bumped on every change of the lock (observable: the route follows it).
+    var lockRevision: Int { get }
+    /// The lock's numbers for $lock and Settings › Security.
+    var lockFacts: LockFacts { get }
+    /// The PIN pad's model (Parts/Lock LockPadModel over AppLock): setting the PIN up, or unlocking. Nil without AppLock (tests).
+    func makeLockPad(setup: Bool) -> LockPadModel?
+    /// Settings › Security's $security (pinKey, duress, biometric…).
+    func securityScope(t: (String) -> String) -> DesignValue
+    /// A security setting changed in the design's settings (security.*): into the lock's own store.
+    func securitySettingChanged(_ key: String, _ value: Bool)
+}
+
+/// The lock's numbers (AppLock, LockPolicy).
+struct LockFacts: Equatable, Sendable {
+    var pinLength = 6
+    var maxAttempts = 8
+    var attempts = 0
+    var left = 8
+    var waitSeconds: Int64 = 0
+    var biometricAvailable = false
 }
 
 // MARK: - the vault as M5Proto / M5Net stores
@@ -129,7 +153,6 @@ final class AppSecurity: CoreSecurity {
     let userState: any NetStateStore
     let systemState: any NetStateStore
     private var bridge: LockBridge?
-    private static let log = Logger(subsystem: "cz.m5cet.app", category: "core")
 
     init(center: SecurityCenter) {
         self.center = center
@@ -148,15 +171,15 @@ final class AppSecurity: CoreSecurity {
     var lockInbox: (any LockInboxWriting)? { center.inbox.isActive ? InboxWriter(inbox: center.inbox) : nil }
 
     func setLockListener(_ listener: any CoreLockListener) {
-        let b = LockBridge(listener: listener, center: center)
+        let b = LockBridge(listener: listener)
         bridge = b
         center.add(b)
         center.inboxConsumer = b
     }
 
-    var requestSigner: any RequestSigner { SecureEnclaveRequests(signer: center.signer) }
+    var requestSigner: any RequestSigner { LazyRequestSigner(center: center) }
 
-    func encryptionKeySPKI() throws -> String { try center.agreement.publicKeySPKI() }
+    func encryptionKeySPKI() throws -> String { try center.agreement().spki }
 
     var inCall: (@MainActor () -> Bool) {
         get { center.inCall }
@@ -167,52 +190,68 @@ final class AppSecurity: CoreSecurity {
         guard center.vault.unlocked else { return nil }
         return ChatIdentityStore.load(records: userRecords, keyring: center.keyring, create: create)
     }
+
+    func keptFileURL(id: String) -> URL? { center.inbox.partURL(id: id) }
+
+    var lockRevision: Int { center.lock.revision }
+
+    var lockFacts: LockFacts {
+        let l = center.lock
+        return LockFacts(pinLength: l.pinLength, maxAttempts: l.maxAttempts, attempts: l.attempts, left: l.left, waitSeconds: l.waitSeconds,
+                         biometricAvailable: l.biometricAvailable)
+    }
+
+    func makeLockPad(setup: Bool) -> LockPadModel? {
+        LockPadModel(lock: center.lock, mode: setup ? .setup : .unlock, shuffle: center.settings.bool(SecuritySetting.shufflePin))
+    }
+
+    func securityScope(t: (String) -> String) -> DesignValue {
+        let l = center.lock
+        let pinKey = l.pinKeyLevel
+        return ["biometricAvailable": .bool(l.policy.biometric != "off" && l.biometrics.available), "biometric": .bool(center.vault.bioEnrolled),
+                "pinLength": .number(Double(l.pinLength)), "maxAttempts": .number(Double(l.maxAttempts)), "wipe": .bool(l.policy.wipe),
+                "screenshots": .bool(l.policy.screenshots), "pinKey": .string(pinKey), "pinKeyLabel": .string(pinKey.isEmpty ? "—" : t("set.security.pinKey." + pinKey)),
+                "duress": .bool(center.duress.active)]
+    }
+
+    func securitySettingChanged(_ key: String, _ value: Bool) { center.settings.set(key, value) }
 }
 
-/// The device's Secure Enclave signing key as M5Net's RequestSigner.
-struct SecureEnclaveRequests: RequestSigner {
-    let signer: any DeviceSigner
-    func publicKeySPKI() async throws -> String { try signer.publicKeySPKI() }
-    func signP1363(_ data: Data) async throws -> Data { try signer.sign(data) }
+/// The device's Secure Enclave signing key, made on first use (KeyringSigner).
+struct LazyRequestSigner: RequestSigner, @unchecked Sendable {
+    let center: SecurityCenter
+    func publicKeySPKI() async throws -> String { try await MainActor.run { try center.signer() }.publicKey }
+    func signP1363(_ data: Data) async throws -> Data { try await MainActor.run { try center.signer() }.sign(data: data) }
 }
 
-/// The open lock inbox as LockInboxWriting (M5Core items → the inbox's records).
+/// The open lock inbox as LockInboxWriting.
 struct InboxWriter: LockInboxWriting, @unchecked Sendable {
-    let inbox: LockInbox
+    let inbox: LockInboxFiles
     var active: Bool { inbox.isActive }
-    func seal(_ item: JSONObject) -> Bool {
-        guard let rec = SecJSON.parse(item.stringify()) else { return false }
-        return inbox.seal(rec)
+    func seal(_ item: JSONObject) -> Bool { inbox.seal(item) }
+    func keepFile(room: String, id: String, key: Bytes, slots: URL, chunkSize: Int, total: Int, size: Int64, lengths: [Int], root: String, p4: Bool) -> Bool {
+        inbox.keepFile(room: room, id: id, key: key, slots: slots, chunkSize: chunkSize, total: total, size: size, lengths: lengths, root: root, p4: p4)
     }
 }
 
 /// SecurityCenter's LockParticipant and LockInboxConsumer, handed to the rooms.
 final class LockBridge: LockParticipant, LockInboxConsumer, @unchecked Sendable {
     weak var listener: (any CoreLockListener)?
-    weak var center: SecurityCenter?
 
-    @MainActor init(listener: any CoreLockListener, center: SecurityCenter) { self.listener = listener; self.center = center }
+    @MainActor init(listener: any CoreLockListener) { self.listener = listener }
 
-    func lockWillForget(receiving inbox: LockInbox?) {
+    func lockWillForget(receiving inbox: LockInboxFiles?) {
         listener?.coreLockWillForget(receiving: inbox.map { InboxWriter(inbox: $0) })
     }
 
     func lockDidForget() { listener?.coreLockDidForget() }
     func lockDidUnlock() { listener?.coreLockDidUnlock() }
 
-    /// Called off the main actor (the drain's task): the parsed generation as M5Proto's, merged on the main actor.
-    nonisolated func apply(_ parsed: LockInboxParsed, inbox: LockInbox) {
-        var p = LockedRooms.Parsed()
-        for (room, items) in parsed.rooms { p.rooms[room] = items.compactMap { JSON.parseObject(SecJSON.string($0)) } }
-        for (slot, kid) in parsed.pins where p.pins[slot] == nil { p.pins[slot] = kid }
-        for (room, peerId, secret) in parsed.resumes { p.resumes[room] = [peerId, secret] }
-        p.calls = parsed.calls.compactMap { JSON.parseObject(SecJSON.string($0)) }
-        for (id, uri) in parsed.callUris { p.callUris[id] = uri }
-        p.files = parsed.files.compactMap { JSON.parseObject(SecJSON.string($0)) }
-        p.unknown = parsed.unknown
+    /// Called off the main actor (the drain's task): merged on the main actor before the next generation.
+    nonisolated func apply(_ parsed: LockedRooms.Parsed, inbox: LockInboxFiles) {
         let done = DispatchSemaphore(value: 0)
         DispatchQueue.main.async { [weak self] in
-            MainActor.assumeIsolated { self?.listener?.coreMerge(p) }
+            MainActor.assumeIsolated { self?.listener?.coreMerge(parsed) }
             done.signal()
         }
         done.wait()
@@ -248,8 +287,6 @@ enum ChatIdentityStore {
         keyring.delete(signAlias)
         keyring.delete(dhAlias)
         do {
-            _ = try keyring.ensureSigningKey(signAlias, access: .background)
-            _ = try keyring.ensureAgreementKey(dhAlias, access: .background)
             let id = try keyringIdentity(keyring)
             records.put(record, JSONObject([("publicKey", .string(id.publicKey)), ("dhPublicKey", .string(id.dhPublicKey)), ("keys", "keyring"),
                                             ("hw", .string(keyring.level(of: signAlias)?.rawValue ?? ""))]))
@@ -263,26 +300,10 @@ enum ChatIdentityStore {
         }
     }
 
+    /// The identity's two Secure Enclave keys (made when missing).
     static func keyringIdentity(_ keyring: Keyring) throws -> ChatIdentity {
-        let signPub = try keyring.signingPublicKey(signAlias)
-        let dhPub = try keyring.agreementPublicKey(dhAlias)
-        return ChatIdentity(signer: KeyringChatSigner(keyring: keyring, publicKey: Crypto.b64(Array(signPub.derRepresentation))),
-                            dh: KeyringChatAgreer(keyring: keyring, spki: Crypto.b64(Array(dhPub.derRepresentation))))
+        ChatIdentity(signer: try KeyringSigner(keyring: keyring, alias: signAlias), dh: try KeyringAgreement(keyring: keyring, alias: dhAlias))
     }
-}
-
-/// The identity's signing key in the Secure Enclave (P1363, base64 — WebCrypto's form).
-struct KeyringChatSigner: M5Crypto.DeviceSigner, @unchecked Sendable {
-    let keyring: Keyring
-    let publicKey: String
-    func sign(_ data: Bytes) throws -> String { Crypto.b64(Array(try keyring.sign(ChatIdentityStore.signAlias, Data(data)))) }
-}
-
-/// The identity's ECDH key in the Secure Enclave (the 32-byte x-coordinate).
-struct KeyringChatAgreer: KeyAgreer, @unchecked Sendable {
-    let keyring: Keyring
-    let spki: String
-    func agree(with peer: P256.KeyAgreement.PublicKey) throws -> Bytes { Array(try keyring.agree(ChatIdentityStore.dhAlias, with: peer)) }
 }
 
 // MARK: - memory (tests, previews)
@@ -309,6 +330,12 @@ final class MemorySecurity: CoreSecurity {
     var inCall: (@MainActor () -> Bool) = { false }
 
     var lockInbox: (any LockInboxWriting)? { inbox.active ? inbox : nil }
+    func keptFileURL(id: String) -> URL? { nil }
+    var lockRevision = 0
+    var lockFacts = LockFacts()
+    func makeLockPad(setup: Bool) -> LockPadModel? { nil }
+    func securityScope(t: (String) -> String) -> DesignValue { ["pinLength": 6, "duress": false] }
+    func securitySettingChanged(_ key: String, _ value: Bool) {}
     func setLockListener(_ listener: any CoreLockListener) { self.listener = listener }
     var requestSigner: any RequestSigner { SoftwareRequestSigner(key: signKey) }
     func encryptionKeySPKI() throws -> String { Crypto.b64(Array(encKey.publicKey.derRepresentation)) }
@@ -349,4 +376,5 @@ final class MemoryInbox: LockInboxWriting, @unchecked Sendable {
     func begin() { lock.withLock { open = true; items = [] } }
     func close() -> [JSONObject] { lock.withLock { open = false; let i = items; items = []; return i } }
     func seal(_ item: JSONObject) -> Bool { lock.withLock { guard open else { return false }; items.append(item); return true } }
+    func keepFile(room: String, id: String, key: Bytes, slots: URL, chunkSize: Int, total: Int, size: Int64, lengths: [Int], root: String, p4: Bool) -> Bool { false }
 }

@@ -201,6 +201,21 @@ public enum FileTransfer {
             return f
         }
 
+        /// The end frame's root (its body opened and checked like `finish` does) — what the lock inbox keeps with a file
+        /// received while the app is locked (LockedRooms.file), so the unlock can check it again.
+        public func endRoot(_ f: JSONObject) throws -> String {
+            let end: JSONObject
+            if p4 {
+                end = try Envelopes.parse(try Files4.openBody(key, try Files4.endAad(id), iv: f.optString("iv"), ciphertext: f.optString("ciphertext")))
+            } else {
+                let body = try Envelopes.openFileBodyFull(key, Envelopes.fileEndContext(id), iv: f.optString("iv"), ciphertext: f.optString("ciphertext"))
+                if let s = signer, body.signer == nil || body.signer?.valid != true || body.signer?.publicKey != s { throw CryptoError("the end is not signed by the sender") }
+                end = try Envelopes.parse(body.body)
+            }
+            if end.optInt64("totalChunks") != Int64(total) || end.optInt64("size") != size { throw CryptoError("size") }
+            return end.optString("root")
+        }
+
         /// The end frame: its body checked (protocol 3: signed by the meta's signer), the chunks decrypted in order and
         /// checked against its root — into `sink` (nil: only checked). Returns the plaintext size.
         @discardableResult

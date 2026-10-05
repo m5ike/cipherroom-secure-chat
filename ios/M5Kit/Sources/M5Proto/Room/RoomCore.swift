@@ -143,7 +143,7 @@ public final class RoomCore {
     public func peer(_ id: String) -> RoomPeer? { peerById[id] }
     public private(set) var people = PeerFacts()
     public private(set) var presence = RoomPresence()
-    public private(set) var messages = [ChatMessage]()
+    public internal(set) var messages = [ChatMessage]()
     private var held = [String: [ChatMessage]]()
     private var relayHeld = OrderedMap<String, [ChatMessage]>()
     public private(set) var heldIds = Set<String>()
