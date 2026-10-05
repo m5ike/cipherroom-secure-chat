@@ -194,8 +194,8 @@
       const acc = await api("/admin/access/me");
       for (const m of acc.modules || []) {
         state.modules[m.id] = m;
-        const item = $(`.nav__item[data-route="${m.console}"]`);
-        if (item) { item.hidden = !m.allowed; item.title = m.allowed ? "" : "No access (Modules & groups)"; }
+        // 6.14: a page may belong to a module that has another page (iOS is the Android module's): data-module.
+        for (const item of $$(`.nav__item[data-route="${m.console}"], .nav__item[data-module="${m.id}"]`)) { item.hidden = !m.allowed; item.title = m.allowed ? "" : "No access (Modules & groups)"; }
       }
     } catch { /* an older admin service: show everything */ }
     applyRoleGates();

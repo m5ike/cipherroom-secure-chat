@@ -286,3 +286,20 @@
   .and-pk__row { grid-template-columns: 18px minmax(0, 1fr); }
   .and-pk__detail { grid-column: 2; }
 }
+
+/* 6.14: the iOS page (ios-console.js) — iPhone and iPad frames in SF type,
+   the iPhone's Dynamic Island; the design itself is drawn as on Android. */
+.and-phone--ios { border-radius: 54px; border: 12px solid #1d1d1f; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+.and-phone--ios::before { content: ""; position: absolute; top: 11px; left: 50%; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: #000; z-index: 60; pointer-events: none; }
+.and-phone--ios::after { content: ""; position: absolute; bottom: 8px; left: 50%; width: 134px; height: 5px; margin-left: -67px; border-radius: 3px; background: currentColor; opacity: .35; z-index: 60; pointer-events: none; }
+.and-phone--ios[data-kind="pad"] { border-radius: 26px; border-width: 16px; }
+.and-phone--ios[data-kind="pad"]::before { display: none; }
+.and-phone--ios[data-kind="se"] { border-radius: 40px; border-top-width: 60px; border-bottom-width: 64px; }
+.and-phone--ios[data-kind="se"]::before, .and-phone--ios[data-kind="se"]::after { display: none; }
+.ios-kv-links a { word-break: break-all; }
+.ios-notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.ios-result { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; white-space: pre-wrap; }
+/* The safe area, as the app keeps it: the status bar and the island above the screen, the home indicator below. */
+.and-phone--ios > .and-screen { top: 54px; bottom: 30px; }
+.and-phone--ios[data-kind="pad"] > .and-screen { top: 24px; bottom: 20px; }
+.and-phone--ios[data-kind="se"] > .and-screen { top: 20px; bottom: 0; }
