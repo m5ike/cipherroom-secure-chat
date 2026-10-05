@@ -1,13 +1,26 @@
 # Platform/Files — soubory zpráv, médií a sdílení
 
 Port systémové části `A/ui/media/VaultMedia`, `A/security/FileVault` (úložiště) a souborových částí `A/chat/Files`
-(`A/` = `android/app/src/main/java/cz/m5cet/app/`); přenos a formát FileVault jsou v `M5Kit/M5Proto` + `M5Crypto`,
-přehrávače a náhledy (`AudioBar`, `Previews`, `VideoBox`) v `Parts`.
+(`A/` = `android/app/src/main/java/cz/m5cet/app/`); přenos je v `M5Kit/M5Proto`, přehrávače a náhledy
+(`AudioBar`, `Previews`, `VideoBox`) v `Parts`.
+
+## Hotovo (6.14, Platform/Security)
+
+* **`ProtectedFiles.swift`** — kde aplikace drží šifrované soubory (`SecurityPaths`: kontejner aplikace
+  `Application Support/m5` pro USER vrstvu, schránku a soubory; App Group `…/m5` jen pro SYS vrstvu), třídy Data
+  Protection, vyloučení ze záloh (`isExcludedFromBackup`), trvalý zápis (`F_FULLFSYNC` souboru, přejmenování, sync
+  adresáře — Android `Vault.writeDurable`) a mazání stromu s výjimkou (wipe).
+* **`FileVault.swift`** — soubory v klidu, formát Androidu bajt po bajtu: `"M5F1"` | nonce (8) | segmenty po 64 KiB
+  AES-256-GCM, IV = nonce ‖ index (u32 BE), AAD `m5file|<id>|<index>|<last 1/0>`; `Writer` (vlastní kopie datového
+  klíče — zámek mezitím soubor nepřeruší), `Reader` s náhodným přístupem (přehrávače, znovuodeslání), `readAll`,
+  `decryptedCopy` / `discard` pro share sheet (dočasná kopie s `NSFileProtectionComplete`, smazat po použití).
+  Soubory `files/<id>.m5f` (`:` → `_`), `complete`, mimo zálohy. Testy `M5cetTests/Security/FileVaultTests`.
+
+## Zbývá (vlna 2)
 
 | Android | iOS |
 |---|---|
-| `VaultMedia$FilesProvider` (soubory pro jiné aplikace, dešifrované při čtení) | dočasná kopie s Data Protection `complete` → share sheet (`UIActivityViewController`) / `ShareLink`, smazání po použití |
+| `VaultMedia$FilesProvider` (soubory pro jiné aplikace, dešifrované při čtení) | `FileVault.decryptedCopy` → share sheet (`UIActivityViewController`) / `ShareLink`, `FileVault.discard` po použití |
 | výběr obrázku / souboru (`ACTION_GET_CONTENT`), fotoaparát | `PhotosPicker` / `PHPickerViewController` (bez oprávnění), `UIDocumentPickerViewController`, kamera (`NSCameraUsageDescription`) |
 | uložení do Galerie / souboru (`ACTION_CREATE_DOCUMENT`) | `PHPhotoLibrary` jen přidání (`NSPhotoLibraryAddUsageDescription`), `fileExporter` |
-| úložiště souborů trezoru | `FileManager` v kontejneru aplikace, `NSFileProtectionComplete`, vyloučeno ze zálohy (`isExcludedFromBackup`) — Android `allowBackup=false` |
 | sdílený text do místnosti (`ACTION_SEND`) | Share Extension (volitelně, docs/ios-architecture.md § 5) |

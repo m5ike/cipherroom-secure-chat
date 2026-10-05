@@ -9,6 +9,7 @@ import Foundation
 enum Bootstrap {
     static func install(into model: AppModel) {
         // Platform/Security — Keychain, Secure Enclave, Vault, AppLock (lock on model.onScenePhase).
+        SecurityCenter.install(into: model)
         // Platform/Push — model.push = …; BGTaskScheduler "cz.m5cet.app.checkin" (Info.plist).
         // Platform/Calls — model.voip = … (CallKit + PushKit; reports every VoIP push).
         CallSystem.shared.install(into: model)
