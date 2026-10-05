@@ -18,8 +18,7 @@ import {
 import { designMinAppCode } from "../mobile/bundle";
 import { createDesignStore } from "../mobile/design-store";
 import { mobileDir } from "../mobile/store";
-import { androidAssets } from "../android/assets";
-import { androidThemes, type AndroidTheme } from "../android/themes";
+import type { AndroidTheme } from "../android/themes";
 import { THEMES_67_LOOK } from "../android/design-67-look";
 
 /** The first iOS app (6.14.0): the oldest that reads bundle format 1. */
@@ -71,10 +70,6 @@ export const IOS_LOOK_THEME: AndroidTheme = {
   light: { ...IOS_THEME.light }, dark: { ...IOS_THEME.dark },
 };
 
-/** The templates the iOS app offers: its own look, then the web's and the app's (as on Android). */
-export function iosThemes(): AndroidTheme[] {
-  return [IOS_LOOK_THEME, ...androidThemes(), ...THEMES_67_LOOK];
-}
 
 /* ============================================================ limits (§ 5) */
 
@@ -134,27 +129,17 @@ export const saveIosDesign = (raw: unknown, by: string): AndroidDesign => design
 export const forgetIosDesign = (): void => designStore.forget();
 export const savedIosDesignProblem = (): string | null => designStore.problem();
 
-/** What the console's design builder needs (Android's catalog with the iOS defaults, its limits and templates). */
+/**
+ * What the console's design builder needs: Android's catalog with the iOS
+ * defaults, the § 5 limits, and the app's own templates (the iOS look first;
+ * the web's templates come from client CSS at build time — ios/assets.ts —
+ * so the running server lists only these).
+ */
 export function iosCatalog() {
   return {
     ...androidCatalog(IOS_DEFAULT_DESIGN),
     platform: "ios",
     iosLimits: IOS_LIMITS.map((l) => ({ action: l.action, arg: l.arg?.source ?? "", note: l.note })),
-    themes: iosThemes(),
-  };
-}
-
-/**
- * The files the iOS app may ship (as script/android-assets.ts writes
- * Android's): the iOS default design, the icon set (the same as Android's)
- * and the templates with the iOS look first.
- */
-export function iosAssets(): Record<string, string> {
-  const design = sanitizeIosDesign(IOS_DEFAULT_DESIGN);
-  design.rev = designRev(design);
-  return {
-    "default-design.json": `${JSON.stringify(design)}\n`,
-    "icons.json": androidAssets()["icons.json"],
-    "themes.json": `${JSON.stringify(iosThemes())}\n`,
+    themes: [IOS_LOOK_THEME, ...THEMES_67_LOOK],
   };
 }

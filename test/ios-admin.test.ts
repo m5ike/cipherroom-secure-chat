@@ -197,13 +197,37 @@ describe("the iOS design", () => {
     expect(crypto.openBundleFile(file, { id: "ios_1", privateKey: dev.privateKey }, crypto.spkiOf(server.publicKey)).plaintext.equals(plaintext)).toBe(true);
   });
 
-  it("ships its own assets: the iOS default design, the icons and the templates (iOS first)", () => {
-    const a = design.iosAssets();
+  it("ships its own assets: the iOS default design, the icons and the templates (iOS first)", async () => {
+    const { iosAssets } = await import("../server/ios/assets");
+    const a = iosAssets();
     expect(JSON.parse(a["default-design.json"]).theme.light.primary).toBe("#0064e0");
     expect(Object.keys(JSON.parse(a["icons.json"])).length).toBeGreaterThan(100);
     const themes = JSON.parse(a["themes.json"]) as Array<{ id: string }>;
     expect(themes[0].id).toBe("ios");
     expect(themes.length).toBeGreaterThan(5);
+  });
+});
+
+describe("passkeys on iOS", () => {
+  it("publishes apple-app-site-association (webcredentials) only with the team id", async () => {
+    const { appSiteAssociation, registerAppSiteAssociation } = await import("../server/ios/app-site");
+    const app = express();
+    registerAppSiteAssociation(app);
+    const s = await new Promise<Server>((resolve) => { const x = app.listen(0, "127.0.0.1", () => resolve(x)); });
+    const url = `http://127.0.0.1:${(s.address() as AddressInfo).port}/.well-known/apple-app-site-association`;
+    try {
+      expect(appSiteAssociation()).toBeNull();
+      expect((await fetch(url)).status).toBe(404);
+      process.env.APNS_TEAM_ID = "TEAM123456";
+      const res = await fetch(url);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toMatch(/^application\/json/);
+      expect(await res.json()).toEqual({ webcredentials: { apps: ["TEAM123456.cz.m5cet.app"] } });
+      expect((await call("GET", "/app-site")).body).toMatchObject({ teamId: "TEAM123456", published: true, path: "/.well-known/apple-app-site-association" });
+    } finally {
+      delete process.env.APNS_TEAM_ID;
+      s.close();
+    }
   });
 });
 
