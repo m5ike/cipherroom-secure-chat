@@ -16,11 +16,30 @@ import { START_I18N } from "./i18n-start";
 import { SUGGEST_I18N } from "./i18n-suggest";
 import { HARDENING_I18N } from "./i18n-hardening";
 import { P4_I18N } from "./i18n-p4";
+import { EXTRA_I18N } from "./i18n-extra";
+import { LOCALES, LOCALE_INFO, isLocale, localeChain, pickLocale, type Locale } from "./locales";
+import { formatNumber, langTag, pluralCategory } from "./i18n-intl";
 // Simple i18n. Strings live in this file; no extra deps. Add keys as needed.
+//
+// 6.13: nine languages (lib/locales.ts). English, Czech and German are the
+// TypeScript tables below (+ the i18n-*.ts modules); es / it / fr / sk / sl /
+// fi come from i18n/locales/<lang>/web*.json, loaded lazily — one chunk per
+// language — by lib/i18n-load.ts › loadLocale() and handed over with
+// registerLocale(). t() looks a key up along the language's chain
+// (localeChain: sk → cs → en; the rest → en) and shows the key last.
+// Texts added in 6.13 live in i18n-extra.ts (en / cs / de) and
+// i18n/locales/<lang>/web-extra.json — docs/i18n.md.
 
-export type Lang = "cs" | "en" | "de";
+/** One of the nine languages (the old name stays: every call site takes a Lang). */
+export type Lang = Locale;
 
-export const SUPPORTED_LANGS: Lang[] = ["cs", "en", "de"];
+/** The languages the picker offers, in the contract's order. */
+export const SUPPORTED_LANGS: readonly Lang[] = LOCALES;
+
+/** The languages compiled into the app (TypeScript tables); the others load on demand. */
+export const BUILTIN_LANGS = ["cs", "en", "de"] as const;
+export type BuiltinLang = (typeof BUILTIN_LANGS)[number];
+export const isBuiltinLang = (v: unknown): v is BuiltinLang => v === "cs" || v === "en" || v === "de";
 
 type Dict = Record<string, string>;
 
@@ -1446,38 +1465,157 @@ const de: Dict = {
   "templates.width.full": "Voll",
 };
 
-const dicts: Record<Lang, Dict> = {
+/** The tables as the translation sources know them (i18n/source/web.json — script/i18n-extract.ts). */
+const MAIN: Record<BuiltinLang, Dict> = {
   cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs, ...SECURITY_I18N.cs, ...APP_I18N.cs, ...CONNECTIONS_I18N.cs, ...IDENTITY_I18N.cs, ...BUBBLES_I18N.cs, ...NFC_I18N.cs, ...REGISTRATION_I18N.cs, ...PRESENCE_I18N.cs, ...LOCATION_I18N.cs, ...NOTIFY_I18N.cs, ...VOICE_I18N.cs, ...PROFILE_I18N.cs, ...START_I18N.cs, ...SUGGEST_I18N.cs, ...HARDENING_I18N.cs, ...P4_I18N.cs },
   en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en, ...SECURITY_I18N.en, ...APP_I18N.en, ...CONNECTIONS_I18N.en, ...IDENTITY_I18N.en, ...BUBBLES_I18N.en, ...NFC_I18N.en, ...REGISTRATION_I18N.en, ...PRESENCE_I18N.en, ...LOCATION_I18N.en, ...NOTIFY_I18N.en, ...VOICE_I18N.en, ...PROFILE_I18N.en, ...START_I18N.en, ...SUGGEST_I18N.en, ...HARDENING_I18N.en, ...P4_I18N.en },
   de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de, ...SECURITY_I18N.de, ...APP_I18N.de, ...CONNECTIONS_I18N.de, ...IDENTITY_I18N.de, ...BUBBLES_I18N.de, ...NFC_I18N.de, ...REGISTRATION_I18N.de, ...PRESENCE_I18N.de, ...LOCATION_I18N.de, ...NOTIFY_I18N.de, ...VOICE_I18N.de, ...PROFILE_I18N.de, ...START_I18N.de, ...SUGGEST_I18N.de, ...HARDENING_I18N.de, ...P4_I18N.de },
 };
 
-export function detectLang(stored: string | undefined): Lang {
-  if (stored === "cs" || stored === "en" || stored === "de") return stored;
-  if (typeof navigator !== "undefined" && navigator.language) {
-    const code = navigator.language.toLowerCase().slice(0, 2);
-    if (code === "cs") return "cs";
-    if (code === "de") return "de";
+/** Every text a language has now: the built-in tables (with the 6.13 extras), or what registerLocale() was given. */
+const dicts: Partial<Record<Lang, Dict>> = {
+  cs: { ...EXTRA_I18N.cs, ...MAIN.cs },
+  en: { ...EXTRA_I18N.en, ...MAIN.en },
+  de: { ...EXTRA_I18N.de, ...MAIN.de },
+};
+
+/** Where each language looks a text up (computed once: t() is hot). */
+const CHAINS = Object.fromEntries(LOCALES.map((l) => [l, localeChain(l)])) as unknown as Record<Lang, readonly Lang[]>;
+const listeners = new Set<(lang: Lang) => void>();
+
+/** The JSON files of a language the web client reads, in the order they are merged (a later file wins a shared key). */
+export const LOCALE_FILE_NAMES = ["web-sysmsg", "web", "web-extra", "web-nfc-fn"] as const;
+
+type NodeProcess = { getBuiltinModule?: (id: string) => unknown; cwd?: () => string; env?: Record<string, string | undefined> };
+const diskTried = new Set<Lang>();
+
+/**
+ * Plain Node (the server's tsx and dist bundle, where t() is called
+ * synchronously and nothing calls loadLocale): a language that is not here
+ * yet is read from i18n/locales/<lang>/ once, on first use — $M5_I18N_DIR,
+ * <cwd>/i18n/locales or <dist>/../i18n/locales. The browser has no
+ * `process` and loads its chunk instead (lib/i18n-load.ts).
+ */
+function readFromDiskOnce(lang: Lang): void {
+  if (diskTried.has(lang) || dicts[lang] || !isLocale(lang) || isBuiltinLang(lang)) return;
+  diskTried.add(lang);
+  const proc = (globalThis as { process?: NodeProcess }).process;
+  if (!proc || typeof proc.getBuiltinModule !== "function") return;
+  try {
+    const fs = proc.getBuiltinModule("node:fs") as typeof import("node:fs");
+    const path = proc.getBuiltinModule("node:path") as typeof import("node:path");
+    const dirs = [
+      proc.env?.M5_I18N_DIR?.trim() ?? "",
+      typeof proc.cwd === "function" ? path.join(proc.cwd(), "i18n", "locales") : "",
+      typeof __dirname === "string" ? path.join(__dirname, "..", "i18n", "locales") : "",
+    ].filter(Boolean);
+    for (const dir of dirs) {
+      const at = path.join(dir, lang);
+      if (!fs.existsSync(path.join(at, "web.json"))) continue;
+      const merged: Dict = {};
+      for (const name of LOCALE_FILE_NAMES) {
+        try { Object.assign(merged, JSON.parse(fs.readFileSync(path.join(at, `${name}.json`), "utf8")) as Dict); } catch { /* absent */ }
+      }
+      registerLocale(lang, merged);
+      return;
+    }
+  } catch { /* not Node after all */ }
+}
+
+const chainOf = (lang: Lang): readonly Lang[] => {
+  const chain = CHAINS[lang] ?? CHAINS.en;
+  for (const l of chain) if (!dicts[l]) readFromDiskOnce(l);
+  return chain;
+};
+
+/**
+ * Hands over a lazily loaded language's texts (lib/i18n-load.ts). The built-in
+ * languages keep their tables (a JSON file never overrides them). Listeners
+ * (the React hook) are told so the screen can switch.
+ */
+export function registerLocale(lang: Lang, texts: Readonly<Dict>): void {
+  if (!isLocale(lang) || isBuiltinLang(lang)) return;
+  const clean: Dict = {};
+  for (const [k, v] of Object.entries(texts ?? {})) if (typeof v === "string") clean[k] = v.normalize("NFC");
+  dicts[lang] = { ...(dicts[lang] ?? {}), ...clean };
+  for (const fn of listeners) { try { fn(lang); } catch { /* a listener's problem */ } }
+}
+
+/** Whether a language's texts are here (built in, or registered). */
+export function hasLocale(lang: Lang): boolean {
+  return Boolean(dicts[lang]);
+}
+
+/** Called when a language's texts arrive; returns the unsubscribe. */
+export function onLocaleRegistered(fn: (lang: Lang) => void): () => void {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
+/** The stored choice when it is one of the nine, else the browser's languages (navigator.languages), else English. */
+export function detectLang(stored: string | undefined | null): Lang {
+  if (isLocale(stored)) return stored;
+  if (typeof navigator !== "undefined") {
+    const list = Array.isArray(navigator.languages) && navigator.languages.length ? navigator.languages : navigator.language ? [navigator.language] : [];
+    return pickLocale(list, "en");
   }
   return "en";
 }
 
 export function t(lang: Lang, key: string): string {
-  return dicts[lang]?.[key] ?? dicts.en[key] ?? key;
+  for (const l of chainOf(lang)) {
+    const v = dicts[l]?.[key];
+    if (v !== undefined) return v;
+  }
+  return key;
 }
 
-/** Every string of one language (tests: all languages have all keys). */
+/** Every string of one language (tests: all languages have all keys). Lazily loaded ones: what has been registered. */
 export function dictionary(lang: Lang): Readonly<Dict> {
-  return dicts[lang];
+  readFromDiskOnce(lang);
+  return dicts[lang] ?? {};
 }
+
+/** The tables the translation source i18n/source/web.json is made from (built-in languages, without the 6.13 extras). */
+export function mainDictionary(lang: BuiltinLang): Readonly<Dict> {
+  return MAIN[lang];
+}
+
+/** The texts added in 6.13 (i18n-extra.ts) — i18n/source/web-extra.json; the other languages: i18n/locales/<lang>/web-extra.json. */
+export function extraDictionary(lang: BuiltinLang): Readonly<Dict> {
+  return EXTRA_I18N[lang];
+}
+
+const fill = (text: string, vars: Record<string, string | number>) =>
+  text.replace(/\{(\w+)\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
 
 /** t() with {placeholders} filled in. */
 export function tf(lang: Lang, key: string, vars: Record<string, string | number>): string {
-  return t(lang, key).replace(/\{(\w+)\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
+  return fill(t(lang, key), vars);
 }
 
-export function langLabel(lang: Lang): string {
-  if (lang === "cs") return "Čeština";
-  if (lang === "de") return "Deutsch";
-  return "English";
+/**
+ * A text that depends on a count (6.13): the language's plural category of n
+ * (Intl.PluralRules — one / two / few / many / other) picks "key#few" etc.;
+ * a language without that form uses its plain "key". Looked up along the
+ * chain like t(); {n} is the count in the language's notation unless vars
+ * give one. Translators add forms as extra keys — docs/i18n.md.
+ */
+export function tp(lang: Lang, key: string, n: number, vars: Record<string, string | number> = {}): string {
+  let text: string | undefined;
+  for (const l of chainOf(lang)) {
+    const d = dicts[l];
+    if (!d) continue;
+    text = d[`${key}#${pluralCategory(l, n)}`] ?? d[key];
+    if (text !== undefined) break;
+  }
+  return fill(text ?? key, { n: formatNumber(n, lang), ...vars });
 }
+
+/** The language's own name (the picker: "Čeština", "Suomi"…). */
+export function langLabel(lang: Lang): string {
+  return (isLocale(lang) ? LOCALE_INFO[lang] : LOCALE_INFO.en).native;
+}
+
+/** The BCP 47 tag for Intl and <html lang> ("sk" → "sk-SK"). */
+export { langTag };

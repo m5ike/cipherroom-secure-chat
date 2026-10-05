@@ -11,7 +11,7 @@
 // Room row toggles "send to everyone".
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { t, type Lang } from "../lib/i18n";
+import { t, tp, type Lang } from "../lib/i18n";
 import { dockPatch, isWidgetDock, widgetDock, WIDGET_DOCKS, type WidgetDock, type WidgetState } from "../lib/preferences";
 import type { LNode } from "../lib/layout-tree";
 import { DEFAULT_LAYOUTS } from "../lib/layouts";
@@ -410,6 +410,7 @@ export function RecipientsWidget({
     data: { ...data, title: widgetTitle, locked: docked, docked, dock, autoHide, hidden, room, autoRoom: state.autoRoom },
     lang,
     translate: (key) => t(lang, key),
+    translatePlural: (key, n) => tp(lang, key, n),
     blocks,
     actions: {
       fabDrag: (e) => startFabDrag(e as React.PointerEvent),

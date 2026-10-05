@@ -40,7 +40,9 @@ import { walkTree } from "./lib/layout-tree";
 import { SAMPLE_MESSAGES, type SampleMessage } from "./lib/layouts/samples";
 import { applyTheme } from "./lib/themes";
 import { isThemeId, type ThemeId } from "./lib/theme-catalog";
-import { t, type Lang } from "./lib/i18n";
+import { langTag, t, tp, type Lang } from "./lib/i18n";
+import { useLoadedLang } from "./lib/i18n-react";
+import { isLocale } from "./lib/locales";
 import { linkify } from "./lib/linkify";
 import { formatBytes } from "./lib/format";
 import { DEFAULT_MAP_PREVIEW } from "./lib/client-config";
@@ -233,10 +235,11 @@ const NO_CTX: LayoutContext = {};
 
 function View({ req }: { req: Request }) {
   const cfg = useMemo(() => resolveFor(sanitizeLayout(req.config ?? DEFAULT_LAYOUT), { groups: req.groups, theme: req.theme }, req.pin), [req.config, req.groups, req.theme, req.pin]);
-  const lang = req.lang;
+  const lang = useLoadedLang(req.lang);
   const env = useMemo(() => ({
     lang,
     translate: (key: string) => t(lang, key),
+    translatePlural: (key: string, n: number) => tp(lang, key, n),
     blocks: layoutBlocks(cfg),
     formats: { links: (text: string) => linkify(text) },
   }), [lang, cfg]);
@@ -300,7 +303,7 @@ function View({ req }: { req: Request }) {
           slots: {
             transfer: (tr) => {
               const x = tr as { id: string; name: string; size: number; direction: "in" | "out" };
-              return <TransferCard id={x.id} name={x.name} size={x.size} direction={x.direction} initialStats={{ id: x.id, name: x.name, size: x.size, received: Math.round(x.size * 0.42), direction: x.direction, transport: "p2p", encrypted: true, bytesPerSecond: 1_200_000, startedAt: Date.now() - 5000, updatedAt: Date.now(), etaSeconds: 4, progress: 0.42 }} finalStatus="active" />;
+              return <TransferCard id={x.id} name={x.name} size={x.size} direction={x.direction} initialStats={{ id: x.id, name: x.name, size: x.size, received: Math.round(x.size * 0.42), direction: x.direction, transport: "p2p", encrypted: true, bytesPerSecond: 1_200_000, startedAt: Date.now() - 5000, updatedAt: Date.now(), etaSeconds: 4, progress: 0.42 }} finalStatus="active" lang={lang} />;
             },
             message: (m) => <SampleBubble m={m as SampleMessage} cfg={cfg} lang={lang} />,
             composer: () => <PreviewComposer cfg={cfg} env={env} variant="plain" lang={lang} />,
@@ -407,7 +410,7 @@ function Preview() {
         variant: String(d.variant ?? ""),
         theme: isThemeId(d.theme) ? d.theme : "motorsport",
         tone: d.tone === "dark" ? "dark" : "light",
-        lang: d.lang === "en" || d.lang === "de" ? d.lang : "cs",
+        lang: isLocale(d.lang) ? d.lang : "cs",
         selected: String(d.selected ?? ""),
         mode: d.mode === "interact" ? "interact" : "select",
         groups: Array.isArray(d.groups) ? d.groups.filter((g): g is string => typeof g === "string").slice(0, 20) : ["user"],
@@ -424,7 +427,7 @@ function Preview() {
     if (!req) return;
     applyTheme(req.theme, "default", "classic", { tone: req.tone });
     applyLayoutStyles(sanitizeLayout(req.config ?? DEFAULT_LAYOUT));
-    document.documentElement.lang = req.lang;
+    document.documentElement.lang = langTag(req.lang);
   }, [req]);
 
   // Selecting: a click picks the element (instead of running it); hover shows it.

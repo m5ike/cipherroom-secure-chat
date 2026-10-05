@@ -22,6 +22,9 @@
 // operator cannot inject a script into every user's menu.
 
 import { isSitePath } from "./site-path";
+import { formatBytes, formatDuration, formatRelative } from "./format";
+import { dateFormat, formatNumber, pluralCategory } from "./i18n-intl";
+import { isLocale, type Locale } from "./locales";
 
 /* ======================================================================= */
 /*  Parsing                                                                */
@@ -365,8 +368,10 @@ export type TemplateVars = Record<string, unknown>;
 export type RenderOptions = {
   /** Translates "{_'key'}". */
   translate?: (key: string) => string;
-  /** "cs" | "en" | "de" for dates and durations. */
+  /** One of the nine languages (lib/locales.ts) for dates, durations, sizes and plural forms. */
   lang?: string;
+  /** 6.13: "{$n|tp:'key'}" — the app's tp() (plural forms along the language's fallbacks). Without it: translate + Intl.PluralRules. */
+  translatePlural?: (key: string, n: number) => string;
   /** Plain text, not HTML: nothing escaped, {icon} left out (the layout
    *  engine puts the result into a text node or an attribute itself). */
   raw?: boolean;
@@ -407,14 +412,20 @@ function toText(v: unknown): string {
 
 function pad(n: number, w = 2) { return String(n).padStart(w, "0"); }
 
-/** PHP / Latte date letters: d j m n Y y H G i s D N. */
-export function formatDate(value: unknown, format: string): string {
+/** A short weekday: Czech as before ("Po"), else the language's own (Intl: "Mon", "lun.", "ma"). */
+function weekday(d: Date, lang?: string): string {
+  if (!lang || lang === "cs" || !isLocale(lang)) return ["Ne", "Po", "Út", "St", "Čt", "Pá", "So"][d.getDay()];
+  try { return dateFormat(lang, { weekday: "short" }).format(d); } catch { return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]; }
+}
+
+/** PHP / Latte date letters: d j m n Y y H G i s D N (6.13: D in the template's language). */
+export function formatDate(value: unknown, format: string, lang?: string): string {
   const d = value instanceof Date ? value : new Date(typeof value === "number" || typeof value === "string" ? value : NaN);
   if (Number.isNaN(d.getTime())) return "";
   const map: Record<string, string> = {
     d: pad(d.getDate()), j: String(d.getDate()), m: pad(d.getMonth() + 1), n: String(d.getMonth() + 1),
     Y: String(d.getFullYear()), y: pad(d.getFullYear() % 100), H: pad(d.getHours()), G: String(d.getHours()),
-    i: pad(d.getMinutes()), s: pad(d.getSeconds()), N: String(d.getDay() || 7), D: ["Ne", "Po", "Út", "St", "Čt", "Pá", "So"][d.getDay()],
+    i: pad(d.getMinutes()), s: pad(d.getSeconds()), N: String(d.getDay() || 7), D: weekday(d, lang),
   };
   let out = "";
   for (let i = 0; i < format.length; i++) {
@@ -425,24 +436,26 @@ export function formatDate(value: unknown, format: string): string {
   return out;
 }
 
-const UNITS: Record<string, [string, string, string]> = {
-  cs: ["s", "min", "h"], en: ["s", "min", "h"], de: ["s", "Min.", "Std."],
-};
+// 6.13: durations and sizes in the template's language (Intl, lib/format.ts); Czech when none is given.
+const langOf = (lang: string | undefined): Locale => (isLocale(lang) ? lang : "cs");
 
-function duration(ms: number, lang = "cs"): string {
-  const [s, m, h] = UNITS[lang] ?? UNITS.en;
-  const sec = Math.max(0, Math.round(ms / 1000));
-  if (sec < 60) return `${sec} ${s}`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} ${m}`;
-  return `${Math.floor(min / 60)} ${h} ${min % 60} ${m}`;
+function duration(ms: number, lang?: string): string {
+  return formatDuration(ms, langOf(lang));
 }
 
-function bytes(n: number): string {
+function bytes(n: number, lang?: string): string {
   if (!Number.isFinite(n)) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} kB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return formatBytes(n, langOf(lang));
+}
+
+/** "{$n|tp:'files.active'}": a count with the language's plural form (key#one / #few / … or the key), {n} filled. */
+function plural(n: number, key: string, o: RenderOptions): string {
+  if (o.translatePlural) return o.translatePlural(key, n);
+  const tr = o.translate ?? ((k: string) => k);
+  const cat = pluralCategory(langOf(o.lang), n);
+  let text = tr(`${key}#${cat}`);
+  if (text === `${key}#${cat}`) text = tr(key);
+  return text.replace(/\{n\}/g, Number.isFinite(n) ? formatNumber(n, langOf(o.lang)) : "");
 }
 
 type FilterFn = (v: unknown, args: unknown[], opts: RenderOptions) => unknown;
@@ -457,7 +470,7 @@ export const FILTERS: Record<string, FilterFn> = {
   truncate: (v, [n = 20, suffix = "…"]) => { const s = toText(v); const len = Number(n) || 20; return s.length > len ? s.slice(0, Math.max(0, len - 1)) + String(suffix) : s; },
   replace: (v, [search = "", repl = ""]) => toText(v).split(String(search)).join(String(repl)),
   default: (v, [fallback = ""]) => (v === null || v === undefined || v === "" ? fallback : v),
-  date: (v, [format = "j. n. Y H:i"]) => formatDate(v, String(format)),
+  date: (v, [format = "j. n. Y H:i"], o) => formatDate(v, String(format), o.lang),
   number: (v, [decimals = 0, point = ",", thousands = " "]) => {
     const n = Number(v);
     if (!Number.isFinite(n)) return "";
@@ -468,11 +481,15 @@ export const FILTERS: Record<string, FilterFn> = {
   first: (v) => (Array.isArray(v) ? v[0] : toText(v).charAt(0)),
   last: (v) => (Array.isArray(v) ? v[v.length - 1] : toText(v).slice(-1)),
   join: (v, [sep = ", "]) => (Array.isArray(v) ? v.map(toText).join(String(sep)) : toText(v)),
-  bytes: (v) => bytes(Number(v)),
+  bytes: (v, _a, o) => bytes(Number(v), o.lang),
   duration: (v, _a, o) => duration(Number(v), o.lang),
   /** A translated text whose key is built from a value: {$state|t:'msginfo.state.'}. */
   t: (v, [prefix = ""], o) => { const key = String(prefix) + toText(v); return o.translate ? o.translate(key) : key; },
-  ago: (v, _a, o) => { const t = Number(v); return Number.isFinite(t) && t > 0 ? duration(Date.now() - t, o.lang) : ""; },
+  /** 6.13: a count in words with the language's plural form: {$n|tp:'files.active'} (keys files.active#one, #few…). */
+  tp: (v, [key = ""], o) => plural(Number(v), String(key), o),
+  /** 6.13: a translated text with the value in one {placeholder}: {$e.stored|tf:'trust.since':'date'}. */
+  tf: (v, [key = "", name = "n"], o) => { const k = String(key); const text = o.translate ? o.translate(k) : k; return text.split(`{${String(name)}}`).join(toText(v)); },
+  ago: (v, _a, o) => { const t = Number(v); return Number.isFinite(t) && t > 0 ? formatRelative(t, langOf(o.lang)) ?? duration(Date.now() - t, o.lang) : ""; },
   yesno: (v, [yes = "✓", no = "✗"]) => (truthy(v) ? yes : no),
   padLeft: (v, [n = 2, ch = "0"]) => toText(v).padStart(Number(n) || 0, String(ch).charAt(0) || " "),
   escape: (v) => v,
@@ -855,7 +872,7 @@ export const TEMPLATE_VARIABLES: ReadonlyArray<{ path: string; type: string; des
   { path: "$app.name", type: "text", description: "The app's name (M5cet)." },
   { path: "$app.version", type: "text", description: "The version running in the browser." },
   { path: "$app.build", type: "text", description: "The build id." },
-  { path: "$app.lang", type: "text", description: "The interface language: cs, en or de." },
+  { path: "$app.lang", type: "text", description: "The interface language: en, cs, de, es, it, fr, sk, sl or fi." },
   { path: "$app.online", type: "yes/no", description: "The browser is online." },
   { path: "$global.server", type: "text", description: "The server's host name." },
   { path: "$global.time", type: "number", description: "The current time (ms) — use |date:'H:i'." },
@@ -907,12 +924,14 @@ export const TEMPLATE_FILTERS: ReadonlyArray<{ name: string; args: string; descr
   { name: "length", args: "", description: "Length of a text or a list", example: "{$room.people|length}" },
   { name: "join", args: "separator", description: "A list as text", example: "{$room.people|join:', '}" },
   { name: "first / last", args: "", description: "First / last item or letter", example: "{$room.people|first}" },
-  { name: "bytes", args: "", description: "1536 → 1.5 kB", example: "{$x|bytes}" },
+  { name: "bytes", args: "", description: "1536 → 1.5 kB (in the language: 1,5 kB, 1,5 ko…)", example: "{$x|bytes}" },
   { name: "duration", args: "", description: "Milliseconds as 5 min / 1 h 5 min", example: "{$x|duration}" },
   { name: "ago", args: "", description: "How long ago a time was", example: "{$session.since|ago}" },
   { name: "yesno", args: "yes, no", description: "A text for yes / no", example: "{$session.connected|yesno:'online':'offline'}" },
   { name: "padLeft", args: "length, char", description: "Pads from the left", example: "{$session.peers|padLeft:2}" },
   { name: "t", args: "prefix", description: "A translated text, the key built from the value", example: "{$state|t:'msginfo.state.'}" },
+  { name: "tp", args: "key", description: "A count in words, in the language's plural form (key#one, key#few… or the key; {n} is the count)", example: "{$room.peers|tp:'rooms.bar.usersCount'}" },
+  { name: "tf", args: "key, placeholder", description: "A translated text with the value in one {placeholder} (default n)", example: "{$since|tf:'trust.since':'date'}" },
   { name: "trim", args: "", description: "Without spaces around", example: "{$user.nickname|trim}" },
 ];
 

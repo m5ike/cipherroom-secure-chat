@@ -16,6 +16,7 @@
 import { useEffect, useState } from "react";
 import { agoParts, presenceOf, type PresenceFacts, type PresenceState } from "./presence";
 import { t, tf, type Lang } from "./i18n";
+import { relativeFormat } from "./i18n-intl";
 
 export type HeldEntry = { peerId: string; name: string; account: string; lastSeen: number; since: number };
 
@@ -127,10 +128,13 @@ export function presenceView(f: PresenceFacts, now: number, lang: Lang): { prese
   return { presence, presenceLabel: t(lang, `presence.${presence}`), seenText };
 }
 
-/** "5 min ago", "2 h ago" — in the language. */
+/** "5 min ago", "2 h ago" — in the language (6.13: Intl.RelativeTimeFormat; the presence.ago.* texts where Intl cannot). */
 export function agoText(lastSeen: number, now: number, lang: Lang): string {
   const { unit, n } = agoParts(lastSeen, now);
-  return unit === "now" ? t(lang, "presence.ago.now") : tf(lang, `presence.ago.${unit}`, { n });
+  if (unit === "now") return t(lang, "presence.ago.now");
+  const rtf = relativeFormat(lang, "short");
+  if (rtf) { try { return rtf.format(-n, unit === "min" ? "minute" : unit === "h" ? "hour" : "day"); } catch { /* below */ } }
+  return tf(lang, `presence.ago.${unit}`, { n });
 }
 
 /** The time, every `everyMs` (default 30 s): a dot changes colour as minutes pass without any news. */

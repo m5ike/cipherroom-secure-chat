@@ -67,7 +67,7 @@ describe("account window", () => {
     expect(panel.textContent).toContain("acc-1234567890abcdefghi");
     expect(panel.textContent).toContain("ES256");
     expect(panel.textContent).toContain("124");           // messages
-    expect(panel.textContent).toContain("48.0 kB");       // session size (profile + chat)
+    expect(panel.textContent).toContain("48,0 kB");       // session size (profile + chat) — 6.13: in Czech notation
     expect(panel.textContent).toContain("brno-secure");   // away room
     expect(panel.textContent).toContain("2");             // push devices
   });

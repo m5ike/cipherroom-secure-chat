@@ -8,10 +8,11 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
 import { t, type Lang } from "../lib/i18n";
-import { formatBytes } from "../lib/format";
+import { formatBytes, formatClock, formatSpeed } from "../lib/format";
+import { formatNumber } from "../lib/i18n-intl";
 import { detectGeolocation } from "../lib/maps";
 import { detectSpeechCaps, fetchServerSpeechStatus, listVoices, serverTts, speak, stopSpeaking, type ServerSpeechStatus, type ServerVoiceInfo, type VoicePreset } from "../lib/speech";
-import { browserEngine } from "../lib/dictation";
+import { browserEngine, dictationLang } from "../lib/dictation";
 import { dictationMessage, useDictation } from "./ComposerVoice";
 import type { ConnectionStatus, KeepaliveStrategy } from "../lib/connection-keeper";
 import type { Preferences } from "../lib/preferences";
@@ -27,15 +28,17 @@ export type FilesPanelTransfer = {
 };
 
 export function FilesPanel({
-  connected, enabled, maxBytes, onPickFile, transfers,
+  connected, enabled, maxBytes, onPickFile, transfers, lang = "en",
 }: {
   connected: boolean;
   enabled: boolean;
   maxBytes: number;
   onPickFile: () => void;
   transfers: FilesPanelTransfer[];
+  /** 6.13: the panel spoke English only. */
+  lang?: Lang;
 }) {
-  const { tree, base } = useLayoutBase("panel.files", "en");
+  const { tree, base } = useLayoutBase("panel.files", lang);
   const active = transfers.filter((t) => t.status === "active");
   const recent = transfers.slice(-3);
   return renderLayout(tree, {
@@ -44,7 +47,7 @@ export function FilesPanel({
       connected,
       active: active.map((t) => ({
         id: t.id,
-        line: `${t.direction === "out" ? "↑" : "↓"} ${t.name} ·${t.stats.transport === "p2p" ? " P2P" : " Proxy"} ·${Math.round((t.stats.progress ?? 0) * 100)} % · ${formatBytes(t.stats.size)} · ${Math.round((t.stats.bytesPerSecond ?? 0) / 1024)} kB/s`,
+        line: `${t.direction === "out" ? "↑" : "↓"} ${t.name} ·${t.stats.transport === "p2p" ? " P2P" : " Proxy"} · ${formatNumber(t.stats.progress ?? 0, lang, { style: "percent" })} · ${formatBytes(t.stats.size, lang)} · ${formatSpeed(t.stats.bytesPerSecond ?? 0, lang)}`,
       })),
       recent,
     },
@@ -86,7 +89,8 @@ export function SpeechPanel({
 }) {
   const caps = detectSpeechCaps();
   const [text, setText] = useState("");
-  const [voiceLang, setVoiceLang] = useState("cs-CZ");
+  // 6.13: starts in the app's language (its BCP 47 tag; English as en-US like dictation).
+  const [voiceLang, setVoiceLang] = useState(() => dictationLang(lang));
   const [preset, setPreset] = useState<VoicePreset>("neutral");
   const [voiceURI, setVoiceURI] = useState<string>("");
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -174,7 +178,7 @@ export function SpeechPanel({
   return renderLayout(tree, {
     ...base,
     data: {
-      langs: ["cs-CZ", "sk-SK", "de-DE", "en-GB", "en-US", "pl-PL", "fr-FR", "es-ES", "it-IT", "nl-NL", "ru-RU"],
+      langs: ["cs-CZ", "sk-SK", "sl-SI", "de-DE", "en-GB", "en-US", "fr-FR", "es-ES", "it-IT", "fi-FI", "pl-PL", "nl-NL", "ru-RU"],
       presets: ["neutral", "male", "female", "child"],
       voices: voices.filter((v) => v.lang.toLowerCase().startsWith(voiceLang.toLowerCase().slice(0, 2))).map((v) => ({ uri: v.voiceURI, name: v.name, lang: v.lang })),
       voiceLang, preset, voiceURI, text, hasText: Boolean(text.trim()),
@@ -221,14 +225,14 @@ export function ConnectionPanel({
       strategy: prefs.keepaliveStrategy,
       status: status ? {
         state: status.state, rttMs: status.rttMs, strategy: status.strategy,
-        lastActivity: status.lastActivityAt ? new Date(status.lastActivityAt).toLocaleTimeString() : "—",
-        lastPong: status.lastPongAt ? new Date(status.lastPongAt).toLocaleTimeString() : "—",
+        lastActivity: formatClock(status.lastActivityAt, lang),
+        lastPong: formatClock(status.lastPongAt, lang),
       } : null,
       log: log.map((entry, i) => ({
         key: `${entry.at}-${i}`,
-        time: new Date(entry.at).toLocaleTimeString(),
+        time: formatClock(entry.at, lang),
         attempt: entry.attempt,
-        text: entry.event === "retry" ? t(lang, "conn.log.retry").replace("{s}", ((entry.delayMs ?? 0) / 1000).toFixed(1)) : t(lang, `conn.log.${entry.event}`),
+        text: entry.event === "retry" ? t(lang, "conn.log.retry").replace("{s}", formatNumber((entry.delayMs ?? 0) / 1000, lang, { minimumFractionDigits: 1, maximumFractionDigits: 1 })) : t(lang, `conn.log.${entry.event}`),
       })),
     },
     actions: { strategy: (e) => setPrefs({ keepaliveStrategy: (e as ChangeEvent<HTMLSelectElement>).target.value as KeepaliveStrategy }) },

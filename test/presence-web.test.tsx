@@ -66,7 +66,7 @@ describe("presenceView", () => {
     expect(presenceView({ connected: false, foreground: false, lastSeen: now - 3 * 60 * MIN }, now, "de")).toEqual({ presence: "far", presenceLabel: "Länger abwesend", seenText: "Zuletzt online vor 3 Std." });
     expect(presenceView({ connected: false, foreground: false, lastSeen: 0 }, now, "en").seenText).toBe("Not known when last seen");
     expect(agoText(now - 20_000, now, "en")).toBe("just now");
-    expect(agoText(now - 2 * 24 * 60 * MIN, now, "cs")).toBe("před 2 d");
+    expect(agoText(now - 2 * 24 * 60 * MIN, now, "cs")).toBe("před 2 dny"); // 6.13: Intl.RelativeTimeFormat
   });
 });
 
@@ -115,7 +115,7 @@ describe("the status dot", () => {
     expect(bg.className).toContain("presence-dot--away");
     expect(bg.getAttribute("title")).toBe("Away · Last seen 20 min ago");
     expect(screen.getByTestId("presence-p-held").className).toContain("presence-dot--far");
-    expect(screen.getByTestId("recip-p-held").textContent).toContain("Last seen 2 h ago");
+    expect(screen.getByTestId("recip-p-held").textContent).toContain("Last seen 2 hr ago"); // 6.13: Intl.RelativeTimeFormat (en-GB)
     expect(screen.getByTestId("recip-p-held").textContent).not.toContain("offline");
     expect(screen.queryByTestId("presence-p-plain")).toBeNull();
   });

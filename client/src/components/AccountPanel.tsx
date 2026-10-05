@@ -16,19 +16,18 @@ import { keyFingerprint } from "../lib/identity";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
 import { t, tf, type Lang } from "../lib/i18n";
+import { formatBytes, formatDateTime } from "../lib/format";
 import type { AccountSummary, AccountStatus, StepState } from "../lib/account";
 import type { ChatRetention } from "../lib/chat-history";
 
-function bytes(n: number): string {
-  if (!n) return "0 B";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} kB`;
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+// 6.13: sizes and dates in the language (lib/format.ts, Intl with the language's tag).
+function bytes(n: number, lang: Lang): string {
+  return formatBytes(n || 0, lang);
 }
 
 function when(at: number, lang: Lang): string {
   if (!at) return t(lang, "acc.never");
-  try { return new Date(at).toLocaleString(lang === "cs" ? "cs-CZ" : lang === "de" ? "de-DE" : "en-GB"); } catch { return String(at); }
+  return formatDateTime(at, lang) || String(at);
 }
 
 const ALG_NAMES: Record<number, string> = { [-7]: "ES256", [-8]: "Ed25519", [-257]: "RS256" };
@@ -83,13 +82,13 @@ export function AccountInfoModal({
       created: when(account.createdAt, lang),
       lastLogin: when(account.lastLoginAt, lang),
       logins: account.loginCount,
-      size: bytes(v.profileBytes + v.chatBytes),
+      size: bytes(v.profileBytes + v.chatBytes, lang),
       messages: v.messages,
-      messageBytes: bytes(v.messageBytes),
+      messageBytes: bytes(v.messageBytes, lang),
       rooms: v.rooms,
-      profile: `${bytes(v.profileBytes)} · ${when(v.profileUpdatedAt, lang)}`,
+      profile: `${bytes(v.profileBytes, lang)} · ${when(v.profileUpdatedAt, lang)}`,
       updated: when(v.chatUpdatedAt, lang),
-      mailbox: `${account.mailbox.pending} · ${bytes(account.mailbox.bytes)}`,
+      mailbox: `${account.mailbox.pending} · ${bytes(account.mailbox.bytes, lang)}`,
       pushDevices: account.pushDevices,
       away: account.away.map((a) => t(lang, "acc.awayIn").replace("{room}", a.room).replace("{since}", when(a.since, lang))).join(", "),
       passkeyCount: account.passkeys?.length ?? 1,

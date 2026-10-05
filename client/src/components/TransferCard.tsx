@@ -36,6 +36,9 @@ import {
   XCircle,
 } from "lucide-react";
 import type { TransferStats } from "../lib/file-transfer";
+import { t, tf, type Lang } from "../lib/i18n";
+import { formatBytes as formatSize, formatDateTime, formatDuration, formatSpeed } from "../lib/format";
+import { formatNumber } from "../lib/i18n-intl";
 
 export type TransferCardStatus = "active" | "completed" | "cancelled" | "error";
 
@@ -53,50 +56,35 @@ export type TransferCardProps = {
    * bar + thermometer are visible. Click the filename row to expand.
    */
   defaultCollapsed?: boolean;
+  /** 6.13: the card's language (English when not given). */
+  lang?: Lang;
 };
 
 /* ---------- Formatting helpers ---------- */
 
-function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "0 B";
-  const units = ["B", "kB", "MB", "GB", "TB"] as const;
-  let v = value;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
-  const decimals = v >= 100 || i === 0 ? 0 : 1;
-  return `${v.toFixed(decimals)} ${units[i]}`;
+// 6.13: sizes, speeds and times in the card's language (lib/format.ts, Intl).
+
+function formatBytes(value: number, lang: Lang): string {
+  return formatSize(Number.isFinite(value) && value > 0 ? value : 0, lang);
 }
 
-function formatEta(seconds: number): string {
+function formatEta(seconds: number, lang: Lang): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return "—";
-  if (seconds < 60) return `${Math.round(seconds)} s`;
-  if (seconds < 3600) {
-    const m = Math.floor(seconds / 60);
-    const s = Math.round(seconds % 60);
-    return `${m}m ${s}s`;
-  }
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds % 3600) / 60);
-  return `${h}h ${m}m`;
+  return formatDuration(seconds * 1000, lang);
 }
 
-function formatElapsed(elapsedMs: number): string {
+/** mm:ss under an hour (the same in every language), then "1 h 5 min". */
+function formatElapsed(elapsedMs: number, lang: Lang): string {
   if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return "—";
   const totalSec = Math.floor(elapsedMs / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
+  if (totalSec >= 3600) return formatDuration(totalSec * 1000, lang);
+  const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${String(s).padStart(2, "0")}s`;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function formatBps(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "—";
-  if (value < 1024) return `${Math.round(value)} B/s`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} kB/s`;
-  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB/s`;
-  return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB/s`;
+function formatBps(value: number, lang: Lang): string {
+  return formatSpeed(value, lang);
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -151,6 +139,7 @@ function useNowTick(intervalMs = 1000): number {
 /* ---------- Component ---------- */
 
 export function TransferCard(props: TransferCardProps) {
+  const lang: Lang = props.lang ?? "en";
   const [stats, setStats] = useState<TransferStats | null>(props.initialStats ?? null);
   const [isCollapsed, setIsCollapsed] = useState<boolean>(Boolean(props.defaultCollapsed));
   const [now, setNow] = useState(() => Date.now());
@@ -179,11 +168,11 @@ export function TransferCard(props: TransferCardProps) {
   const currentBps = stats?.bytesPerSecond ?? 0;
   const startedAt = stats?.startedAt ?? now;
   const elapsedMs = now - startedAt;
-  const elapsedFmt = formatElapsed(elapsedMs);
+  const elapsedFmt = formatElapsed(elapsedMs, lang);
   const avgBps = elapsedMs > 0 ? Math.round((received * 1000) / Math.max(elapsedMs, 1)) : currentBps;
   const eta = stats?.etaSeconds != null ? Number(stats.etaSeconds) : 0;
-  const encryption = "AES-256-GCM (end-to-end)";
-  const startedIso = new Date(startedAt).toISOString();
+  const encryption = t(lang, "xfer.e2e");
+  const startedText = formatDateTime(startedAt, lang, { dateStyle: "short", timeStyle: "medium" });
 
   const DirectionIcon = props.direction === "out" ? Upload : Download;
   const TransportIcon = transport === "p2p" ? Radio : Cloud;
@@ -204,7 +193,7 @@ export function TransferCard(props: TransferCardProps) {
     return null;
   }, [stats]);
 
-  const ariaRunningLabel = status === "active" ? "running" : status;
+  const ariaRunningLabel = t(lang, `xfer.status.${status}`);
   const cardId = `file_transfer-${props.id}`;
   const headerId = `${cardId}-header`;
 
@@ -226,7 +215,7 @@ export function TransferCard(props: TransferCardProps) {
       data-transport={transport}
       data-direction={props.direction}
       role="group"
-      aria-label={`File transfer ${props.name}`}
+      aria-label={tf(lang, "xfer.label", { name: props.name })}
     >
       {/* Filename header — click to toggle details */}
       <button
@@ -250,7 +239,7 @@ export function TransferCard(props: TransferCardProps) {
             {props.name}
           </span>
           <span className="shrink-0 text-[11px] text-muted-foreground">
-            {formatBytes(received)} / {formatBytes(total)} · {Math.round(progressPercent)}%
+            {formatBytes(received, lang)} / {formatBytes(total, lang)} · {formatNumber(Math.round(progressPercent) / 100, lang, { style: "percent" })}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -264,7 +253,7 @@ export function TransferCard(props: TransferCardProps) {
                 ? "bg-destructive/15 text-destructive"
                 : "bg-primary/15 text-primary"
             }`}
-            aria-label={`Status ${ariaRunningLabel}`}
+            aria-label={tf(lang, "xfer.statusLabel", { status: ariaRunningLabel })}
           >
             {StatusIcon}
             {ariaRunningLabel}
@@ -279,24 +268,24 @@ export function TransferCard(props: TransferCardProps) {
       {/* Body — collapsible */}
       {!isCollapsed ? (
         <div id={`${cardId}-body`} className="space-y-2 border-t border-border bg-card/55 px-4 py-3 text-xs">
-          <Section title="Times" rows={[
-            { k: "started", v: startedIso },
-            { k: "running", v: elapsedFmt },
+          <Section title={t(lang, "xfer.times")} rows={[
+            { k: t(lang, "xfer.started"), v: startedText },
+            { k: t(lang, "xfer.running"), v: elapsedFmt },
           ]} />
-          <Section title="File" rows={[
-            { k: "name", v: props.name },
-            { k: "size total", v: formatBytes(total) },
-            { k: "transferred", v: formatBytes(received) },
-            { k: "remaining", v: formatBytes(remaining) },
+          <Section title={t(lang, "xfer.file")} rows={[
+            { k: t(lang, "xfer.name"), v: props.name },
+            { k: t(lang, "xfer.sizeTotal"), v: formatBytes(total, lang) },
+            { k: t(lang, "xfer.transferred"), v: formatBytes(received, lang) },
+            { k: t(lang, "xfer.remaining"), v: formatBytes(remaining, lang) },
           ]} />
-          <Section title="Speed" rows={[
-            { k: "current", v: formatBps(currentBps) },
-            { k: "average", v: formatBps(avgBps) },
-            { k: "ETA", v: formatEta(eta) },
+          <Section title={t(lang, "xfer.speed")} rows={[
+            { k: t(lang, "xfer.current"), v: formatBps(currentBps, lang) },
+            { k: t(lang, "xfer.average"), v: formatBps(avgBps, lang) },
+            { k: t(lang, "xfer.eta"), v: formatEta(eta, lang) },
           ]} />
-          <Section title="Connection" rows={[
-            { k: "type", v: transport === "p2p" ? "P2P (direct)" : "Proxy (server relay)" },
-            { k: "encryption", v: encryption },
+          <Section title={t(lang, "xfer.connection")} rows={[
+            { k: t(lang, "xfer.type"), v: t(lang, transport === "p2p" ? "xfer.p2p" : "xfer.proxy") },
+            { k: t(lang, "xfer.encryption"), v: encryption },
           ]} icon={<TransportIcon className="h-3.5 w-3.5" />} />
           {props.errorMessage ? (
             <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive" data-testid={`transfer-error-${props.id}`}>
@@ -312,7 +301,7 @@ export function TransferCard(props: TransferCardProps) {
                 className="rounded-md bg-background px-2 py-0.5 text-[11px] hover:bg-accent"
                 data-testid={`transfer-dismiss-${props.id}`}
               >
-                Zavřít
+                {t(lang, "common.close")}
               </button>
             ) : null}
           </div>

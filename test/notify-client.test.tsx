@@ -104,7 +104,7 @@ describe("the settings, signed in", () => {
   it("shows each channel with what the account has there, and saves the order chosen", async () => {
     const calls = server();
     render(<NotifySettings lang="en" signedIn />);
-    await waitFor(() => expect(screen.getByTestId("notify-status-android").textContent).toBe("1 devices"));
+    await waitFor(() => expect(screen.getByTestId("notify-status-android").textContent).toBe("1 device")); // 6.13: plural forms
     expect(screen.getByTestId("notify-status-webpush").textContent).toBe("2 browsers");
     expect(screen.getByTestId("notify-status-email").textContent).toBe("the server cannot: no SMTP relay");
     // Web push first, e-mail not used.
@@ -125,7 +125,7 @@ describe("the settings, signed in", () => {
   it("the test says which channel took it", async () => {
     server();
     render(<NotifySettings lang="en" signedIn />);
-    await waitFor(() => expect(screen.getByTestId("notify-status-android").textContent).toBe("1 devices"));
+    await waitFor(() => expect(screen.getByTestId("notify-status-android").textContent).toBe("1 device")); // 6.13: plural forms
     fireEvent.click(screen.getByTestId("notify-test"));
     await waitFor(() => expect(screen.getByTestId("notify-msg").textContent).toBe("Sent through The Android app."));
   });

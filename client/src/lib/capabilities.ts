@@ -1,4 +1,10 @@
 // Capability detection. IE explicitly unsupported — bail with a banner.
+// 6.13: what is missing as codes (the banner says it in the language: caps.<code>);
+// unsupportedReasons stays as English text for the API.
+
+import { t } from "./i18n";
+
+export type CapabilityGap = "ie" | "webcrypto" | "webrtc" | "websocket";
 
 export type Capabilities = {
   supported: boolean;
@@ -10,6 +16,8 @@ export type Capabilities = {
   pushManager: boolean;
   localStorage: boolean;
   isIE: boolean;
+  /** What is missing, as codes (caps.<code> in the dictionary). */
+  missing: CapabilityGap[];
   unsupportedReasons: string[];
 };
 
@@ -45,11 +53,12 @@ export function detectCapabilities(): Capabilities {
   const pushManager = typeof window !== "undefined" && "PushManager" in window;
   const localStorage = checkLocalStorage();
 
-  const unsupportedReasons: string[] = [];
-  if (isIE) unsupportedReasons.push("Internet Explorer není podporován. Použij Edge, Chrome, Firefox nebo Safari.");
-  if (!webCrypto) unsupportedReasons.push("Chybí Web Crypto API (window.crypto.subtle).");
-  if (!webRTC) unsupportedReasons.push("Chybí WebRTC (RTCPeerConnection).");
-  if (!webSocket) unsupportedReasons.push("Chybí WebSocket.");
+  const missing: CapabilityGap[] = [];
+  if (isIE) missing.push("ie");
+  if (!webCrypto) missing.push("webcrypto");
+  if (!webRTC) missing.push("webrtc");
+  if (!webSocket) missing.push("websocket");
+  const unsupportedReasons = missing.map((code) => t("en", `caps.${code}`));
 
   return {
     supported: unsupportedReasons.length === 0,
@@ -61,6 +70,7 @@ export function detectCapabilities(): Capabilities {
     pushManager,
     localStorage,
     isIE,
+    missing,
     unsupportedReasons,
   };
 }

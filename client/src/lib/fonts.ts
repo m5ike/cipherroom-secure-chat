@@ -11,6 +11,8 @@
 // on demand (preview in the picker or actual use) and cached by the browser;
 // the browser then downloads only the unicode-range subsets it renders.
 
+import { isLocale, type Locale } from "./locales";
+
 export type FontCategory = "theme" | "system" | "sans" | "serif" | "display" | "hand" | "mono";
 
 export type FontDef = {
@@ -20,7 +22,7 @@ export type FontDef = {
   /** CSS font-family value. Empty for "theme" (the template decides). */
   stack: string;
   google?: { family: string; weights: string };
-  /** Covers Czech diacritics (latin-ext). System stacks: true. */
+  /** Covers Latin Extended-A (latin-ext: Czech, Slovak, Slovenian letters). System stacks: true. */
   czech: boolean;
 };
 
@@ -114,6 +116,50 @@ export function googleCssUrl(def: FontDef): string {
 
 /** Sample text used in previews: shows Czech diacritics at a glance. */
 export const FONT_SAMPLE = "Příliš žluťoučký kůň úpěl ďábelské ódy";
+
+/*
+ * 6.13: nine languages. Their letters: Latin-1 covers en / de / es / it / fr
+ * / fi (ä ö ü ß ñ é è ê à ç å; œ is in Google's "latin" subset too), Czech,
+ * Slovak and Slovenian need Latin Extended-A (č ď ě ň ř š ť ů ž ľ ĺ ŕ). Every
+ * Google family is requested through the css2 API without &text=, so the
+ * browser downloads the unicode-range subsets it needs — latin-ext included
+ * where the family has it (`czech` above: verified against
+ * fonts.googleapis.com, only Orbitron lacks it). Every stack ends in system
+ * fonts and a generic family, which draw any letter a web font lacks.
+ */
+
+/** The languages whose letters need Latin Extended-A. */
+export const LATIN_EXT_LANGS: readonly Locale[] = ["cs", "sk", "sl"];
+export const needsLatinExt = (lang: string): boolean => (LATIN_EXT_LANGS as readonly string[]).includes(lang);
+
+/** A preview line per language, with that language's own letters. */
+export const FONT_SAMPLES: Readonly<Record<Locale, string>> = {
+  en: "The quick brown fox jumps over the lazy dog",
+  cs: FONT_SAMPLE,
+  de: "Zwölf Boxkämpfer jagen Viktor quer über den großen Sylter Deich",
+  es: "El pingüino Wenceslao hizo kilómetros bajo exhaustiva lluvia y frío, añoraba a su querido cachorro",
+  it: "Perché più città hanno già visto così tanta felicità? Ciò è vero",
+  fr: "Voix ambiguë d’un cœur qui, au zéphyr, préfère les jattes de kiwis",
+  sk: "Kŕdeľ šťastných ďatľov učí pri ústí Váhu mĺkveho koňa obhrýzať kôru",
+  sl: "Šerif bo za vajo spet kuhal domače žgance",
+  fi: "Wieniläinen sioux’ta puhuva ökyzombie diggaa Åsan roquefort-tacoja",
+};
+
+/** The preview line for a language (Czech for anything unknown, as before). */
+export function fontSample(lang: string): string {
+  return isLocale(lang) ? FONT_SAMPLES[lang] : FONT_SAMPLE;
+}
+
+/** A font's name as the picker shows it: the template's and the system stacks' names are translated. */
+export function fontLabel(def: FontDef, translate: (key: string) => string): string {
+  if (def.id === "theme") return translate("ap.font.theme");
+  if (def.category === "system") {
+    const key = `ap.font.sys.${def.id}`;
+    const text = translate(key);
+    return text && text !== key ? text : def.label;
+  }
+  return def.label;
+}
 
 const LINK_ATTR = "data-m5-font";
 

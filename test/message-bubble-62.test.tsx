@@ -105,7 +105,7 @@ describe("the detail window", () => {
     expect(audit).toContain("uloženo na serveru (šifrovaně)");
     expect(audit).toContain("Skryto");
     expect(audit).toContain("do příštího přihlášení");
-    expect(document.body.textContent).toContain("text 42 B · soubor 2.0 kB");
+    expect(document.body.textContent).toContain("text 42 B · soubor 2,0 kB"); // 6.13: Czech notation
     expect(document.body.textContent).toContain("text · soubor");
     const receipts = screen.getByTestId("msg-receipts");
     expect(receipts.querySelectorAll("li")).toHaveLength(2);

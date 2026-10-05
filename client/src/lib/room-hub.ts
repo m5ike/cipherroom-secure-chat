@@ -30,6 +30,10 @@ import { evaluateIdentity, TrustBook, type KtStanding } from "./p4-trust";
 import { deviceReplay } from "./p4-store";
 import { deviceMailbox, helloAccountOf } from "./p4-away";
 import { validatePayload } from "./validate";
+import { compareText, documentLang } from "./i18n-intl";
+
+/** 6.13: rooms with the same last activity, by label in the page's language (Intl.Collator). */
+const byLabel = (a: string, b: string) => compareText(documentLang())(a, b);
 import type { ChatMessage } from "./chat-types";
 import { newId } from "./id";
 import { PresenceSignal } from "./presence-book";
@@ -557,7 +561,7 @@ export class RoomHub {
     this.scheduled = true;
     queueMicrotask(() => {
       this.scheduled = false;
-      this.snapshot = [...this.rooms.values()].map((r) => r.view()).sort((a, b) => b.lastActivity - a.lastActivity || a.label.localeCompare(b.label));
+      this.snapshot = [...this.rooms.values()].map((r) => r.view()).sort((a, b) => b.lastActivity - a.lastActivity || byLabel(a.label, b.label));
       for (const fn of this.listeners) fn();
     });
   }

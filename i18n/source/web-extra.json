@@ -1,0 +1,707 @@
+{
+ "acc.loaded#one": {
+  "en": "Data decrypted and loaded ({n} message).",
+  "cs": "Data odšifrována a načtena ({n} zpráva).",
+  "de": "Daten entschlüsselt und geladen ({n} Nachricht)."
+ },
+ "acc.loaded#other": {
+  "en": "Data decrypted and loaded ({n} messages).",
+  "cs": "Data odšifrována a načtena ({n} zpráv).",
+  "de": "Daten entschlüsselt und geladen ({n} Nachrichten)."
+ },
+ "ai.stats#one": {
+  "en": "{s} s · {n} token",
+  "cs": "{s} s · {n} token",
+  "de": "{s} s · {n} Token"
+ },
+ "ai.stats#other": {
+  "en": "{s} s · {n} tokens",
+  "cs": "{s} s · {n} tokenů",
+  "de": "{s} s · {n} Tokens"
+ },
+ "ap.font.noLatinExt": {
+  "en": "This font has no Latin Extended-A (č ř ž ľ ĺ ŕ …) — those letters come from a system font.",
+  "cs": "Písmo nemá Latin Extended-A (č ř ž ľ ĺ ŕ …) — tato písmena vykreslí systémové písmo.",
+  "de": "Diese Schrift hat kein Latin Extended-A (č ř ž ľ ĺ ŕ …) — diese Buchstaben kommen aus einer Systemschrift."
+ },
+ "ap.font.sys.geometric": {
+  "en": "Geometric (system)",
+  "cs": "Geometrické (systémové)",
+  "de": "Geometrisch (System)"
+ },
+ "ap.font.sys.humanist": {
+  "en": "Humanist (system)",
+  "cs": "Humanistické (systémové)",
+  "de": "Humanistisch (System)"
+ },
+ "ap.font.sys.mono": {
+  "en": "Monospace (system)",
+  "cs": "Neproporcionální (systémové)",
+  "de": "Monospace (System)"
+ },
+ "ap.font.sys.rounded": {
+  "en": "Rounded (system)",
+  "cs": "Zaoblené (systémové)",
+  "de": "Abgerundet (System)"
+ },
+ "ap.font.sys.serif": {
+  "en": "Serif (system)",
+  "cs": "Patkové (systémové)",
+  "de": "Serif (System)"
+ },
+ "ap.font.sys.system": {
+  "en": "System UI",
+  "cs": "Systémové UI",
+  "de": "System-UI"
+ },
+ "app.chunksMissing#one": {
+  "en": "{n} file chunk missing — asking the sender to repeat it (attempt {round}).",
+  "cs": "Chybí {n} část souboru — žádám o její zopakování (pokus {round}).",
+  "de": "{n} Dateiteil fehlt — der Absender wird gebeten, ihn zu wiederholen (Versuch {round})."
+ },
+ "app.chunksMissing#other": {
+  "en": "{n} file chunks missing — asking the sender to repeat them (attempt {round}).",
+  "cs": "Chybí {n} částí souboru — žádám o jejich zopakování (pokus {round}).",
+  "de": "{n} Dateiteile fehlen — der Absender wird gebeten, sie zu wiederholen (Versuch {round})."
+ },
+ "app.outbox.channelOpen": {
+  "en": "channel open",
+  "cs": "kanál otevřen",
+  "de": "Kanal geöffnet"
+ },
+ "app.outboxSent#one": {
+  "en": "Sent {n} queued message.",
+  "cs": "Odeslána {n} čekající zpráva.",
+  "de": "{n} wartende Nachricht gesendet."
+ },
+ "app.outboxSent#other": {
+  "en": "Sent {n} queued messages.",
+  "cs": "Odesláno {n} čekajících zpráv.",
+  "de": "{n} wartende Nachrichten gesendet."
+ },
+ "app.recipients": {
+  "en": "Recipients: {n}",
+  "cs": "Příjemců: {n}",
+  "de": "{n} Empfänger"
+ },
+ "app.recipients#one": {
+  "en": "{n} recipient",
+  "cs": "{n} příjemce",
+  "de": ""
+ },
+ "app.recipients#other": {
+  "en": "{n} recipients",
+  "cs": "{n} příjemců",
+  "de": ""
+ },
+ "app.resendingChunks#one": {
+  "en": "Re-sending {n} missing file chunk.",
+  "cs": "Posílám znovu {n} chybějící část souboru.",
+  "de": "Sende {n} fehlenden Dateiteil erneut."
+ },
+ "app.resendingChunks#other": {
+  "en": "Re-sending {n} missing file chunks.",
+  "cs": "Posílám znovu {n} chybějících částí souboru.",
+  "de": "Sende {n} fehlende Dateiteile erneut."
+ },
+ "audio.live": {
+  "en": "Microphone on",
+  "cs": "Mikrofon zapnutý",
+  "de": "Mikrofon an"
+ },
+ "audio.muted": {
+  "en": "Microphone muted",
+  "cs": "Mikrofon ztlumený",
+  "de": "Mikrofon stumm"
+ },
+ "away.received#one": {
+  "en": "Delivered {n} message that arrived while you were away.",
+  "cs": "Doručena {n} zpráva, která přišla během vaší nepřítomnosti.",
+  "de": "{n} Nachricht zugestellt, die während Ihrer Abwesenheit ankam."
+ },
+ "away.received#other": {
+  "en": "Delivered {n} messages that arrived while you were away.",
+  "cs": "Doručeno {n} zpráv, které přišly během vaší nepřítomnosti.",
+  "de": "{n} Nachrichten zugestellt, die während Ihrer Abwesenheit ankamen."
+ },
+ "caps.body": {
+  "en": "This app needs modern browser crypto and WebRTC. Use a recent Edge, Chrome, Firefox or Safari.",
+  "cs": "Aplikace potřebuje moderní kryptografii prohlížeče a WebRTC. Použijte aktuální Edge, Chrome, Firefox nebo Safari.",
+  "de": "Diese App braucht moderne Browser-Kryptografie und WebRTC. Verwenden Sie einen aktuellen Edge, Chrome, Firefox oder Safari."
+ },
+ "caps.ie": {
+  "en": "Internet Explorer is not supported. Use Edge, Chrome, Firefox or Safari.",
+  "cs": "Internet Explorer není podporován. Použijte Edge, Chrome, Firefox nebo Safari.",
+  "de": "Internet Explorer wird nicht unterstützt. Verwenden Sie Edge, Chrome, Firefox oder Safari."
+ },
+ "caps.title": {
+  "en": "M5cet — browser unsupported",
+  "cs": "M5cet — nepodporovaný prohlížeč",
+  "de": "M5cet — Browser nicht unterstützt"
+ },
+ "caps.webcrypto": {
+  "en": "The Web Crypto API is missing (window.crypto.subtle).",
+  "cs": "Chybí Web Crypto API (window.crypto.subtle).",
+  "de": "Die Web-Crypto-API fehlt (window.crypto.subtle)."
+ },
+ "caps.webrtc": {
+  "en": "WebRTC is missing (RTCPeerConnection).",
+  "cs": "Chybí WebRTC (RTCPeerConnection).",
+  "de": "WebRTC fehlt (RTCPeerConnection)."
+ },
+ "caps.websocket": {
+  "en": "WebSocket is missing.",
+  "cs": "Chybí WebSocket.",
+  "de": "WebSocket fehlt."
+ },
+ "data.restored#one": {
+  "en": "Restored {n} message.",
+  "cs": "",
+  "de": "{n} Nachricht wiederhergestellt."
+ },
+ "data.restored#other": {
+  "en": "Restored {n} messages.",
+  "cs": "",
+  "de": "{n} Nachrichten wiederhergestellt."
+ },
+ "file.receiving": {
+  "en": "Receiving {name} ({size}) from {sender} via {route}.",
+  "cs": "Přijímám soubor {name} ({size}) od {sender} přes {route}.",
+  "de": "Empfange {name} ({size}) von {sender} über {route}."
+ },
+ "file.route.p2p": {
+  "en": "P2P",
+  "cs": "P2P",
+  "de": "P2P"
+ },
+ "file.route.proxy": {
+  "en": "the server relay",
+  "cs": "serverový relay",
+  "de": "das Server-Relay"
+ },
+ "files.active": {
+  "en": "Transfers running: {n}",
+  "cs": "Probíhající přenosy: {n}",
+  "de": "Laufende Übertragungen: {n}"
+ },
+ "files.active#one": {
+  "en": "{n} transfer running:",
+  "cs": "Probíhá {n} přenos:",
+  "de": "{n} Übertragung läuft:"
+ },
+ "files.active#other": {
+  "en": "{n} transfers running:",
+  "cs": "Probíhá {n} přenosů:",
+  "de": "{n} Übertragungen laufen:"
+ },
+ "files.intro": {
+  "en": "End-to-end encrypted P2P transfer (AES-GCM 256, 32 KiB chunks) with automatic fallback to the server relay. Hard cap: 10 GiB. Set your own limit in Settings.",
+  "cs": "Koncově šifrovaný P2P přenos (AES-GCM 256, části po 32 KiB) s automatickým přechodem na serverový relay. Pevný limit: 10 GiB. Vlastní limit nastavíte v Nastavení.",
+  "de": "Ende-zu-Ende-verschlüsselte P2P-Übertragung (AES-GCM 256, Teile zu 32 KiB) mit automatischem Wechsel auf das Server-Relay. Feste Grenze: 10 GiB. Ihre eigene Grenze legen Sie in den Einstellungen fest."
+ },
+ "files.note": {
+  "en": "Files over 10 GiB cannot be transferred yet. For very large volumes use the storage-provider plugin — see docs/files.md.",
+  "cs": "Soubory nad 10 GiB zatím přenést nejde. Pro velké objemy použijte plugin úložiště (storage-provider) — viz docs/files.md.",
+  "de": "Dateien über 10 GiB lassen sich noch nicht übertragen. Für sehr große Mengen verwenden Sie das Speicher-Plugin (storage-provider) — siehe docs/files.md."
+ },
+ "files.pick": {
+  "en": "Choose file…",
+  "cs": "Vybrat soubor…",
+  "de": "Datei wählen…"
+ },
+ "files.title": {
+  "en": "Encrypted file transfer",
+  "cs": "Šifrovaný přenos souborů",
+  "de": "Verschlüsselte Dateiübertragung"
+ },
+ "files.tracked": {
+  "en": "Transfers tracked: {n} — details in the chat.",
+  "cs": "Sledované přenosy: {n} — podrobnosti v chatu.",
+  "de": "Verfolgte Übertragungen: {n} — Details im Chat."
+ },
+ "files.tracked#one": {
+  "en": "{n} transfer tracked — details in the chat.",
+  "cs": "{n} sledovaný přenos — podrobnosti v chatu.",
+  "de": "{n} verfolgte Übertragung — Details im Chat."
+ },
+ "files.tracked#other": {
+  "en": "{n} transfers tracked — details in the chat.",
+  "cs": "{n} sledovaných přenosů — podrobnosti v chatu.",
+  "de": "{n} verfolgte Übertragungen — Details im Chat."
+ },
+ "loc.unavailable": {
+  "en": "Location is not available in this browser.",
+  "cs": "Poloha není v tomto prohlížeči dostupná.",
+  "de": "Der Standort ist in diesem Browser nicht verfügbar."
+ },
+ "net.lastActivity": {
+  "en": "last activity",
+  "cs": "poslední aktivita",
+  "de": "letzte Aktivität"
+ },
+ "net.lastPong": {
+  "en": "last pong",
+  "cs": "poslední pong",
+  "de": "letzter Pong"
+ },
+ "net.notConnected": {
+  "en": "Not connected.",
+  "cs": "Nepřipojeno.",
+  "de": "Nicht verbunden."
+ },
+ "net.state": {
+  "en": "state",
+  "cs": "stav",
+  "de": "Zustand"
+ },
+ "net.strategy": {
+  "en": "strategy",
+  "cs": "strategie",
+  "de": "Strategie"
+ },
+ "nfc.tpl.steps#one": {
+  "en": "{n} step",
+  "cs": "{n} krok",
+  "de": "{n} Schritt"
+ },
+ "nfc.tpl.steps#other": {
+  "en": "{n} steps",
+  "cs": "{n} kroků",
+  "de": "{n} Schritte"
+ },
+ "notif.push.configured": {
+  "en": "Push server (VAPID) is configured.",
+  "cs": "Push server (VAPID) je nakonfigurovaný.",
+  "de": "Push-Server (VAPID) ist konfiguriert."
+ },
+ "notif.push.missing": {
+  "en": "Push not configured — falling back to in-tab notifications.",
+  "cs": "Push není nakonfigurovaný — použijí se lokální upozornění v záložce.",
+  "de": "Push nicht konfiguriert — es werden lokale Benachrichtigungen im Tab verwendet."
+ },
+ "notif.test.local": {
+  "en": "Test local notification",
+  "cs": "Vyzkoušet lokální upozornění",
+  "de": "Lokale Benachrichtigung testen"
+ },
+ "notif.test.localFailed": {
+  "en": "Local test failed: {reason}",
+  "cs": "Lokální test selhal: {reason}",
+  "de": "Lokaler Test fehlgeschlagen: {reason}"
+ },
+ "notif.test.localSent": {
+  "en": "Local test sent.",
+  "cs": "Lokální test odeslán.",
+  "de": "Lokaler Test gesendet."
+ },
+ "notif.test.push": {
+  "en": "Test web push",
+  "cs": "Vyzkoušet web push",
+  "de": "Web-Push testen"
+ },
+ "notif.test.pushFailed": {
+  "en": "Push test failed: {reason}",
+  "cs": "Test push selhal: {reason}",
+  "de": "Push-Test fehlgeschlagen: {reason}"
+ },
+ "notif.test.pushSent": {
+  "en": "Push test sent.",
+  "cs": "Test push odeslán.",
+  "de": "Push-Test gesendet."
+ },
+ "notify.channel.browsers#one": {
+  "en": "{n} browser",
+  "cs": "{n} prohlížeč",
+  "de": ""
+ },
+ "notify.channel.browsers#other": {
+  "en": "{n} browsers",
+  "cs": "{n} prohlížečů",
+  "de": ""
+ },
+ "notify.channel.devices#one": {
+  "en": "{n} device",
+  "cs": "",
+  "de": "{n} Gerät"
+ },
+ "notify.channel.devices#other": {
+  "en": "{n} devices",
+  "cs": "",
+  "de": "{n} Geräte"
+ },
+ "privacy.serverPurged": {
+  "en": "Server data purged for this device.",
+  "cs": "Data na serveru pro toto zařízení smazána.",
+  "de": "Serverdaten für dieses Gerät gelöscht."
+ },
+ "profile.avatar.placeholder": {
+  "en": "🦊  or  https://…",
+  "cs": "🦊  nebo  https://…",
+  "de": "🦊  oder  https://…"
+ },
+ "push.err.denied": {
+  "en": "Permission was not granted.",
+  "cs": "Oprávnění nebylo uděleno.",
+  "de": "Die Berechtigung wurde nicht erteilt."
+ },
+ "push.err.noApi": {
+  "en": "The Notification API is not available.",
+  "cs": "Notification API není dostupné.",
+  "de": "Die Notification-API ist nicht verfügbar."
+ },
+ "push.err.noPushManager": {
+  "en": "PushManager is not available.",
+  "cs": "PushManager není dostupný.",
+  "de": "PushManager ist nicht verfügbar."
+ },
+ "push.err.noSubscription": {
+  "en": "This device has no push subscription — enable notifications first.",
+  "cs": "Toto zařízení nemá odběr push notifikací — nejdřív je povolte.",
+  "de": "Dieses Gerät hat kein Push-Abonnement — aktivieren Sie zuerst die Benachrichtigungen."
+ },
+ "push.err.refused": {
+  "en": "The server refused the subscription.",
+  "cs": "Server odběr odmítl.",
+  "de": "Der Server hat das Abonnement abgelehnt."
+ },
+ "push.err.status": {
+  "en": "The server answered {status}.",
+  "cs": "Server vrátil {status}.",
+  "de": "Der Server antwortete mit {status}."
+ },
+ "push.err.subscribe": {
+  "en": "Subscribing failed.",
+  "cs": "Přihlášení k odběru selhalo.",
+  "de": "Abonnieren fehlgeschlagen."
+ },
+ "push.err.sw": {
+  "en": "The service worker failed.",
+  "cs": "Service worker selhal.",
+  "de": "Der Service Worker ist fehlgeschlagen."
+ },
+ "push.err.unknownSubscription": {
+  "en": "The server does not know this subscription (server restart?) — enable notifications again.",
+  "cs": "Server tento odběr nezná (restart serveru?) — povolte notifikace znovu.",
+  "de": "Der Server kennt dieses Abonnement nicht (Neustart des Servers?) — aktivieren Sie die Benachrichtigungen erneut."
+ },
+ "push.test.bodyNoSw": {
+  "en": "Local notification (no service worker).",
+  "cs": "Lokální upozornění (bez service workeru).",
+  "de": "Lokale Benachrichtigung (ohne Service Worker)."
+ },
+ "push.test.bodySw": {
+  "en": "Local notification – service worker OK.",
+  "cs": "Lokální upozornění – service worker v pořádku.",
+  "de": "Lokale Benachrichtigung – Service Worker OK."
+ },
+ "room.joinFirst": {
+  "en": "Join a room first.",
+  "cs": "Nejprve se připojte do místnosti.",
+  "de": "Bitte zuerst einem Raum beitreten."
+ },
+ "rooms.bar.unreadCount": {
+  "en": "{n} unread",
+  "cs": "Nepřečtené: {n}",
+  "de": "{n} ungelesen"
+ },
+ "rooms.bar.usersCount": {
+  "en": "People: {n}",
+  "cs": "Lidí: {n}",
+  "de": "Personen: {n}"
+ },
+ "rooms.bar.usersCount#one": {
+  "en": "{n} person",
+  "cs": "{n} člověk",
+  "de": "{n} Person"
+ },
+ "rooms.bar.usersCount#other": {
+  "en": "{n} people",
+  "cs": "{n} lidí",
+  "de": "{n} Personen"
+ },
+ "sec.sealedHow.mailboxAccount#one": {
+  "en": "{name} ({n} device of their pinned account)",
+  "cs": "",
+  "de": "{name} ({n} Gerät des angehefteten Kontos)"
+ },
+ "sec.sealedHow.mailboxAccount#other": {
+  "en": "{name} ({n} devices of their pinned account)",
+  "cs": "",
+  "de": "{name} ({n} Geräte des angehefteten Kontos)"
+ },
+ "sec.sealedHow.mailboxDevice#one": {
+  "en": "{name} ({n} device seen in a session)",
+  "cs": "",
+  "de": "{name} ({n} in einer Sitzung gesehenes Gerät)"
+ },
+ "sec.sealedHow.mailboxDevice#other": {
+  "en": "{name} ({n} devices seen in a session)",
+  "cs": "",
+  "de": "{name} ({n} in einer Sitzung gesehene Geräte)"
+ },
+ "speech.note": {
+  "en": "Speech recognition works in Chrome, Edge and on Android only. Cloning arbitrary voices is intentionally not implemented — see docs/speech.md.",
+  "cs": "Rozpoznávání řeči funguje jen v Chrome, Edge a na Androidu. Klonování libovolných hlasů záměrně není implementováno — viz docs/speech.md.",
+  "de": "Spracherkennung funktioniert nur in Chrome, Edge und auf Android. Das Klonen beliebiger Stimmen ist bewusst nicht umgesetzt — siehe docs/speech.md."
+ },
+ "speech.title": {
+  "en": "Speech (TTS / STT / revoice)",
+  "cs": "Hlas (TTS / STT / přehlášení)",
+  "de": "Sprache (TTS / STT / Neuvertonung)"
+ },
+ "status.autoReconnect": {
+  "en": "auto-reconnect",
+  "cs": "automatické připojení",
+  "de": "automatische Neuverbindung"
+ },
+ "status.reconnectPending": {
+  "en": "reconnecting…",
+  "cs": "obnovuji spojení…",
+  "de": "verbinde neu…"
+ },
+ "status.room": {
+  "en": "room:{room}",
+  "cs": "místnost:{room}",
+  "de": "Raum:{room}"
+ },
+ "tel.backspace": {
+  "en": "Backspace",
+  "cs": "Smazat",
+  "de": "Löschen"
+ },
+ "tel.call": {
+  "en": "Call",
+  "cs": "Volat",
+  "de": "Anrufen"
+ },
+ "tel.callProvider": {
+  "en": "Voice provider",
+  "cs": "Hlasový poskytovatel",
+  "de": "Sprach-Provider"
+ },
+ "tel.callQueued": {
+  "en": "Call queued:",
+  "cs": "Hovor zařazen:",
+  "de": "Anruf eingereiht:"
+ },
+ "tel.calling": {
+  "en": "Calling…",
+  "cs": "Volám…",
+  "de": "Rufe an…"
+ },
+ "tel.clear": {
+  "en": "Clear",
+  "cs": "Vyčistit",
+  "de": "Leeren"
+ },
+ "tel.disabledBody": {
+  "en": "An operator must set ENABLE_TELEPHONY=1 on the server and configure a provider key (e.g. TWILIO_AUTH_TOKEN) before calls and SMS work.",
+  "cs": "Provozovatel musí na serveru nastavit ENABLE_TELEPHONY=1 a doplnit klíč poskytovatele (např. TWILIO_AUTH_TOKEN), aby šlo volat a posílat SMS.",
+  "de": "Ein Betreiber muss auf dem Server ENABLE_TELEPHONY=1 setzen und einen Provider-Schlüssel (z. B. TWILIO_AUTH_TOKEN) hinterlegen, damit Anrufe und SMS funktionieren."
+ },
+ "tel.disabledTitle": {
+  "en": "Telephony module is off",
+  "cs": "Telefonní modul je vypnutý",
+  "de": "Telefonie-Modul ist aus"
+ },
+ "tel.history": {
+  "en": "History",
+  "cs": "Historie",
+  "de": "Verlauf"
+ },
+ "tel.invalidNumber": {
+  "en": "Enter a valid E.164 number, e.g. +14155550123.",
+  "cs": "Zadejte platné číslo ve formátu E.164, např. +420123456789.",
+  "de": "Geben Sie eine gültige E.164-Nummer ein, z. B. +491701234567."
+ },
+ "tel.mediaNote": {
+  "en": "Call places a real phone call via the provider; the audio needs an external SIP/WebRTC gateway — the browser cannot carry it itself.",
+  "cs": "Hovor spustí skutečné volání přes poskytovatele; přenos zvuku vyžaduje externí SIP/WebRTC bránu — prohlížeč ho sám nepřenese.",
+  "de": "Anruf startet einen echten Telefonanruf über den Provider; der Ton benötigt ein externes SIP/WebRTC-Gateway — der Browser überträgt ihn nicht selbst."
+ },
+ "tel.noHistory": {
+  "en": "Nothing yet.",
+  "cs": "Zatím nic.",
+  "de": "Noch nichts."
+ },
+ "tel.noProvider": {
+  "en": "No provider is configured.",
+  "cs": "Žádný poskytovatel není nastaven.",
+  "de": "Kein Provider konfiguriert."
+ },
+ "tel.number": {
+  "en": "Number (E.164)",
+  "cs": "Číslo (E.164)",
+  "de": "Nummer (E.164)"
+ },
+ "tel.placeholderNumber": {
+  "en": "+1…",
+  "cs": "+420…",
+  "de": "+49…"
+ },
+ "tel.placeholderText": {
+  "en": "Message text…",
+  "cs": "Text zprávy…",
+  "de": "Nachrichtentext…"
+ },
+ "tel.send": {
+  "en": "Send",
+  "cs": "Odeslat",
+  "de": "Senden"
+ },
+ "tel.sending": {
+  "en": "Sending…",
+  "cs": "Odesílám…",
+  "de": "Sende…"
+ },
+ "tel.sms": {
+  "en": "SMS",
+  "cs": "SMS",
+  "de": "SMS"
+ },
+ "tel.smsProvider": {
+  "en": "SMS provider",
+  "cs": "SMS poskytovatel",
+  "de": "SMS-Provider"
+ },
+ "tel.smsSent": {
+  "en": "SMS sent:",
+  "cs": "SMS odeslána:",
+  "de": "SMS gesendet:"
+ },
+ "trust.empty": {
+  "en": "No fingerprints yet — join a room.",
+  "cs": "Zatím žádné otisky — připojte se k místnosti.",
+  "de": "Noch keine Fingerabdrücke — treten Sie einem Raum bei."
+ },
+ "trust.indicator": {
+  "en": "SHA-256 indicator:",
+  "cs": "SHA-256 indikátor:",
+  "de": "SHA-256-Indikator:"
+ },
+ "trust.since": {
+  "en": "since {date}",
+  "cs": "od {date}",
+  "de": "seit {date}"
+ },
+ "xfer.average": {
+  "en": "average",
+  "cs": "průměrná",
+  "de": "Durchschnitt"
+ },
+ "xfer.connection": {
+  "en": "Connection",
+  "cs": "Spojení",
+  "de": "Verbindung"
+ },
+ "xfer.current": {
+  "en": "current",
+  "cs": "aktuální",
+  "de": "aktuell"
+ },
+ "xfer.e2e": {
+  "en": "AES-256-GCM (end-to-end)",
+  "cs": "AES-256-GCM (koncově šifrováno)",
+  "de": "AES-256-GCM (Ende-zu-Ende)"
+ },
+ "xfer.encryption": {
+  "en": "encryption",
+  "cs": "šifrování",
+  "de": "Verschlüsselung"
+ },
+ "xfer.eta": {
+  "en": "time left",
+  "cs": "zbývající čas",
+  "de": "Restzeit"
+ },
+ "xfer.file": {
+  "en": "File",
+  "cs": "Soubor",
+  "de": "Datei"
+ },
+ "xfer.label": {
+  "en": "File transfer {name}",
+  "cs": "Přenos souboru {name}",
+  "de": "Dateiübertragung {name}"
+ },
+ "xfer.name": {
+  "en": "name",
+  "cs": "název",
+  "de": "Name"
+ },
+ "xfer.p2p": {
+  "en": "P2P (direct)",
+  "cs": "P2P (přímo)",
+  "de": "P2P (direkt)"
+ },
+ "xfer.proxy": {
+  "en": "Proxy (server relay)",
+  "cs": "Proxy (serverový relay)",
+  "de": "Proxy (Server-Relay)"
+ },
+ "xfer.remaining": {
+  "en": "remaining",
+  "cs": "zbývá",
+  "de": "verbleibend"
+ },
+ "xfer.running": {
+  "en": "running for",
+  "cs": "běží",
+  "de": "läuft seit"
+ },
+ "xfer.sizeTotal": {
+  "en": "total size",
+  "cs": "celková velikost",
+  "de": "Gesamtgröße"
+ },
+ "xfer.speed": {
+  "en": "Speed",
+  "cs": "Rychlost",
+  "de": "Geschwindigkeit"
+ },
+ "xfer.started": {
+  "en": "started",
+  "cs": "zahájeno",
+  "de": "gestartet"
+ },
+ "xfer.status.active": {
+  "en": "running",
+  "cs": "probíhá",
+  "de": "läuft"
+ },
+ "xfer.status.cancelled": {
+  "en": "cancelled",
+  "cs": "zrušeno",
+  "de": "abgebrochen"
+ },
+ "xfer.status.completed": {
+  "en": "completed",
+  "cs": "dokončeno",
+  "de": "abgeschlossen"
+ },
+ "xfer.status.error": {
+  "en": "error",
+  "cs": "chyba",
+  "de": "Fehler"
+ },
+ "xfer.statusLabel": {
+  "en": "Status: {status}",
+  "cs": "Stav: {status}",
+  "de": "Status: {status}"
+ },
+ "xfer.times": {
+  "en": "Times",
+  "cs": "Časy",
+  "de": "Zeiten"
+ },
+ "xfer.transferred": {
+  "en": "transferred",
+  "cs": "přeneseno",
+  "de": "übertragen"
+ },
+ "xfer.type": {
+  "en": "type",
+  "cs": "typ",
+  "de": "Art"
+ }
+}

@@ -27,7 +27,7 @@ export function windowTree(): LNode {
         n("heading", { id: "title", name: "Title", tag: "h2", if: "!$customHeader", attrs: { class: "text-base font-semibold tracking-tight" }, text: "{$title}" }),
         n("button", {
           id: "modal-close", name: "Close",
-          attrs: { type: "button", "aria-label": "Close", class: "modal-close inline-flex h-9 w-9 flex-none items-center justify-center rounded-full hover:bg-accent" },
+          attrs: { type: "button", "aria-label": "{_'common.close'}", class: "modal-close inline-flex h-9 w-9 flex-none items-center justify-center rounded-full hover:bg-accent" },
           on: { click: { action: "close" } }, text: "×",
         }),
       ]),

@@ -35,7 +35,7 @@ export function headerTree(): LNode {
       icon("wifi-off", "h-3.5 w-3.5 text-muted-foreground", {}, { id: "status-offline", if: "$status != 'joined'" }),
       n("area", {
         id: "status-text", attrs: { class: "hidden sm:inline" },
-        text: "{if $status == 'joined'}{$openPeerCount} P2P · {if $reconnectPending}reconnect-pending{else}{$room}{/if}{elseif $status == 'offline'}{_'status.offline'} · auto-reconnect{else}{$status|t:'status.'}{/if}",
+        text: "{if $status == 'joined'}{$openPeerCount} P2P · {if $reconnectPending}{_'status.reconnectPending'}{else}{$room}{/if}{elseif $status == 'offline'}{_'status.offline'} · {_'status.autoReconnect'}{else}{$status|t:'status.'}{/if}",
       }),
       n("area", { id: "status-count", if: "$status == 'joined'", attrs: { class: "sm:hidden" }, text: "{$openPeerCount}" }),
     ]),
@@ -77,7 +77,7 @@ export function chatTree(): LNode {
         n("panel", { id: "dock-row", attrs: { class: "flex items-center justify-between gap-3 text-xs" } }, [
           n("paragraph", { id: "notice", name: "Notice", attrs: { "data-testid": "text-notice", class: "truncate text-muted-foreground" }, text: "{$notice}" }),
           n("panel", { id: "dock-info", attrs: { class: "flex items-center gap-2 font-mono text-[11px] text-muted-foreground" } }, [
-            n("area", { id: "dock-room", text: "{if $room}room:{$room}{else}{_'status.idle'}{/if}" }),
+            n("area", { id: "dock-room", text: "{if $room}{$room|tf:'status.room':'room'}{else}{_'status.idle'}{/if}" }),
             n("area", { id: "dock-dot", attrs: { class: "hidden sm:inline" }, text: "·" }),
             n("area", { id: "dock-id", attrs: { class: "hidden sm:inline" }, text: "{$myIdShort}" }),
             // 6.2: the messages I hid, shown again for a while (or hidden again).

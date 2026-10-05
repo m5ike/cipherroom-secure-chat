@@ -25,7 +25,7 @@ export type NfcCaps = { available: boolean; reason?: string };
 export function detectNfc(): NfcCaps {
   if (typeof window === "undefined") return { available: false, reason: "no-window" };
   if (!("NDEFReader" in window)) {
-    return { available: false, reason: "Web NFC není podporováno tímto prohlížečem (typicky vyžaduje Android Chrome)." };
+    return { available: false, reason: "Web NFC is not supported by this browser (it usually needs Chrome on Android)." };
   }
   return { available: true };
 }
@@ -54,7 +54,7 @@ export type NfcPayload = Record<string, unknown>;
  * tests and vectors of the reader.
  */
 export async function encryptForTag(pin: string, payload: NfcPayload): Promise<string> {
-  if (!isValidPin(pin)) throw new Error("PIN musí být 4–16 číslic.");
+  if (!isValidPin(pin)) throw new Error("The PIN must be 4–16 digits.");
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(pin, salt);
@@ -68,9 +68,9 @@ export async function encryptForTag(pin: string, payload: NfcPayload): Promise<s
 
 export async function decryptFromTag(pin: string, blob: string): Promise<NfcPayload> {
   if (!blob.startsWith("m5cet:nfc:v1:")) throw new Error("Tag neobsahuje M5cet payload.");
-  if (!isValidPin(pin)) throw new Error("PIN musí být 4–16 číslic.");
+  if (!isValidPin(pin)) throw new Error("The PIN must be 4–16 digits.");
   const combined = fromB64(blob.slice("m5cet:nfc:v1:".length));
-  if (combined.length < 16 + 12 + 1) throw new Error("Tag payload příliš krátký.");
+  if (combined.length < 16 + 12 + 1) throw new Error("The tag's payload is too short.");
   const salt = combined.slice(0, 16);
   const iv = combined.slice(16, 28);
   const ct = combined.slice(28);

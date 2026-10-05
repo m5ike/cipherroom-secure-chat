@@ -21,10 +21,24 @@ Lišta nahoře → ikona palety → vyber Motorsport Dark / Glass Light / Termin
 Volba se uloží lokálně do prohlížeče.
 
 ### Nastavení
-- **Jazyk** — čeština / English / Deutsch
+- **Jazyk** — devět jazyků (6.13): English, Čeština, Deutsch, Español, Italiano,
+  Français, Slovenčina, Slovenščina, Suomi — viz „Jazyky“ níže
 - **Časové pásmo** — řídí zobrazení časů zpráv
 - **Písmo a velikost** — ergonomie pro mobil i desktop
 - **Vizuální efekty** — vypni pro slabší zařízení
+
+### Jazyky (6.13)
+- Při první návštěvě mluví M5cet jazykem prohlížeče (první z jeho jazyků, který
+  umí); jinak anglicky.
+- Jazyk přepnete v **Nastavení › Jazyk** nebo přímo na **úvodní obrazovce**
+  (výběr pod tlačítkem Připojit). Přepne se hned, bez načtení stránky znovu;
+  volba se pamatuje.
+- Data, časy, čísla, velikosti souborů a „před 5 min“ se píší podle zvoleného
+  jazyka (čárka / tečka, mezery v tisících, názvy měsíců). Počty se skloňují
+  („1 zpráva, 3 zprávy, 5 zpráv“).
+- Slovenčině, které chybí nějaký text, pomůže čeština; ostatním jazykům
+  angličtina. Technické podrobnosti chyb a nástroje provozovatele jsou anglicky.
+- Upozornění (push, e-mail) přicházejí ve vašem jazyce.
 
 ### Profil
 Lišta → ikona uživatele. Jméno a avatar (emoji nebo URL) se posílají s každou zprávou
@@ -603,7 +617,19 @@ Platí na webu i v aplikaci pro Android.
 Top bar → palette icon → pick Motorsport Dark, Glass Light, or Terminal Secure.
 
 ### Settings
-Language (cs/en/de), timezone, font family/size, visual effects toggle.
+Language (nine of them since 6.13 — see *Languages* below), timezone, font family/size, visual effects toggle.
+
+### Languages (6.13)
+- English, Čeština, Deutsch, Español, Italiano, Français, Slovenčina,
+  Slovenščina and Suomi. On the first visit M5cet speaks your browser's
+  language (the first one it knows), otherwise English.
+- Switch in **Settings › Language** or on the **start screen** (the picker
+  under Connect) — it changes at once, without reloading, and is remembered.
+- Dates, times, numbers, file sizes and "5 min ago" follow the language, and
+  counts take the right plural form.
+- Slovak falls back to Czech where a text is missing, the others to English.
+  Technical error details and the operator's tools stay in English.
+- Notifications (push, e-mail) arrive in your language.
 
 ### Recipients list — docking and auto-hide
 The *Recipients* window (who gets your next message) can float anywhere or

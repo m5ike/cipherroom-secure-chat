@@ -23,6 +23,14 @@ const tokens = (s: string): string[] => [
   ...Array((s.match(/\n/g) ?? []).length).fill("\\n"),
 ].sort();
 
+// 6.13: plural forms ("key#one", "key#few"…, web-extra.json): a language has the
+// forms its plural rules use (Intl.PluralRules) — extra forms are fine, a
+// source form is satisfied by the same form or by the plain key, and every
+// form keeps the tokens of English ("key#other" when English has no such form).
+const FORM = /#(zero|one|two|few|many|other)$/;
+const base = (key: string) => key.replace(FORM, "");
+const categories = (() => { try { return new Set<string>(new Intl.PluralRules(lang).resolvedOptions().pluralCategories); } catch { return new Set(["one", "other"]); } })();
+
 let problems = 0;
 for (const file of files) {
   const src = JSON.parse(readFileSync(join(root, "i18n", "source", file), "utf8")) as Record<string, { en: string }>;
@@ -31,7 +39,11 @@ for (const file of files) {
   const raw = readFileSync(path);
   const text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
   const out = JSON.parse(text) as Record<string, unknown>;
+  const bases = new Set(Object.keys(src).map(base));
+  const enOf = (key: string): string | undefined => src[key]?.en ?? src[`${base(key)}#other`]?.en ?? src[base(key)]?.en;
   for (const key of Object.keys(src)) {
+    const form = FORM.exec(key)?.[1];
+    if (form && typeof out[key] !== "string" && (!categories.has(form) || typeof out[base(key)] === "string")) continue;
     const en = src[key].en;
     const v = out[key];
     if (typeof v !== "string") { console.log(`${file}: ${key}: missing`); problems++; continue; }
@@ -39,7 +51,16 @@ for (const file of files) {
     const a = tokens(en).join(" "), b = tokens(v).join(" ");
     if (a !== b) { console.log(`${file}: ${key}: tokens differ\n  en: ${a}\n  ${lang}: ${b}`); problems++; }
   }
-  for (const key of Object.keys(out)) if (!(key in src)) { console.log(`${file}: ${key}: not in the source`); problems++; }
+  for (const key of Object.keys(out)) {
+    if (key in src) continue;
+    const form = FORM.exec(key)?.[1];
+    if (!form || !bases.has(base(key))) { console.log(`${file}: ${key}: not in the source`); problems++; continue; }
+    if (!categories.has(form)) { console.log(`${file}: ${key}: ${lang} has no plural form "${form}"`); problems++; continue; }
+    const v = out[key];
+    if (typeof v !== "string" || !v.trim()) { console.log(`${file}: ${key}: empty`); problems++; continue; }
+    const a = tokens(enOf(key) ?? "").join(" "), b = tokens(v).join(" ");
+    if (a !== b) { console.log(`${file}: ${key}: tokens differ\n  en: ${a}\n  ${lang}: ${b}`); problems++; }
+  }
   const keys = Object.keys(src).length;
   console.log(`${file}: ${keys} keys checked`);
 }

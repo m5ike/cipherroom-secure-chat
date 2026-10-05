@@ -15,14 +15,14 @@ export type GeolocationCaps = { available: boolean; reason?: string };
 
 export function detectGeolocation(): GeolocationCaps {
   if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-    return { available: false, reason: "navigator.geolocation neexistuje." };
+    return { available: false, reason: "navigator.geolocation is missing." };
   }
   return { available: true };
 }
 
 export function getCurrentPosition(timeoutMs = 15_000): Promise<LatLng> {
   return new Promise((resolve, reject) => {
-    if (!("geolocation" in navigator)) return reject(new Error("Geolocation API není dostupné."));
+    if (!("geolocation" in navigator)) return reject(new Error("The Geolocation API is not available."));
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         resolve({

@@ -6,7 +6,8 @@
 // end-to-end encrypted like the chat, and the window says so.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
-import { t, type Lang } from "../lib/i18n";
+import { t, tp, type Lang } from "../lib/i18n";
+import { formatNumber } from "../lib/i18n-intl";
 import { aiChat, fetchAiStatus, type AiCitation, type AiReasoning, type AiStatus } from "../lib/ai";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
@@ -120,7 +121,7 @@ export function AiPanel({ lang, onInsert, onSignIn, loadStatus = fetchAiStatus, 
       if (x.key !== answer.key) return x;
       if (r.ok) {
         const d = r.done;
-        return { ...x, text: d.text || text2, reasoning: d.reasoning || thought, citations: d.citations ?? x.citations, pending: false, stats: t(lang, "ai.stats").replace("{s}", (d.ms / 1000).toFixed(1)).replace("{n}", String(d.usage.output)) };
+        return { ...x, text: d.text || text2, reasoning: d.reasoning || thought, citations: d.citations ?? x.citations, pending: false, stats: tp(lang, "ai.stats", d.usage.output, { s: formatNumber(d.ms / 1000, lang, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }) };
       }
       if (r.code === "cancelled") return { ...x, text: text2, reasoning: thought, pending: false, stats: t(lang, "ai.stopped") };
       return { ...x, text: text2, reasoning: thought, pending: false, error: errorText(lang, r.code, r.message) };

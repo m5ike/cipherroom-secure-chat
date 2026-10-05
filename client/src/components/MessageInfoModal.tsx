@@ -17,6 +17,7 @@ import { useLayoutBase } from "./LayoutProvider";
 import { HIDE_CHOICES, isHideChoice, type HideChoice } from "../lib/message-hide";
 import { attachmentBlob, shareAttachment } from "../lib/attachment-media";
 import type { Receipt } from "../lib/message-timeline";
+import { formatBytes, formatDateTime } from "../lib/format";
 
 export type MsgAuditItem = { state: string; at: number; meta?: string };
 
@@ -61,10 +62,9 @@ export type MessageInfoActions = {
   onDelete?: () => void;
 };
 
-function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} kB`;
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+/** 6.13: a size in the language (lib/format.ts). */
+function fmtBytes(n: number, lang: Lang): string {
+  return formatBytes(n, lang);
 }
 
 const STATE_LABEL: Record<string, string> = {
@@ -94,8 +94,8 @@ const sameDay = (a: number, b: number) => new Date(a).toDateString() === new Dat
 /** A step's time: with seconds, and with the date when it was not today. */
 function stepTime(at: number, lang: Lang, now: number): string {
   return sameDay(at, now)
-    ? new Date(at).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-    : new Date(at).toLocaleString(lang, { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    ? formatDateTime(at, lang, { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : formatDateTime(at, lang, { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 /** A step's note: a hide's end and why a hide ended are worded; anything else as recorded. */
@@ -139,7 +139,7 @@ export function MessageInfoView({ info, lang, onForward, actions = {} }: { info:
   const { tree, base } = useLayoutBase("dialog.messageInfo", lang);
   const now = Date.now();
   const sizeParts = info.size
-    ? [info.size.text > 0 ? t(lang, "msginfo.size.text").replace("{size}", fmtBytes(info.size.text)) : "", info.size.file > 0 ? t(lang, "msginfo.size.file").replace("{size}", fmtBytes(info.size.file)) : ""].filter(Boolean)
+    ? [info.size.text > 0 ? t(lang, "msginfo.size.text").replace("{size}", fmtBytes(info.size.text, lang)) : "", info.size.file > 0 ? t(lang, "msginfo.size.file").replace("{size}", fmtBytes(info.size.file, lang)) : ""].filter(Boolean)
     : [];
   const receipts = (info.receipts ?? []).map((r) => ({
     name: r.name,
@@ -152,7 +152,7 @@ export function MessageInfoView({ info, lang, onForward, actions = {} }: { info:
   return renderLayout(tree, {
     ...base,
     data: {
-      sender: info.sender, recipients: info.recipients, route: info.route, ip: info.ip, created: new Date(info.createdAt).toLocaleString(lang),
+      sender: info.sender, recipients: info.recipients, route: info.route, ip: info.ip, created: formatDateTime(info.createdAt, lang),
       secure: info.secure, cryptoVersion: info.cryptoVersion ?? 1, sealedWith: info.sealedWith, identity: info.identity ?? null, flags: info.flags,
       sealedHowText: (info.sealedHow ?? []).join(" · "),
       kinds: info.kinds ?? info.flags,
@@ -161,7 +161,7 @@ export function MessageInfoView({ info, lang, onForward, actions = {} }: { info:
       audit: info.audit.map((x) => ({ state: x.state, label: STATE_LABEL[x.state] || x.state, time: stepTime(x.at, lang, now), meta: stepMeta(x.state, x.meta, lang, now) })),
       receipts: receipts.length ? receipts : null,
       cipher: info.cipher ?? "", cipherShort: info.cipher ? `${info.cipher.slice(0, 220)}${info.cipher.length > 220 ? "…" : ""}` : "",
-      plaintext: info.plaintext, attachment: a ? { ...a, url: fileUrl, sizeText: fmtBytes(a.size) } : null,
+      plaintext: info.plaintext, attachment: a ? { ...a, url: fileUrl, sizeText: fmtBytes(a.size, lang) } : null,
       shareMenu,
       canManage,
       hiddenText,

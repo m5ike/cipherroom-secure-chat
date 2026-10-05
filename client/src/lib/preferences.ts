@@ -2,6 +2,7 @@
 // triggers a sync via the consented Server-enhanced mode.
 
 import type { Lang } from "./i18n";
+import { isLocale, pickLocale } from "./locales";
 import { isAccentId, isLayoutId, type AccentId, type LayoutId } from "./themes";
 import { isIconStyle, isThemeId, isToneChoice, type IconStyle, type ThemeId, type ToneChoice } from "./theme-catalog";
 import { sanitizeStyleMap, type PerUserStyle } from "./message-styles";
@@ -332,10 +333,19 @@ function safeGet(): Storage | null {
   }
 }
 
+/** The browser's preferred language among the nine (navigator.languages), else English. */
+export function browserLang(): Lang {
+  if (typeof navigator === "undefined") return "en";
+  const list = Array.isArray(navigator.languages) && navigator.languages.length ? navigator.languages : navigator.language ? [navigator.language] : [];
+  return pickLocale(list, "en");
+}
+
 export function loadPreferences(): Preferences {
   const storage = safeGet();
   const base: Preferences = {
     ...DEFAULTS,
+    // 6.13: the first visit speaks the browser's language (one of the nine), else English.
+    lang: browserLang(),
     deviceId: randomId(),
   };
   if (!storage) return base;
@@ -373,7 +383,7 @@ function num(v: unknown, lo: number, hi: number, dflt: number): number {
 }
 
 function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Preferences> {
-  const lang: Lang = parsed.lang === "en" || parsed.lang === "de" || parsed.lang === "cs" ? parsed.lang : base.lang;
+  const lang: Lang = isLocale(parsed.lang) ? parsed.lang : base.lang;
   const theme: ThemeId = isThemeId(parsed.theme) ? parsed.theme : base.theme;
   const fontSize: FontSize =
     parsed.fontSize === "sm" || parsed.fontSize === "md" || parsed.fontSize === "lg" ? parsed.fontSize : base.fontSize;

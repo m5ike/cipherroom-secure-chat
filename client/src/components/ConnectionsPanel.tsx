@@ -241,7 +241,7 @@ function DetailView(props: ConnectionsPanelProps & { id: string; onBack: () => v
     [t(lang, "cx.stats.average"), formatDuration(s.totalMs / sessions)],
     [t(lang, "cx.stats.messages"), `${s.sent} / ${s.received}`],
     [t(lang, "cx.stats.files"), `${s.filesSent} / ${s.filesReceived}`],
-    [t(lang, "cx.stats.data"), `${formatBytes(s.bytesSent)} / ${formatBytes(s.bytesReceived)}`],
+    [t(lang, "cx.stats.data"), `${formatBytes(s.bytesSent, lang)} / ${formatBytes(s.bytesReceived, lang)}`],
     [t(lang, "cx.stats.reconnects"), String(s.reconnects)],
     [t(lang, "cx.stats.failures"), String(s.failures)],
     [t(lang, "cx.stats.errors"), String(s.errors)],
@@ -289,7 +289,7 @@ function SettingsView(props: ConnectionsPanelProps) {
     ...base,
     data: {
       defaultId: st.defaultId ?? "", profiles: state.profiles.map((p) => ({ id: p.id, label: p.label })), settings: st,
-      statsAllowed: policy.stats, storageText: tf(lang, "cx.set.storage", { n: state.profiles.length, size: formatBytes(props.storedBytes) }),
+      statsAllowed: policy.stats, storageText: tf(lang, "cx.set.storage", { n: state.profiles.length, size: formatBytes(props.storedBytes, lang) }),
     },
     actions: {
       default: (e) => props.onDefault(value(e) || null),

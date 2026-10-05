@@ -29,7 +29,7 @@ export function profileTree(): LNode {
         ]),
         n("label", {id:"grid-2",name:"Avatar (URL or emoji) (field)",tag:"label",attrs:{class:"grid gap-1 text-sm"}}, [
           n("area", {id:"font-medium-2",tag:"span",attrs:{class:"font-medium"},text:"{_'profile.avatar'}"}),
-          n("input", {id:"input-profile-avatar",tag:"input",attrs:{"data-testid":"input-profile-avatar",class:INPUT,value:"=$prefs.avatar",placeholder:"🦊  or  https://..."},on:{change:{action:"setText",arg:"'avatar'"}}}),
+          n("input", {id:"input-profile-avatar",tag:"input",attrs:{"data-testid":"input-profile-avatar",class:INPUT,value:"=$prefs.avatar",placeholder:"{_'profile.avatar.placeholder'}"},on:{change:{action:"setText",arg:"'avatar'"}}}),
         ]),
         n("label", {id:"grid-3",name:"Short bio (field)",tag:"label",attrs:{class:"grid gap-1 text-sm"}}, [
           n("area", {id:"font-medium-3",tag:"span",attrs:{class:"font-medium"},text:"{_'profile.bio'}"}),
@@ -104,7 +104,7 @@ export function settingsTree(): LNode {
         n("label", {id:"grid",name:"Language (field)",tag:"label",attrs:{class:"grid gap-1 text-sm"}}, [
           n("area", {id:"font-medium",tag:"span",attrs:{class:"font-medium"},text:"{_'common.language'}"}),
           n("select", {id:"select-language",tag:"select",attrs:{class:INPUT,value:"=$prefs.lang","data-testid":"select-language"},on:{change:{action:"setText",arg:"'lang'"}}}, [
-            n("option", {id:"option",tag:"option",attrs:{value:"{$l.code}"},text:"{$l.label}",each:"$langs",as:"l",key:"$l.code"}),
+            n("option", {id:"option",tag:"option",attrs:{value:"{$l.code}",lang:"{$l.tag}"},text:"{$l.label}",each:"$langs",as:"l",key:"$l.code"}),
           ]),
         ]),
         n("label", {id:"grid-2",name:"Timezone (field)",tag:"label",attrs:{class:"grid gap-1 text-sm"}}, [
@@ -309,12 +309,12 @@ export function notificationsTree(): LNode {
         ]),
       ]),
       n("panel", {id:"space-y-2",tag:"div",attrs:{class:"space-y-2"}}, [
-        n("paragraph", {id:"text-xs-2",tag:"p",attrs:{class:"text-xs text-muted-foreground"},text:"{if $pushAvailable}{if $lang === 'cs'}Push server (VAPID) je nakonfigurovaný.{elseif $lang === 'de'}Push-Server (VAPID) ist konfiguriert.{else}Push server (VAPID) is configured.{/if}{else}{if $lang === 'cs'}Push není konfigurován — použijí se lokální notifikace v tabu.{elseif $lang === 'de'}Push nicht konfiguriert — lokale Benachrichtigungen im Tab.{else}Push not configured — falling back to in-tab notifications.{/if}{/if}"}),
+        n("paragraph", {id:"text-xs-2",tag:"p",attrs:{class:"text-xs text-muted-foreground"},text:"{if $pushAvailable}{_'notif.push.configured'}{else}{_'notif.push.missing'}{/if}"}),
         n("panel", {id:"flex-2",tag:"div",attrs:{class:"flex flex-wrap gap-2"}}, [
           n("button", {id:"button-notif-disable",tag:"button",if:"$prefs.notificationsEnabled",attrs:{type:"button","data-testid":"button-notif-disable",class:"inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent"},on:{click:{action:"disable"}},text:"{_'common.disable'}"}),
           n("button", {id:"button-notif-enable",tag:"button",if:"!$prefs.notificationsEnabled",attrs:{type:"button","data-testid":"button-notif-enable",class:"inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground"},on:{click:{action:"enable"}},text:"{_'common.enable'}"}),
-          n("button", {id:"button-notif-test-local",tag:"button",if:"$canTestLocal",attrs:{type:"button","data-testid":"button-notif-test-local",class:"inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent"},on:{click:{action:"testLocal"}},text:"Test local notification"}),
-          n("button", {id:"button-notif-test-push",tag:"button",if:"$canTestPush",attrs:{type:"button","data-testid":"button-notif-test-push",disabled:"=!$pushAvailable || !$signedIn",class:"inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60"},on:{click:{action:"testPush"}},text:"Test web push"}),
+          n("button", {id:"button-notif-test-local",tag:"button",if:"$canTestLocal",attrs:{type:"button","data-testid":"button-notif-test-local",class:"inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent"},on:{click:{action:"testLocal"}},text:"{_'notif.test.local'}"}),
+          n("button", {id:"button-notif-test-push",tag:"button",if:"$canTestPush",attrs:{type:"button","data-testid":"button-notif-test-push",disabled:"=!$pushAvailable || !$signedIn",class:"inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60"},on:{click:{action:"testPush"}},text:"{_'notif.test.push'}"}),
         ]),
         n("slot", {id:"part-need-sign-in",slot:"needSignIn",if:"!$signedIn"}),
         n("paragraph", {id:"text-notif-test-result",tag:"p",if:"$testResult",attrs:{class:"text-xs text-muted-foreground","data-testid":"text-notif-test-result"},text:"{$testResult}"}),
@@ -353,7 +353,7 @@ export function analyticsTree(): LNode {
 export function roomSecurityTree(): LNode {
   const { n } = treeBuilder("rs");
   return n("group", {id:"group",name:"Room security panel"}, [
-    n("paragraph", {id:"text-sm",tag:"p",if:"!$room",attrs:{class:"text-sm text-muted-foreground"},text:"{if $lang === 'cs'}Připoj se nejprve do místnosti.{elseif $lang === 'de'}Bitte zuerst einem Raum beitreten.{else}Join a room first.{/if}"}),
+    n("paragraph", {id:"text-sm",tag:"p",if:"!$room",attrs:{class:"text-sm text-muted-foreground"},text:"{_'room.joinFirst'}"}),
     n("group", {id:"group-2",if:"$room"}, [
       n("panel", {id:"mb-5",name:"Room security",tag:"section",attrs:{class:"mb-5 space-y-3"}}, [
         n("panel", {id:"flex",tag:"div",attrs:{class:"flex items-start gap-3"}}, [
@@ -415,7 +415,6 @@ export function roomSecurityTree(): LNode {
 /** TrustPanel. */
 export function trustTree(): LNode {
   const { n, text, icon } = treeBuilder("tr");
-  const cs = (a: string, b: string) => `{if $lang === 'cs'}${a}{else}${b}{/if}`;
   const section = (id: string, iconName: string, title: string, desc: string, body: LNode[]) =>
     n("panel", { id, tag: "section", attrs: { class: "mb-5 space-y-3" } }, [
       n("panel", { id: `${id}-head`, attrs: { class: "flex items-start gap-3" } }, [
@@ -431,15 +430,15 @@ export function trustTree(): LNode {
     // 6.12 (F-25): labelled by the member's device key, not by the random peer id; the DTLS
     // certificate is new for every connection, so it is not a long-term identity.
     section("trust-tofu", "shield-check", "{_'trust.dtls.title'}", "{_'trust.dtls.body'}", [
-        n("paragraph", { id: "trust-empty", if: "($entries|length) === 0", attrs: { class: "text-sm text-muted-foreground", "data-testid": "trust-empty" }, text: cs("Zatím žádné otisky — připojte se k místnosti.", "No fingerprints yet — join a room.") }),
+        n("paragraph", { id: "trust-empty", if: "($entries|length) === 0", attrs: { class: "text-sm text-muted-foreground", "data-testid": "trust-empty" }, text: "{_'trust.empty'}" }),
         n("list", { id: "trust-list", if: "($entries|length) > 0", attrs: { class: "space-y-3", "data-testid": "trust-list" } }, [
           n("item", { id: "trust-entry", name: "A peer", each: "$entries", as: "e", key: "$e.peerId", attrs: { class: "rounded-xl border border-border bg-background p-3 font-mono text-xs" } }, [
             n("panel", { id: "trust-entry-head", attrs: { class: "flex items-center justify-between" } }, [
               n("area", { id: "trust-peer", attrs: { class: "truncate font-semibold", "data-testid": "trust-peer" }, text: "{$e.label}" }),
-              n("area", { id: "trust-stored", attrs: { class: "text-muted-foreground" }, text: `${cs("od", "since")}: {$e.stored}` }),
+              n("area", { id: "trust-stored", attrs: { class: "text-muted-foreground" }, text: "{_'trust.since'}: {$e.stored}" }),
             ]),
             n("panel", { id: "trust-fingerprint", attrs: { class: "mt-1 break-all text-[11px] leading-relaxed text-foreground", "data-testid": "trust-fingerprint" }, text: "{$e.formatted}" }),
-            n("panel", { id: "trust-indicator", attrs: { class: "mt-1 text-[10px] text-muted-foreground" }, text: `${cs("SHA-256 indikátor: ", "SHA-256 indicator: ")}{$e.head}…{$e.tail}` }),
+            n("panel", { id: "trust-indicator", attrs: { class: "mt-1 text-[10px] text-muted-foreground" }, text: "{_'trust.indicator'}: {$e.head}…{$e.tail}" }),
           ]),
         ]),
       ]),
@@ -471,7 +470,7 @@ export const SETTINGS_CONTRACTS: Record<SettingsId, LayoutContract> = {
   },
   "panel.settings": {
     description: "Settings: the language, the time zone, where appearance went, the largest attachment.",
-    vars: [PREFS, { path: "$langs", type: "list", description: "The languages: .code, .label." }, { path: "$tzHint", type: "text", description: "This device's time zone." }, { path: "$canOpenAppearance", type: "yes/no", description: "The Appearance panel can be opened." }, { path: "$maxAttachment", type: "text", description: "The largest attachment (bytes, or unlimited)." }],
+    vars: [PREFS, { path: "$langs", type: "list", description: "The languages (6.13: nine): .code, .label (its own name), .tag (BCP 47)." }, { path: "$tzHint", type: "text", description: "This device's time zone." }, { path: "$canOpenAppearance", type: "yes/no", description: "The Appearance panel can be opened." }, { path: "$maxAttachment", type: "text", description: "The largest attachment (bytes, or unlimited)." }],
     actions: [SET_TEXT, { name: "openAppearance", description: "Open Appearance." }, { name: "maxAttachment", description: "The largest attachment chosen.", event: "change" }],
     slots: [], refs: [],
   },

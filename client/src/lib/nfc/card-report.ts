@@ -19,10 +19,12 @@
 
 import type { CardFile, EmvApp, EmvData, EmvLogEntry, EmvTag, MrtdData, MrtdImage, NfcResult } from "./command";
 import { maskAnswer, maskPans, maskValue, PAN_TAGS, pansOfEmv } from "./pan-mask";
+import { isLocale, localeChain, type Locale } from "../locales";
 
 export const CARD_REPORT_FORMATS = ["html", "object", "array", "json", "text", "csv"] as const;
 export type CardReportFormat = (typeof CARD_REPORT_FORMATS)[number];
-export type CardReportLang = "en" | "cs" | "de";
+/** 6.13: one of the nine languages; labels without a translation fall back along the chain (sk → cs → en). */
+export type CardReportLang = Locale;
 
 export type CardReportOptions = {
   /** Show the whole card number (the holder's own card); masked by default. */
@@ -112,7 +114,7 @@ const DE: Partial<Record<Key, string>> = {
   signer: "Dokumentensigner", signerIssuer: "Ausgestellt von (CSCA)", validity: "Gültigkeit", protocols: "Protokolle", activeAuthKey: "Schlüssel der aktiven Authentisierung",
   portrait: "Porträt", documentImage: "Dokument", otherImage: "Bild", jp2: "JPEG 2000 — als Anhang zum Herunterladen", ndef: "NDEF-Datensätze", m5records: "M5Cet-Datensätze", data: "Daten",
 };
-const LANGS: Record<CardReportLang, Partial<Record<Key, string>>> = { en: EN, cs: CS, de: DE };
+const LANGS: Partial<Record<CardReportLang, Partial<Record<Key, string>>>> = { en: EN, cs: CS, de: DE };
 
 /* ================================================================ helpers */
 
@@ -378,8 +380,9 @@ function htmlOf(b: Built, L: (k: Key) => string, attachments: CardFile[]): strin
 /* ================================================================ public */
 
 function labels(lang?: string): (k: Key) => string {
-  const dict = LANGS[(lang ?? "en").slice(0, 2).toLowerCase() as CardReportLang] ?? EN;
-  return (k) => dict[k] ?? EN[k];
+  const l = (lang ?? "en").slice(0, 2).toLowerCase();
+  const chain = localeChain(isLocale(l) ? l : "en").map((c) => LANGS[c] ?? {});
+  return (k) => { for (const d of chain) { const v = d[k]; if (v !== undefined) return v; } return EN[k]; };
 }
 
 function build(input: unknown, opts: CardReportOptions): Built {

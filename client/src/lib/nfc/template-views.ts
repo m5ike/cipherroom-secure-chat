@@ -28,6 +28,8 @@ import { emvTagInfo } from "./emv-tags";
 import type { TemplateExchange, TemplateView } from "./apdu-templates";
 import { describeCommand, type DesfireInfo, type GenericItem, type TemplateRun } from "./template-runner";
 import { answerMasks, maskAnswer, maskPans, maskValue, PAN_TAGS, pansInHex, pansOfEmv } from "./pan-mask";
+import { G_MORE } from "./template-views-i18n";
+import { isLocale, localeChain, type Locale } from "../locales";
 
 /* ------------------------------------------------------------ card numbers */
 
@@ -54,7 +56,8 @@ export function maskedRun(run: TemplateRun, pans: string[] = runPans(run)): Temp
   };
 }
 
-export type ViewLang = "en" | "cs" | "de";
+/** 6.13: one of the nine languages (lib/locales.ts); a missing label falls back along the language's chain (sk → cs → en). */
+export type ViewLang = Locale;
 
 /* ------------------------------------------------------------ status words */
 
@@ -117,10 +120,11 @@ const G_DE: Partial<Record<GKey, string>> = {
   configurationChangeable: "Einstellungen änderbar", maxKeys: "Schlüssel", crypto: "Verfahren", yes: "ja", no: "nein", cancelled: "Abgebrochen", step: "Schritt", template: "Vorlage",
   masked: "Kartennummern und Spurdaten sind maskiert.",
 };
+const G_LANGS: Partial<Record<Locale, Partial<Record<GKey, string>>>> = { cs: G_CS, de: G_DE, ...G_MORE };
 function gLabels(lang?: string): (k: GKey) => string {
   const l = (lang ?? "en").slice(0, 2).toLowerCase();
-  const dict = l === "cs" ? G_CS : l === "de" ? G_DE : {};
-  return (k) => dict[k] ?? G_EN[k];
+  const chain = localeChain(isLocale(l) ? l : "en").map((c) => G_LANGS[c] ?? {});
+  return (k) => { for (const d of chain) { const v = d[k]; if (v !== undefined) return v; } return G_EN[k]; };
 }
 
 /** A BER-TLV tree as indented lines, each element with its EMV / ISO 7816 name and a readable value. */

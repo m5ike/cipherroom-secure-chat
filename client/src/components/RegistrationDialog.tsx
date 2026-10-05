@@ -9,7 +9,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ChevronDown, Loader2, Search } from "lucide-react";
 import { SimpleModal } from "./SimpleModal";
-import { t, tf, type Lang } from "../lib/i18n";
+import { langTag, t, tf, type Lang } from "../lib/i18n";
+import { compareText } from "../lib/i18n-intl";
 import {
   REGISTRATION_FIELDS, checkRegistration, flagEmoji,
   type Country, type RegistrationErrors, type RegistrationField, type RegistrationInput,
@@ -65,7 +66,7 @@ export function RegistrationDialog({ lang, signedIn, onClose, onRegister }: {
   }, []);
 
   const names = useMemo(() => {
-    try { return new Intl.DisplayNames([lang], { type: "region" }); } catch { return null; }
+    try { return new Intl.DisplayNames([langTag(lang)], { type: "region" }); } catch { return null; }
   }, [lang]);
   const countryName = (code: string) => names?.of(code) ?? code;
   const dial = list?.find((c) => c.code === form.country)?.dial ?? "";
@@ -193,7 +194,8 @@ function CountrySelect({ lang, list, value, nameOf, disabled, error, onChange }:
   const listRef = useRef<HTMLUListElement>(null);
 
   const items = useMemo(() => {
-    const all = (list ?? []).map((c) => ({ ...c, name: nameOf(c.code) })).sort((a, b) => a.name.localeCompare(b.name, lang));
+    const byName = compareText(lang);
+    const all = (list ?? []).map((c) => ({ ...c, name: nameOf(c.code) })).sort((a, b) => byName(a.name, b.name));
     const q = query.trim().toLowerCase().replace(/^\+/, "");
     if (!q) return all;
     const plain = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();

@@ -10,13 +10,14 @@ import { useEffect, useState, type ChangeEvent } from "react";
 import { Modal } from "./Modal";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
-import { langLabel, SUPPORTED_LANGS, t, type Lang } from "@/lib/i18n";
+import { langLabel, langTag, SUPPORTED_LANGS, t, tf, type Lang } from "@/lib/i18n";
 import { DEFAULT_ROOM_SECURITY, type Preferences, type RoomSecurity } from "@/lib/preferences";
 import { Fingerprint, formatFingerprint } from "@/lib/fingerprint";
 import { keyFingerprint } from "@/lib/identity";
 import { ReleaseStatusCard } from "./ReleaseIntegrity";
 import { currentAccount, saveVault } from "@/lib/account";
 import { ProfileEditor } from "./ProfileEditor";
+import { formatDateTime } from "../lib/format";
 
 type PanelBaseProps = {
   open: boolean;
@@ -86,7 +87,7 @@ export function SettingsPanel({ open, onClose, prefs, setPrefs, lang, onOpenAppe
         ...base,
         data: {
           prefs,
-          langs: SUPPORTED_LANGS.map((code) => ({ code, label: langLabel(code) })),
+          langs: SUPPORTED_LANGS.map((code) => ({ code, label: langLabel(code), tag: langTag(code) })),
           tzHint: Intl.DateTimeFormat().resolvedOptions().timeZone,
           canOpenAppearance: Boolean(onOpenAppearance),
           maxAttachment: prefs.maxAttachmentBytes === Number.MAX_SAFE_INTEGER ? "unlimited" : String(prefs.maxAttachmentBytes),
@@ -191,8 +192,8 @@ export function NotificationsPanel({
         actions: {
           enable: () => void onEnable(),
           disable: () => onDisable(),
-          testLocal: async () => { if (!onTestLocal) return; const r = await onTestLocal(); setTestResult(r.ok ? "Local test sent." : `Local test failed: ${r.reason}`); },
-          testPush: async () => { if (!onTestPush) return; const r = await onTestPush(); setTestResult(r.ok ? "Push test sent." : `Push test failed: ${r.reason}`); },
+          testLocal: async () => { if (!onTestLocal) return; const r = await onTestLocal(); setTestResult(r.ok ? t(lang, "notif.test.localSent") : tf(lang, "notif.test.localFailed", { reason: r.reason ?? "" })); },
+          testPush: async () => { if (!onTestPush) return; const r = await onTestPush(); setTestResult(r.ok ? t(lang, "notif.test.pushSent") : tf(lang, "notif.test.pushFailed", { reason: r.reason ?? "" })); },
         },
         slots: {
           needSignIn: () => <NeedSignIn lang={lang} onOpen={onOpenConnection} testId="notif-need-signin" />,
@@ -296,7 +297,7 @@ export function P4TrustSection({ info, lang }: { info: P4TrustInfo; lang: Lang }
         {alert ? (
           <div role="alert" data-testid="kt-alert" data-kind={alert.kind} className="mt-1 rounded-xl border border-destructive bg-destructive/10 p-3 text-sm font-semibold text-destructive">
             <p>{t(lang, `p4.kt.alert.${alert.kind}`).replace("{detail}", alert.detail)}</p>
-            <p className="mt-1 text-xs font-normal">{new Date(alert.at).toLocaleString(lang)}</p>
+            <p className="mt-1 text-xs font-normal">{formatDateTime(alert.at, lang)}</p>
             <button type="button" className="acc-btn acc-btn--small mt-2" onClick={info.onKtDismiss} data-testid="kt-dismiss">{t(lang, "p4.kt.dismiss")}</button>
           </div>
         ) : (
@@ -312,7 +313,7 @@ export function P4TrustSection({ info, lang }: { info: P4TrustInfo; lang: Lang }
               {info.own.unknown.map((d) => (
                 <li key={d.dpk} className="flex flex-wrap items-center gap-2 text-xs" data-testid={`kt-own-${d.dpk.slice(-8)}`}>
                   <code title={d.dpk}>{shortKey(d.dpk)}</code>
-                  <span className="text-muted-foreground">{t(lang, "p4.kt.own.since").replace("{date}", new Date(d.ts).toLocaleString(lang))}</span>
+                  <span className="text-muted-foreground">{t(lang, "p4.kt.own.since").replace("{date}", formatDateTime(d.ts, lang))}</span>
                   <button type="button" className="acc-btn acc-btn--small" onClick={() => info.onOwnAck?.(d.dpk)}>{t(lang, "p4.kt.own.mine")}</button>
                 </li>
               ))}

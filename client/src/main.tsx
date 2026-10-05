@@ -11,6 +11,9 @@ import { loadPreferences } from "./lib/preferences";
 import { applyTheme } from "./lib/themes";
 import { effectiveAppearance } from "./lib/client-config";
 import { loadCachedClientConfig } from "./lib/client-config-client";
+import { isBuiltinLang } from "./lib/i18n";
+import { loadLocale } from "./lib/i18n-load";
+import { applyDocumentLang } from "./lib/i18n-react";
 
 // Before the first render: classify the device (phone / tablet / desktop,
 // OS, browser) so the very first paint already uses the optimised layout,
@@ -36,8 +39,16 @@ watchFullscreen(() => {});
 captureInstallPrompt();
 startStyleRuntime();
 
-createRoot(document.getElementById("root")!).render(
-  <ErrorBoundary scope="app">
-    <App />
-  </ErrorBoundary>,
-);
+// 6.13: the chosen language's texts before the first paint (a lazily loaded
+// language is one small chunk); a slow or failed load still renders — with
+// the fallback texts — after a moment.
+applyDocumentLang(startPrefs.lang);
+const render = () => {
+  createRoot(document.getElementById("root")!).render(
+    <ErrorBoundary scope="app">
+      <App />
+    </ErrorBoundary>,
+  );
+};
+if (isBuiltinLang(startPrefs.lang)) render();
+else void Promise.race([loadLocale(startPrefs.lang), new Promise((done) => setTimeout(done, 4000))]).finally(render);

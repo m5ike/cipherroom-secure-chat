@@ -18,6 +18,7 @@
 // are ignored — a late "end" never restarts a stopped dictation.
 
 import { releaseMic } from "./mic";
+import { LOCALE_INFO, isLocale } from "./locales";
 
 export type DictationState = "idle" | "starting" | "listening" | "restarting" | "stopping";
 
@@ -299,9 +300,10 @@ export function serverEngine(deps: { open: () => Promise<MediaStream>; transcrib
   };
 }
 
-/** The recogniser's language for the app's (cs → cs-CZ …). */
+/** The recogniser's language for the app's (cs → cs-CZ, sk → sk-SK …; English as en-US, the recognisers' best model). */
 export function dictationLang(lang: string): string {
-  return lang === "cs" ? "cs-CZ" : lang === "de" ? "de-DE" : lang === "en" ? "en-US" : lang;
+  if (lang === "en") return "en-US";
+  return isLocale(lang) ? LOCALE_INFO[lang].tag : lang;
 }
 
 /**

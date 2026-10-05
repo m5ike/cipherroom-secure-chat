@@ -21,11 +21,11 @@ export function roomBarTree(): LNode {
       n("area", { id: "rb-label", name: "Name", attrs: { class: "rb-label truncate" }, text: "{$r.label}" }),
       n("area", {
         id: "rb-users", name: "People", if: "$r.users > 0",
-        attrs: { class: "rb-badge", title: "{_'rooms.bar.users'}", "aria-label": "{$r.users} {_'rooms.bar.users'}" },
+        attrs: { class: "rb-badge", title: "{_'rooms.bar.users'}", "aria-label": "{$r.users|tp:'rooms.bar.usersCount'}" },
       }, [icon("users", "rb-badge__icon", { "aria-hidden": "true" }, { id: "rb-users-icon" }), text("{$r.users}", { id: "rb-users-n" })]),
       n("area", {
         id: "rb-unread", name: "Unread", if: "$r.unread > 0 && !$r.active",
-        attrs: { class: "rb-badge rb-badge--unread", title: "{_'rooms.bar.unread'}", "aria-label": "{$r.unread} {_'rooms.bar.unread'}", "data-testid": "rb-unread" },
+        attrs: { class: "rb-badge rb-badge--unread", title: "{_'rooms.bar.unread'}", "aria-label": "{$r.unread|tp:'rooms.bar.unreadCount'}", "data-testid": "rb-unread" },
       }, [icon("message-circle", "rb-badge__icon", { "aria-hidden": "true" }, { id: "rb-unread-icon" }), text("{$r.unread}", { id: "rb-unread-n" })]),
     ]),
     n("button", {
