@@ -96,7 +96,7 @@ final class AppShellTests: XCTestCase {
 
     func testNFCApplications() throws {
         let aids = try XCTUnwrap(info["com.apple.developer.nfc.readersession.iso7816.select-identifiers"] as? [String])
-        XCTAssertEqual(aids.first, "325041592E5359532E4444463031", "PPSE first")
+        XCTAssertEqual(aids.first, "A0000002471001", "the e-ID first (Core NFC tries them in order; payment AIDs are refused on iPhone anyway)")
         for aid in ["A0000002471001", "D2760000850101", "A0000000031010", "A0000000041010", "A0000000043060",
                     "A00000002501", "A0000000651010", "A0000001523010", "A000000333010101"] {
             XCTAssertTrue(aids.contains(aid), aid)

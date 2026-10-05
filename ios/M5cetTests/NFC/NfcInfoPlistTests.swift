@@ -19,12 +19,9 @@ final class NfcInfoPlistTests: XCTestCase {
     }
 
     /// Core NFC tries the AIDs in Info.plist's order when a card comes (before iOS 26.4, where a reading cannot narrow
-    /// them): M5NFC wants the documents first (IOSAids); the plist starts with the payment directory.
+    /// them): the documents first, exactly as M5NFC's IOSAids lists them.
     func testDocumentsFirst() {
-        let listed = CoreNFCRules.infoPlistAids(info)
-        XCTExpectFailure("Info.plist lists PPSE first; IOSAids.infoPlist puts A0000002471001 first — the coordinator reorders the plist",
-                         strict: false)
-        XCTAssertEqual(listed, IOSAids.infoPlist)
+        XCTAssertEqual(CoreNFCRules.infoPlistAids(info), IOSAids.infoPlist)
     }
 
     func testUsageTextAndFeliCa() {
