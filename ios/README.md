@@ -10,12 +10,16 @@ testy, podpis a distribuci.
 |---|---|
 | `M5Kit/` | Swift balíček s veškerou logikou bez UI (`M5Core`, `M5Crypto`, `M5Proto`, `M5Net`, `M5Design`, `M5NFC`, `CArgon2`), testy `swift test` |
 | `M5cet.xcodeproj` | projekt Xcode (ručně psaný, formát Xcode 16+, **synchronizované složky**) |
-| `M5cet/App/` | vstup aplikace (`M5cetApp`), `AppDelegate` (APNs, PushKit), `AppModel` (stav, odkazy, fáze scény), `AppHooks` (rozhraní pro Platform), `Bootstrap` (kam se Platform při startu zapojí), `DeepLink` (`m5cet://`), zástupná `RootView` |
-| `M5cet/Renderer/`, `M5cet/Parts/` | vykreslování designu a nativní části (vlna 2) |
-| `M5cet/Platform/<oblast>/` | systémové služby — `Security`, `Push`, `Calls`, `NFC`, `Voice`, `Location`, `Contacts`, `Files`, `Notifications`; v každé `README.md` s třídami Androidu, které se tam portují |
+| `M5cet/App/` | vstup aplikace (`M5cetApp`), `AppDelegate` (APNs, PushKit), `AppModel` (stav, odkazy, fáze scény), `AppHooks` (rozhraní pro Platform), `Bootstrap` (pořadí zapojení: Security → Push → Calls → Watch → Notifications → Core → části), `DeepLink` (`m5cet://`), `RootView` (skořápka designu) |
+| `M5cet/Core/` | jádro aplikace (port `A/M5.java`): místnosti a jejich řadiče nad hubem a `RoomSession`, účet a passkeys, profily, buzení při hovoru, stav obrazovek (`AppScreenState`), akce designu, sloty zámku / registrace / místností / hovoru — `Core/README.md` |
+| `M5cet/Renderer/` | vykreslování designu ve SwiftUI, směrování obrazovek, menu, listy, tři kontrakty (`SlotRegistry`, `AppActionRouter`, `ScreenStateProvider`) — `Renderer/README.md` |
+| `M5cet/Parts/` | nativní části: `Chat` (zprávy, bubliny, skladač, média, mapy), `People` (panel lidí, profily, informace o zprávě, bezpečnostní čísla), `Tools` (funkce, asistent AI, hlasový panel, historie), `NFC` (pracovní plocha, tvůrce karty, souhlas modelu), `Calls`, `Lock` |
+| `M5cet/Platform/<oblast>/` | systémové služby — `Security`, `Push`, `Notifications`, `Calls`, `NFC`, `Voice`, `Location`, `Contacts`, `Files`, `Watch`; v každé `README.md` (mapování tříd Androidu a API) |
 | `M5cet/Resources/` | `Info.plist`, `M5cet.entitlements`, `InfoPlist.xcstrings` (texty oprávnění v 9 jazycích), `Assets.xcassets` (ikona, barvy, značka) |
-| `M5cetNotifications/` | Notification Service Extension (zatím neutrální text; dešifrování = vlna 2) |
-| `M5cetWatch/` | aplikace pro hodinky (SwiftUI, zástupný seznam) |
+| `M5cetNotifications/` | Notification Service Extension: otevře zapečetěný obsah klíči SYS, při zámku / podle soukromí neutrální text (sdílený kód přes symbolické odkazy v `Shared/`) |
+| `M5cetWatch/` | aplikace pro hodinky (SwiftUI): místnosti, poslední zprávy, odpovědi — data jen od `Platform/Watch` v iPhonu |
+| `Design/m5/` | výchozí design iOS, ikony a šablony vzhledu (generuje `script/ios-assets.ts`) |
+| `docs/screenshots/` | snímky obrazovek — `final/` (iPhone a iPad, světlý / tmavý vzhled, česky) |
 | `M5cetTests/` | XCTest testy aplikace (běží v simulátoru, hostované aplikací) |
 | `Config/` | `Base.xcconfig` (sdílená nastavení), `Version.xcconfig` (generovaná verze), `Signing.xcconfig.example` |
 | `scripts/` | `sync-version.mjs` (verze z `package.json`), `make-icons.mjs` (ikony z ikony Androidu) |
@@ -80,8 +84,10 @@ xcrun simctl openurl booted 'm5cet://enroll?server=chat.example.com&code=AB-12'
 xcrun simctl io booted screenshot m5cet.png
 ```
 
-Bez podpisu aplikace v simulátoru nedostane token APNs (chybí entitlement `aps-environment`) — zástupná obrazovka
-ukáže „no token“; to je v pořádku.
+Bez podpisu aplikace v simulátoru nedostane token APNs (chybí entitlement `aps-environment`) a místo Keychainu
+použije souborové úložiště jen pro vývoj (Platform/Security) — to je v pořádku. V DEBUG lze otevřít libovolnou
+obrazovku s ukázkovými daty: `xcrun simctl launch booted cz.m5cet.app -M5Screen room -M5Dark YES`
+(další přepínače v `Renderer/README.md`, `Core/README.md` a v README částí).
 
 CI: [`.github/workflows/ios.yml`](../.github/workflows/ios.yml) — `swift test`, kontrola verze, sestavení a testy na
 simulátoru iPhonu, sestavení pro zařízení a pro hodinky; nic se nepodepisuje ani nenahrává (jen `.xcresult`
@@ -118,7 +124,7 @@ Rozšíření i hodinky mají stejnou verzi (App Store to vyžaduje); test `test
   es, it, fr, sk, sl, fi — slovník `i18n/GLOSSARY.md`). Neutrální text upozornění v
   `M5cetNotifications/Localizable.xcstrings`. Všechno ostatní, co aplikace říká, je z designu.
 
-## Pro další agenty (vlna 2)
+## Pro vývojáře
 
 * **Soubory se do projektu nepřidávají.** `M5cet/`, `M5cetNotifications/`, `M5cetWatch/` a `M5cetTests/` jsou
   synchronizované složky: nový `.swift` soubor (i v nové podsložce) Xcode sám zařadí do cíle té složky.
@@ -133,9 +139,12 @@ Rozšíření i hodinky mají stejnou verzi (App Store to vyžaduje); test `test
   `AppModel.push: RemotePushHandling` (token APNs, tiché push), `AppModel.voip: VoIPPushHandling` (PushKit se
   zaregistruje jen s ním — každý VoIP push musí synchronně nahlásit hovor CallKitu), `AppModel.onScenePhase`,
   `AppModel.onLink` / `takePendingLink()` pro `m5cet://`.
-* **Zástupná obrazovka** `App/RootView.swift` je k nahrazení Rendererem.
 * **Sdílení s rozšířením**: App Group `group.cz.m5cet.app` (build nastavení `M5_APP_GROUP`, v Info.plist obou cílů
-  klíč `M5AppGroup`) a skupina Keychainu `$(AppIdentifierPrefix)cz.m5cet.app`.
+  klíč `M5AppGroup`); Keychain: `$(AppIdentifierPrefix)cz.m5cet.app` jen pro aplikaci (PIN, biometrie, čítač,
+  podpisový klíč) a `$(AppIdentifierPrefix)cz.m5cet.shared` sdílená s rozšířením (jen klíč SYS a šifrovací klíč
+  zařízení) — `Platform/Security/README.md` › Skupiny Keychainu.
+* **Jedno jméno = jeden typ**: `bash ios/scripts/check-duplicate-types.sh --app` (CI ho spouští) hlídá, aby
+  aplikace ani moduly M5Kit nedeklarovaly veřejný typ dvakrát.
 * Nový **AID** pro Core NFC → doplnit do `Info.plist`
   (`com.apple.developer.nfc.readersession.iso7816.select-identifiers`); Core NFC jiný SELECT nepustí.
 * Nová schopnost (entitlement), nový cíl nebo závislost = změna projektu → koordinátor.
@@ -150,7 +159,10 @@ V repozitáři není žádný tým ani certifikát. Tým se zadá jedním ze zp�
 
 Podpis je automatický (`CODE_SIGN_STYLE = Automatic`); Xcode zaregistruje App ID `cz.m5cet.app`,
 `cz.m5cet.app.notifications`, `cz.m5cet.app.watchkitapp` a jejich schopnosti podle entitlementů:
-Push Notifications, NFC Tag Reading, App Groups (`group.cz.m5cet.app`), Keychain Sharing, Associated Domains.
+Push Notifications, NFC Tag Reading, App Groups (`group.cz.m5cet.app`), Keychain Sharing, Associated Domains,
+Communication Notifications. Emulace karty (HCE) potřebuje navíc entitlement, který Apple schvaluje zvlášť
+(`com.apple.developer.nfc.hce` + `com.apple.developer.nfc.hce.iso7816.select-identifier-prefixes` v Info.plist —
+`Platform/NFC/README.md`); bez něj aplikace volbu schová.
 Pro sestavení z příkazové řádky přidejte `-allowProvisioningUpdates`.
 
 **Passkeys (Associated Domains)**: entitlement obsahuje `webcredentials:$(M5_WEBCREDENTIALS_DOMAIN)`; doménu serveru,
@@ -185,9 +197,13 @@ zeptá na šifrování; pro šifrování pro masový trh obvykle stačí sebekla
 roční hlášení BIS), případně dokumentace pro jednotlivé země. Až Apple přidělí kód, lze přidat
 `ITSEncryptionExportComplianceCode` do `Info.plist`. Požadavky se mění — ověřte je před odesláním k nahlédnutí.
 
-## Omezení (stav lešení)
+## Stav a omezení (6.14.0)
 
-* Obrazovky, Platform služby, dešifrování v rozšíření a obsah hodinek přijdou ve vlně 2; teď je zástupná obrazovka.
+* **Ověřeno v simulátoru** (iOS 26.5): 852 testů XCTest aplikace, 734 testů M5Kit, běh proti vývojovému serveru
+  (registrace, PIN, místnost, zprávy přes WebRTC), snímky v `docs/screenshots/final/`. **Na skutečném iPhonu,
+  iPadu ani Apple Watch aplikace neběžela**: passkeys s PRF, APNs / VoIP s CallKit, rozšíření notifikací,
+  biometrické klíče Secure Enclave, NFC se skutečnými kartami, kamera, zvuk hovoru a chování na pozadí čekají na
+  podepsaný build.
 * Na tomto Macu není runtime simulátoru watchOS — hodinky jsou jen sestavené, nespuštěné.
 * NFC jen na iPhonu (iPad a hodinky ho nemají), MIFARE Classic Core NFC nečte; HCE jen s entitlementem (§ 5 kontraktu).
 * Polling `.pace` (Core NFC pro karty jen s PACE) by potřeboval formát `PACE` v entitlementu — zatím `TAG` + `NDEF`.

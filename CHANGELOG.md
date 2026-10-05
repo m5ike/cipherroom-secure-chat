@@ -5,6 +5,126 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.14.0] – 2026-10-05
+
+**Aplikace pro iPhone, iPad a Apple Watch.** Celá aplikace pro Android je přepsaná do Swiftu
+(Xcode, Swift 6, iOS / iPadOS / watchOS 26+): stejné funkce, stejný protokol (sdílené testovací
+vektory web ↔ Android ↔ iOS bajt po bajtu), stejný design řízený z konzole a stejné serverové API
+v podobě pro iOS. Kde iOS něco nedovolí, je náhrada nebo poctivé omezení (níže a
+`docs/ios-architecture.md` § 5). V konzoli je nové menu **iOS** vedle **Android** se stejným
+rozvržením. Nově se **budí i nepřítomní členové při hovoru** — na webu, v Androidu i v iOS.
+
+### Přidáno — iOS a iPadOS (`ios/`, `docs/ios-architecture.md`, `ios/README.md`)
+- **Projekt Xcode** `ios/M5cet.xcodeproj` (synchronizované složky): aplikace pro iPhone a iPad,
+  Notification Service Extension, aplikace pro Apple Watch, testy; WebRTC M150 (`stasel/WebRTC`
+  150.0.0, tentýž milník jako Android); verze a build z `package.json` (6.14.0 = 61400); CI
+  `.github/workflows/ios.yml`. Asi 90 000 řádků Swiftu a 34 000 řádků testů.
+- **M5Kit** (Swift balíček bez UI, `swift test` na macOS): `M5Core` (jazyky, jména, množná čísla,
+  formáty, JSON se sémantikou JavaScriptu), `M5Crypto` (protokol 4 — hybrid ML-KEM-768 + P-256,
+  ratchet s KEM, klíče odesílatelů v4, schránky zařízení, soubory a média, důkaz na hubu, key
+  transparency, okno opakování; protokol 3; ECIES, podepsaná politika, PIN wrap, trezor slotů v2,
+  kryptografie štítků NFC; Argon2id jako referenční C kód), `M5Proto` (místnost bez UI —
+  `RoomCore` + `RoomSession`, payloady, příjemci, historie, zamčené místnosti, soubory, hovory,
+  funkce, profily), `M5Net` (hub WebSocket v2, relay, KT, adresář klíčů, účty a passkeys, API
+  zařízení `/api/ios`), `M5Design` (model designu, výrazy se sémantikou Javy, všech 25 prvků a 122
+  akcí, ověření a rozbalení balíčků designu), `M5NFC` (APDU, BAC / PACE, e-ID, EMV, šablony APDU,
+  zprávy o kartách, štítky M5cet).
+- **Design řízený z konzole** jako na Androidu: SwiftUI vykresluje tentýž formát (obrazovky, menu,
+  texty, knihovny akcí, vzhledy), balíčky designu se ověřují, zkouší a vracejí; aplikace nese
+  **výchozí design iOS** (design Androidu se vzhledem iOS — systémové barvy, bubliny jako iMessage,
+  přechody iOS) generovaný ze serveru (`script/ios-assets.ts` → `ios/Design/m5`).
+- **Zabezpečení zařízení:** klíče v **Secure Enclave** (podpis požadavků, šifrovací klíč zařízení,
+  PIN přes PRF Secure Enclave místo HMAC v StrongBoxu, nouzový PIN, čítač pokusů), skupiny Keychainu
+  (rozšíření notifikací vidí jen klíč SYS a šifrovací klíč zařízení), trezor SYS / USER s ochranou
+  dat iOS a formátem záznamů Androidu, čekání po chybném PINu na monotónních hodinách (změna času ani
+  restart ho nezkrátí), biometrie s vypnutím při změně otisků / tváří, automatické zamčení, příjem
+  zpráv při zamčení do zamčené schránky (bajtově shodné s Androidem), vymazání na dálku i nouzovým
+  PINem; obsah zmizí z přepínače aplikací a při nahrávání obrazovky se zobrazí štít.
+- **Chat:** víc místností, zprávy, odpovědi, přeposílání, skryté a „podržet pro přečtení“, mizející
+  zprávy, potvrzení, soubory v trezoru (dočasné kopie se hned mažou), hlasové zprávy AAC jako
+  Android (přehraje i Opus z webu), mapy jen z dlaždic serveru, sdílení polohy, skladač s
+  našeptávačem příkazů, funkce a modely (výstupy HTML v uzamčeném `WKWebView` bez JavaScriptu a bez
+  načítání), asistent AI, diktování **jen v zařízení**.
+- **Hovory:** WebRTC s nativní obrazovkou **CallKit**, příchozí přes **PushKit**, záznam hovorů,
+  volitelně v Nedávných aplikace Telefon (neprůhledný identifikátor místo klíče místnosti), měnič
+  hlasu a převod hlas ↔ text v hovoru (vlastní zvukové zařízení WebRTC s potlačením ozvěny).
+- **Push a upozornění:** APNs; rozšíření notifikací otevře zapečetěný obsah klíči SYS a při zámku
+  nebo podle soukromí ukáže neutrální text; komunikační upozornění (jméno a obrázek odesílatele, jen
+  když to úroveň soukromí dovolí), odpověď a „přečteno“ z upozornění; check-in na pozadí, podepsané
+  příkazy (zamknout, vymazat, politika, zpráva, design, vydání).
+- **NFC (jen iPhone):** Core NFC — ISO 7816 (e-ID s BAC / PACE, šablony APDU), NDEF, MIFARE
+  Ultralight / DESFire, ISO 15693, FeliCa; pracovní plocha, tvůrce karty M5cet, souhlas při čtení
+  pro model, štítky připojení; trvalé uzamčení štítku jen po potvrzení.
+- **Lidé a profily:** panel lidí (přichycení, automatické schování), detail, profil s výběrem
+  fotky (metadata a GPS odstraněna), informace o zprávě po příjemcích, bezpečnostní čísla s **QR
+  kódem** (zobrazení i naskenování), upozornění key transparency.
+- **Poloha, kontakty, hlas:** CoreLocation (sledování pro konzoli jen po zapnutí a podle politiky),
+  propojení s kontakty bez zápisu do adresáře (Siri a list Sdílet nabízejí M5cet přes darované
+  interakce), řeč na text a text na řeč v 9 jazycích.
+- **iPad:** všechny orientace, Split View, Stage Manager, víc oken (každé se zamyká), panely jako na
+  rozloženém Androidu.
+- **Apple Watch:** společník iPhonu — místnosti, poslední zprávy, odpověď diktováním, Scribble nebo
+  rychlou odpovědí. Obsah jen když je aplikace v iPhonu odemčená a volba **Apple Watch** je zapnutá
+  (Nastavení › Upozornění, výchozí vypnuto), podle úrovně soukromí upozornění; hodinky nikdy nedostanou
+  klíče, soubory, souřadnice ani text zapečetěných zpráv a při zamčení se vyprázdní.
+- **9 jazyků** jako web a Android (texty designu, systémové texty oprávnění v `InfoPlist.xcstrings`).
+
+### Přidáno — server a konzole (`docs/ios-server.md`)
+- **API zařízení `/api/ios/*`** (`info`, `enroll`, `checkin`, `ack`, `notify`, `events`,
+  `message-audit`, `location`, `bundles/:id`, `releases/:id`) nad společnými moduly `server/mobile/*`
+  se stejnými podpisy, politikou, příkazy a balíčky jako Android.
+- **APNs** přímo ze serveru (HTTP/2, JWT ES256 z klíče `.p8`), VoIP push pro hovory, kolapsové
+  identifikátory bez údajů o místnosti; nové proměnné `APNS_KEY_FILE`, `APNS_KEY_ID`,
+  `APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_ENV`, `IOS_DATA_DIR`, `IOS_EVENT_DAYS` (instalátor je zná).
+- **Vydání iOS** jako podepsané záznamy s odkazem do App Storu / TestFlightu a minimální verzí;
+  vlastní design iOS a jeho buildy (od aplikace 61400); `/.well-known/apple-app-site-association`
+  pro passkeys (s `APNS_TEAM_ID`, blok v `deploy/nginx/m5cet.conf`).
+- **Konzole › iOS** vedle Androidu: přehled, zařízení, design (rámečky iPhone / iPad, kontrola, co
+  iOS neumí), buildy, vydání, push (zkušební APNs), politika zámku, Define (sdílený s Androidem),
+  polohy, příkazy; `/api/admin/ios/*` pod právy modulu Android.
+
+### Přidáno — buzení při hovoru (`docs/api.md` › Buzení při hovoru)
+- Kdo zahájí hovor, pošle nepřítomným členům položku relay s příznakem hovoru (zapečetěnou jako
+  zprávu) a při zavěšení bez přijetí její konec. Server je budí podle jejich nastavení upozornění:
+  web push, FCM, **VoIP push na iPhone** (CallKit zazvoní i u zavřené aplikace), neutrální
+  upozornění iOS; zvonění vyprší za 60 s, nepřijatý hovor se zapíše jako zmeškaný. Omezení počtu
+  zvonění na odesílatele a místnost; vlastnost `call-wake` v hello (starší server nic nemění).
+
+### Opraveno
+- **Android:** chyba diktování (např. odepřený mikrofon) se už v skladači zobrazí; převod text →
+  hlas v hovoru na 48 kHz už nepošle jen polovinu věty.
+- **Android / iOS:** dokud je aplikace zamčená, design nemůže akcí `screen.open` otevřít jinou
+  obrazovku než zámek (obrana do hloubky — data stejně nejsou odemčená).
+
+### Testy
+- Web a server: `npx vitest run` 325 souborů, 4013 testů (6 přeskočených), E2E 76 / 76, `npm run build`,
+  `i18n-check` čistý pro es / it / fr / sk / sl / fi; Android 780 testů JVM.
+- iOS: `swift test` (M5Kit) 734 testů — všechny sekce sdílených vektorů (`test/vectors/p4.json`,
+  `test/fixtures/android-interop.json`, `test/vectors/nfc-tag-v2.json`) bajt po bajtu, testy Javy
+  přenesené do Swiftu, golden data ze skutečného serveru (rámce hubu, `/api/ios`, balíčky designu);
+  aplikace v simulátoru iPhone 17 (iOS 26.5) 852 testů XCTest (9 volitelných snímkových
+  přeskočených), mj. skutečné WebRTC mezi dvěma místnostmi a CallKit v simulátoru; sestavení pro
+  iPhone / iPad, simulátor a zařízení watchOS; běh aplikace proti vývojovému serveru (registrace,
+  PIN, místnost, zprávy s druhým člověkem přes WebRTC); ~180 snímků obrazovky iPhone a iPad ve
+  světlém i tmavém vzhledu a česky (`ios/docs/screenshots/final/`).
+
+### Známá omezení
+- **Nic neběželo na skutečném iPhonu, iPadu ani Apple Watch** — vše je ověřené v simulátoru
+  (iOS 26.5) a sestavením pro zařízení. Na zařízení zbývá vyzkoušet: passkeys s PRF, APNs a VoIP
+  push s CallKit, rozšíření notifikací, biometrické klíče Secure Enclave, NFC se skutečnými kartami,
+  kameru, zvuk hovoru a chování na pozadí. Aplikace pro hodinky je jen sestavená (na tomto Macu není
+  runtime simulátoru watchOS).
+- **Podpis a distribuce** vyžadují účet Apple Developer (tým, profily, klíč APNs `.p8`); HCE (emulace
+  karty) jen se schváleným entitlementem Apple. Komunikační upozornění potřebují capability v
+  App ID.
+- **Omezení iOS:** snímky obrazovky nejde zakázat (jen štít a skrytí v přepínači); záznam hovorů
+  aplikace Telefon nejde číst ani mazat; bez MIFARE Classic, platebních AID (EMV) a surových rámců;
+  socket běží jen v popředí a krátce na pozadí (data se při uspání aplikace zapomenou, takže
+  automatické zamčení bývá kratší než v politice); kontakty se do adresáře nezapisují; aktualizace jen
+  přes App Store / TestFlight; vypnutý druh upozornění nebo tiché hodiny doručí iOS potichu.
+- Vlastní práva modulu `ios` v konzoli nejsou — stránka iOS používá práva modulu Android.
+- Nové texty iOS v jazycích es, it, fr, sk, sl a fi přeložila AI.
+
 ## [6.13.1] – 2026-10-05
 
 **Čtečky NFC a čipových karet na počítači.** Na macOS nefungovala žádná čtečka — ani v Chromu,

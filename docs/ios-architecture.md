@@ -134,3 +134,40 @@ watch: `-scheme M5cetWatch -sdk watchsimulator build` (na tomto Macu není watch
 | vlna 2 | `M5cet/Renderer`, `M5cet/Parts`, `M5cet/Platform/*`, `M5cetNotifications`, `M5cetWatch` — přidělí koordinátor |
 
 `Package.swift` mění jen koordinátor (agent, který potřebuje novou závislost cíle, to uvede ve zprávě).
+
+## 8. Stav 6.14.0 (co je hotové, jak je ověřené)
+
+Port je kompletní ve smyslu kontraktu: každá obrazovka, slot a akce designu (všech 122) má na iOS svého vlastníka
+(test `CoreStateTests.testEveryCatalogueActionHasAnOwner`), každá oblast `A/*` má protějšek (tabulky v README
+složek: `ios/M5Kit/Sources/*/README.md`, `ios/M5cet/{Core,Renderer}/README.md`, `ios/M5cet/Platform/*/README.md`).
+Rozsah: M5Kit ~37 000 řádků Swiftu (+ ~15 000 testů), aplikace ~52 000 (+ ~20 000 testů), hodinky ~1 400.
+
+| Oblast | Stav |
+|---|---|
+| M5Kit (`swift test`) | 734 testů; sdílené vektory protokolu 4, interop Androidu a NFC tag v2 bajt po bajtu; golden data ze serveru |
+| Aplikace (XCTest, simulátor iPhone 17, iOS 26.5) | 852 testů (9 volitelných snímkových přeskočených); skutečné WebRTC mezi dvěma místnostmi, CallKit v simulátoru |
+| Sestavení | simulátor + `generic/platform=iOS`; hodinky simulátor + `generic/platform=watchOS` (arm64 i arm64_32) |
+| Server | `test/ios-*.test.ts`, buzení při hovoru `test/call-wake-*.test.ts` |
+| Živě | aplikace proti vývojovému serveru: registrace, PIN, místnost, zprávy s druhým člověkem přes WebRTC |
+| Vzhled | ~180 snímků iPhone a iPad, světlý i tmavý vzhled, čeština — `ios/docs/screenshots/final/` |
+
+Rozhodnutí přijatá během portu (navíc k § 5):
+
+* **Hodinky** jsou společník iPhonu přes WatchConnectivity: žádné klíče ani protokol (Argon2id 64 MiB je pro hodinky
+  příliš), obsah jen při odemčené aplikaci a zapnuté volbě `watch.on` (soukromá oblast `watch.` — design ji
+  nezapne), podle úrovně soukromí upozornění, při zámku / odhlášení / vymazání vyprázdnit.
+* **Výchozí design iOS** je design Androidu se vzhledem iOS a s položkami jen pro iOS (`server/ios/design.ts`,
+  `script/ios-assets.ts` → `ios/Design/m5`); texty, kde se chování iOS liší (konverzace, obsah na zamčené
+  obrazovce, passkeys v aplikaci Hesla, historie Telefonu, snímky obrazovky, APNs, NFC), mají znění pro iOS.
+* **Buzení při hovoru** (nové i pro web a Android): relay s příznakem hovoru → VoIP push → CallKit; bez něj by
+  iOS zvonil jen při otevřené aplikaci (`docs/api.md` › Buzení při hovoru).
+* **Zámek:** datový klíč se zapomene i při uspání aplikace systémem (~30 s na pozadí, mimo hovor); čekání po
+  chybném PINu na monotónních hodinách; zamčená aplikace nepustí design na jinou obrazovku (i v Androidu).
+* **Hlasové zprávy** AAC-LC 16 kHz v MP4 jako Android; Opus z webu se přehraje (vlastní demux + AudioToolbox).
+* **Řeč na text jen v zařízení** (bez síťového rozpoznávání Applu); jinak serverová řeč se souhlasem.
+* **Mapy** jen z dlaždic serveru (bez MapKitu), jako politika Androidu.
+
+Zbývá ověřit na zařízení (podepsaný build, účet Apple Developer): passkeys s PRF a AASA, APNs a VoIP push s CallKit
+(i na zamčeném telefonu), proces rozšíření notifikací, biometrické klíče Secure Enclave, Keychain se skutečným
+prefixem týmu, NFC se skutečnými kartami (e-ID, štítky), HCE (jen se schváleným entitlementem), kamera, zvuk a
+Bluetooth v hovoru, chování na pozadí, aplikace na Apple Watch.

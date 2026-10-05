@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **6.13.1** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **6.14.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 6.13.1 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-6.13.1.pdf`](docs/site/m5cet-dokumentace-6.13.1.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 6.14.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-6.14.0.pdf`](docs/site/m5cet-dokumentace-6.14.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -18,7 +18,9 @@ profilu (6.7) — vše volitelné a zapínané provozovatelem. Kód webu doruču
 server, takže proti zlému provozovateli web nechrání; podrobný model důvěry
 je v [`docs/security-analysis.md`](docs/security-analysis.md). **M5cet Desktop**
 (6.13, macOS a Windows) má kód klienta v podepsané aplikaci, ne ze serveru —
-viz [M5cet Desktop](#m5cet-desktop-macos-windows).
+viz [M5cet Desktop](#m5cet-desktop-macos-windows). Aplikace pro **Android** (6.0) a
+**iPhone, iPad a Apple Watch** (6.14) jsou nativní — viz
+[M5cet pro iPhone, iPad a Apple Watch](#m5cet-pro-iphone-ipad-a-apple-watch).
 
 ```text
 ┌──────────────────┐       /ws (WSS, signaling only)        ┌──────────────────┐
@@ -58,11 +60,12 @@ viz [M5cet Desktop](#m5cet-desktop-macos-windows).
 16. [Omezení prohlížečů](#omezení-prohlížečů)
 17. [Známá omezení](#známá-omezení)
 18. [M5cet Desktop (macOS, Windows)](#m5cet-desktop-macos-windows)
-19. [Rychlá instalace](#rychlá-instalace)
-20. [Lokální vývoj](#lokální-vývoj)
-21. [Verzování](#verzování)
-22. [Další dokumentace](#další-dokumentace)
-23. [Licence](#licence)
+19. [M5cet pro iPhone, iPad a Apple Watch](#m5cet-pro-iphone-ipad-a-apple-watch)
+20. [Rychlá instalace](#rychlá-instalace)
+21. [Lokální vývoj](#lokální-vývoj)
+22. [Verzování](#verzování)
+23. [Další dokumentace](#další-dokumentace)
+24. [Licence](#licence)
 
 ---
 
@@ -72,7 +75,12 @@ viz [M5cet Desktop](#m5cet-desktop-macos-windows).
   francouzština, slovenština, slovinština a finština na webu, v Androidu, v desktopové
   aplikaci, v upozorněních a e-mailech; jazyk podle prohlížeče / telefonu, data, čísla,
   řazení a množná čísla podle jazyka ([`docs/i18n.md`](docs/i18n.md)).
-- **Web, Android, macOS a Windows** — M5cet Desktop (6.13) je 1:1 webová aplikace, ale
+- **iPhone, iPad a Apple Watch** (6.14) — nativní aplikace ve Swiftu se všemi funkcemi
+  aplikace pro Android (stejný protokol, stejný design řízený z konzole, Secure Enclave,
+  CallKit, APNs, Core NFC), na hodinkách společník iPhonu; v konzoli menu **iOS** vedle
+  **Android** ([`docs/ios-architecture.md`](docs/ios-architecture.md),
+  [`docs/ios-server.md`](docs/ios-server.md), [`ios/README.md`](ios/README.md)).
+- **Web, Android, iOS, macOS a Windows** — M5cet Desktop (6.13) je 1:1 webová aplikace, ale
   klientský kód nese podepsaná aplikace, ne server ([`docs/desktop.md`](docs/desktop.md)).
 - **End-to-end šifrované zprávy** (protokol 4, od 6.12) — mezi každou dvojicí
   zařízení **hybridní post-kvantové ustavení klíče** (ECDH P-256 + ML-KEM-768)
@@ -799,6 +807,12 @@ je v [dokumentaci › Návrhy a roadmapa](docs/site/index.html#navrhy).
   jen v paměti procesu (retenční sweep je maže průběžně, restart úplně).
 - `App.tsx` (~4 000 řádků) pokrývají hlavně e2e testy.
 - Historii prohlížeče web smazat neumí; pozvánky nepřežijí restart serveru.
+- **6.14:** aplikace pro iPhone, iPad a Apple Watch běžela jen v simulátoru (iOS 26.5; hodinky jen
+  sestavené) — passkeys s PRF, APNs / VoIP s CallKit, rozšíření notifikací, Secure Enclave
+  s biometrií, NFC se skutečnými kartami a chování na pozadí čekají na zkoušku na zařízení;
+  podpis a distribuce potřebují účet Apple Developer. Omezení iOS (snímky obrazovky, záznam hovorů
+  Telefonu, MIFARE Classic, platební AID, běh na pozadí) — viz
+  [`CHANGELOG.md`](CHANGELOG.md) › 6.14.0 › Známá omezení.
 - **6.13:** překlady es / it / fr / sk / sl / fi vytvořila AI (bez rodilého mluvčího); konzole
   a `/help` jsou anglicky; M5cet Desktop neběžel na skutečném Windows, buildy nejsou
   podepsané, macOS starší než 13 Electron nepodporuje — viz
@@ -866,6 +880,34 @@ Trusted Signing); bez nich vznikne nepodepsaný build (macOS ad-hoc) a řekne to
 `.github/workflows/desktop.yml`. Podrobně — instalace, co je jinak (Web Push, Web NFC, passkeys
 podle systému), bezpečnostní model, sestavení, testy, co nebylo ověřeno —
 v [`docs/desktop.md`](docs/desktop.md).
+
+---
+
+## M5cet pro iPhone, iPad a Apple Watch
+
+**6.14:** aplikace pro Android přepsaná do **Swiftu** (Xcode, Swift 6, iOS / iPadOS / watchOS 26+)
+se všemi jejími funkcemi: víc místností, zprávy, soubory, hlasové zprávy, hovory, poloha, kontakty,
+funkce a modely, asistent AI, NFC, lidé a profily, nastavení. Tentýž **protokol 4** (testovací
+vektory web ↔ Android ↔ iOS bajt po bajtu), tentýž **design řízený z konzole** (obrazovky, texty,
+knihovny akcí, vzhledy; balíčky se ověřují a dají se vrátit) a tytéž řídicí zprávy — server má pro
+iOS vlastní API `/api/ios/*` a v konzoli menu **iOS** vedle **Android**.
+
+* **iOS místo Androidu:** klíče v **Secure Enclave** a Keychainu místo Keystore / StrongBox,
+  **CallKit** a **PushKit** místo ConnectionService, **APNs** s rozšířením notifikací místo FCM,
+  **Core NFC** (jen iPhone), aktualizace přes **App Store / TestFlight** místo APK, štít při
+  nahrávání obrazovky místo `FLAG_SECURE`.
+* **iPad:** všechny orientace, Split View, víc oken. **Apple Watch:** společník iPhonu
+  (místnosti, poslední zprávy, odpověď diktováním) jen při odemčené aplikaci a zapnuté volbě.
+* Logika bez UI je v balíčku `ios/M5Kit` (`swift test`), aplikace v `ios/M5cet.xcodeproj`.
+
+```bash
+swift test --package-path ios/M5Kit
+xcodebuild -project ios/M5cet.xcodeproj -scheme M5cet -destination 'platform=iOS Simulator,name=iPhone 17' build test CODE_SIGNING_ALLOWED=NO
+```
+
+Kontrakt a mapování Android → iOS: [`docs/ios-architecture.md`](docs/ios-architecture.md);
+server, APNs a konzole: [`docs/ios-server.md`](docs/ios-server.md); sestavení, podpis a
+distribuce: [`ios/README.md`](ios/README.md).
 
 ---
 
@@ -970,7 +1012,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.13.1       | aktuální — **čtečky NFC a čipových karet na počítači**: v M5cet Desktop „Systémová čtečka (PC/SC)“ pro USB čtečky, které si macOS / Windows drží (ověřeno s ACS ACR1281), Bluetooth SPP čtečky PN532 ve výběru sériových portů, srozumitelné chyby místo `claimInterface`, výběr Bluetooth zařízení v desktopu, oprava kodeku PN532; TSA zvuk podle hodin runtime |
+| 6.14.0       | aktuální — **aplikace pro iPhone, iPad a Apple Watch** (Swift 6, iOS / watchOS 26+): port všech funkcí aplikace pro Android — protokol 4, design z konzole, Secure Enclave, CallKit + PushKit, APNs s rozšířením notifikací, Core NFC, iPad s víc okny, společník na hodinkách; server `/api/ios/*`, APNs, vydání přes App Store / TestFlight, design iOS, menu **iOS** v konzoli; **buzení nepřítomných při hovoru** (web, Android, iOS) |
+| 6.13.1       | **čtečky NFC a čipových karet na počítači**: v M5cet Desktop „Systémová čtečka (PC/SC)“ pro USB čtečky, které si macOS / Windows drží (ověřeno s ACS ACR1281), Bluetooth SPP čtečky PN532 ve výběru sériových portů, srozumitelné chyby místo `claimInterface`, výběr Bluetooth zařízení v desktopu, oprava kodeku PN532; TSA zvuk podle hodin runtime |
 | 6.13.0       | **devět jazyků** (en, cs, de, es, it, fr, sk, sl, fi) na webu, v Androidu, v upozorněních, e-mailech a hláškách telefonie — výběr v nativních názvech, slovenština samostatně, data / čísla / řazení / množná čísla podle jazyka, písma s rozšířenou latinkou, UTF-8 e-maily; **M5cet Desktop** pro macOS (13+, Intel i Apple Silicon) a Windows (x64, arm64) — 1:1 webová aplikace s klientským kódem v podepsané aplikaci místo ze serveru, přihlášení passkeyem přes systémový prohlížeč, nativní menu, upozornění, odznak, lišta |
 | 6.12.0       | **bezpečnostní vydání: protokol 4** (hybridní post-kvantové ustavení klíče ECDH + ML-KEM-768, Double Ratchet s post-kvantovým ratchetem, sender keys s podpisovým klíčem řetězu, zprávy pro nepřítomné šifrované pro každé zařízení příjemce, klíč souboru na přenos a médií na hovor, padding, trvalé okno proti přehrání, ochrana proti downgrade) na webu i v Androidu, **průhlednost klíčů** a stavy identity (nový / ověřený / změněný), **důkaz členství na hubu**; server: šifrované `functions.db` a `telephony.db`, sandbox funkcí v bubblewrap, auditní pin, přesné originy passkeys, limity na adresu; web a Android: náhodný klíč místnosti, NFC tag v2, normalizace jmen, zámek Androidu bez datového klíče se schránkou zámku; **`check.sh`** — kontrola balíčku a hostitele; nezávislá revize 6.12 se všemi nálezy opravenými |
 | 6.11.0       | **odpovědi modelů od system-messenger** (příchozí zpráva s názvem a ikonou modelu, cituje příkaz, v místnosti „přes <jméno>“, široká bublina), **běh příkazu vždy skončí** (30 s bez známky života = chyba s ikonou a flash, limit DNS 4 s, rozpočet `/mail`, ohlášené čekání, odchod volajícího běh zruší, právě jeden konec streamu), **kontrola parametrů** před odesláním s kartou definice a návodu, ikona a návod modelu v konzoli, `/hlr <číslo>` hned s výsledkem, **nový našeptávač** (volné hledání, naposledy použité, sekce, podrobnost, nápověda parametrů) na webu i v Androidu |
@@ -1045,6 +1088,9 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/review-612.md`](docs/review-612.md)              | Nezávislá revize 6.12 s důkazními testy a stavem oprav |
 | [`docs/i18n.md`](docs/i18n.md)                          | Jazyky (6.13): devět jazyků, načítání, náhradní řetěz, množná čísla, formáty, písma; jak přidat jazyk nebo text, glosář `i18n/GLOSSARY.md`, nástroje `i18n-extract` / `i18n-check` |
 | [`docs/desktop.md`](docs/desktop.md)                    | M5cet Desktop (6.13) pro macOS a Windows: kód klienta z podepsané aplikace, výběr serveru a kontrola verze, passkeys podle systému a přihlášení přes prohlížeč, upozornění, NFC, bezpečnostní model, sestavení, podpis, CI, testy |
+| [`docs/ios-architecture.md`](docs/ios-architecture.md)  | Aplikace pro iPhone, iPad a Apple Watch (6.14): verze a nástroje, struktura `ios/`, mapování Android → iOS, platformní náhrady a omezení, testy a vektory |
+| [`docs/ios-server.md`](docs/ios-server.md)              | Server pro iOS (6.14): `/api/ios/*`, APNs a VoIP push, vydání, design iOS a buildy, AASA, menu iOS v konzoli |
+| [`ios/README.md`](ios/README.md)                        | Projekt Xcode: cíle, sestavení, testy, podpis, TestFlight / App Store |
 | [`CHANGELOG.md`](CHANGELOG.md)                          | Historie verzí                                 |
 | [`docs/modes.md`](docs/modes.md)                        | Režimy Light / Server-enhanced, jejich parametry a soubory; Firebase |
 | [`docs/session-and-sharing.md`](docs/session-and-sharing.md) | Session cache, vynucený stav, pozvánky s kódem, Smazat vše a odejít |

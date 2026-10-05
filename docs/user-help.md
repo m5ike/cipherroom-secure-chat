@@ -204,6 +204,34 @@ loguje jen kind/peerId/room/peerCount — nikdy plaintext zprávy.
 - **Nastavení** — biometrie, změna PINu, notifikace, tmavý vzhled, jazyk,
   záznam hovorů, kontrola aktualizací, o aplikaci a *Smazat všechna data*.
 
+### Aplikace pro iPhone, iPad a Apple Watch (6.14)
+
+Aplikace pro iPhone a iPad umí totéž co aplikace pro Android (výše) — připojení k serveru
+QR kódem nebo adresou, PIN a Face ID / Touch ID, víc místností, zprávy, soubory, hlasové
+zprávy, hovory, polohu, příkazy, asistenta AI i NFC. Rozdíly dané systémem iOS:
+
+- **Hovory** zvoní nativní obrazovkou iPhonu (i na zamčeném displeji a v autě); do
+  **Nedávných** aplikace Telefon se zapisují jen po zapnutí v Nastavení (ve výchozím stavu jen
+  jako „M5cet“). Když vám někdo volá a aplikaci máte zavřenou, server vás vzbudí (pokud to
+  provozovatel zapnul).
+- **Snímek obrazovky** iOS zakázat nedovolí: v přepínači aplikací se obsah skryje a při
+  nahrávání nebo zrcadlení obrazovky se místo zpráv ukáže štít.
+- **Zámek** — data se zapomenou i tehdy, když iOS aplikaci na pozadí uspí (asi po 30 s),
+  takže se aplikace může zamknout dřív, než je nastaveno. Zprávy dál chodí a po odemčení
+  se ukážou.
+- **NFC** jen na iPhonu (iPad a hodinky ho nemají): doklady (e-ID), štítky NDEF, MIFARE
+  Ultralight / DESFire; karty MIFARE Classic a platební karty iPhone aplikacím nepředá.
+  Trvalé uzamčení štítku se ptá na potvrzení.
+- **Kontakty** — M5cet nezapisuje do adresáře; místo toho ho iPhone nabídne u kontaktu,
+  v Siri a v listu Sdílet.
+- **Aktualizace** přicházejí z App Storu nebo TestFlightu; když server vyžaduje novější verzi,
+  aplikace vás na to upozorní.
+- **iPad** — všechny orientace, Split View a víc oken (každé se zamyká).
+- **Apple Watch** — v *Nastavení › Upozornění › Apple Watch* (výchozí vypnuto) zapnete na
+  hodinkách místnosti a poslední zprávy s odpovědí diktováním nebo rychlou odpovědí. Hodinky
+  ukazují obsah jen tehdy, když je aplikace v iPhonu odemčená, podle úrovně soukromí
+  upozornění; po zamčení se vyprázdní.
+
 ### Oznámení operátora a telefonní hovory (6.0)
 - **Oznámení · operátor** — správce serveru může poslat oznámení celé
   místnosti, zprávu jen vám nebo krátké upozornění. Připnuté oznámení uvidíte
@@ -712,6 +740,33 @@ Same as the Czech section above.
 - **Updates** — a new look or a new version of the app is offered on an update
   card. If a new look fails, the app goes back to the previous one by itself.
 
+### iPhone, iPad and Apple Watch app (6.14)
+
+The app for iPhone and iPad does what the Android app does (above) — joining a server by QR code
+or address, PIN and Face ID / Touch ID, several rooms, messages, files, voice messages, calls,
+position, commands, the AI assistant and NFC. What iOS makes different:
+
+- **Calls** ring with the iPhone's own call screen (also on the lock screen and in the car); they
+  go to the Phone app's **Recents** only if you switch that on in Settings (by default named just
+  "M5cet"). When someone calls you and the app is closed, the server wakes you (if the operator
+  turned that on).
+- **Screenshots** cannot be blocked on iOS: the app switcher hides the content and a shield
+  replaces the messages while the screen is recorded or mirrored.
+- **Lock** — the data is also forgotten when iOS suspends the app in the background (after about
+  30 s), so the app may lock sooner than set. Messages keep coming and show after unlocking.
+- **NFC** on iPhone only (iPad and the watch have none): ID documents (e-ID), NDEF tags, MIFARE
+  Ultralight / DESFire; the iPhone does not hand MIFARE Classic or payment cards to apps.
+  Locking a tag for good asks for confirmation.
+- **Contacts** — M5cet does not write to your address book; the iPhone offers it at the contact,
+  in Siri and in the Share sheet instead.
+- **Updates** come from the App Store or TestFlight; when the server needs a newer version, the
+  app tells you.
+- **iPad** — every orientation, Split View and several windows (each one locks).
+- **Apple Watch** — *Settings › Notifications › Apple Watch* (off by default) shows your rooms and
+  recent messages on the watch, with replies by dictation or a quick reply. The watch shows
+  content only while the app on the iPhone is unlocked, as your notification privacy allows,
+  and is emptied when the app locks.
+
 ### Operator notices and phone calls (6.0)
 - **Announcement · operator** — the server's operator can send a notice to
   the whole room, a message just to you or a short alert. A pinned one is
@@ -1211,6 +1266,34 @@ Siehe Czech-Abschnitt oben.
   Telefons zeigt immer nur diese neutrale Fassung.
 - **Updates** — ein neues Aussehen oder eine neue Version wird auf einer Karte
   angeboten; misslingt ein neues Aussehen, kehrt die App selbst zum vorigen zurück.
+
+### App für iPhone, iPad und Apple Watch (6.14)
+
+Die App für iPhone und iPad kann dasselbe wie die Android-App (oben) — Verbindung zum Server per
+QR-Code oder Adresse, PIN und Face ID / Touch ID, mehrere Räume, Nachrichten, Dateien,
+Sprachnachrichten, Anrufe, Standort, Befehle, den KI-Assistenten und NFC. Unterschiede durch iOS:
+
+- **Anrufe** klingeln mit dem iPhone-eigenen Anrufbildschirm (auch gesperrt und im Auto); in die
+  **Anrufliste** der Telefon-App kommen sie nur, wenn Sie das in den Einstellungen einschalten
+  (standardmäßig nur als „M5cet“). Ruft Sie jemand bei geschlossener App an, weckt Sie der Server
+  (wenn der Betreiber das eingerichtet hat).
+- **Bildschirmfotos** lassen sich unter iOS nicht verhindern: Der App-Umschalter verbirgt den
+  Inhalt, und bei Bildschirmaufnahme oder Spiegelung ersetzt ein Schutzschild die Nachrichten.
+- **Sperre** — die Daten werden auch vergessen, wenn iOS die App im Hintergrund anhält (nach etwa
+  30 s); die App kann sich also früher sperren als eingestellt. Nachrichten kommen weiter an und
+  erscheinen nach dem Entsperren.
+- **NFC** nur auf dem iPhone (iPad und Uhr haben keins): Ausweise (e-ID), NDEF-Tags, MIFARE
+  Ultralight / DESFire; MIFARE Classic und Zahlungskarten gibt das iPhone nicht an Apps weiter.
+  Das dauerhafte Sperren eines Tags fragt nach einer Bestätigung.
+- **Kontakte** — M5cet schreibt nicht ins Adressbuch; stattdessen bietet das iPhone M5cet beim
+  Kontakt, in Siri und im Teilen-Menü an.
+- **Updates** kommen aus dem App Store oder über TestFlight; verlangt der Server eine neuere
+  Version, weist die App darauf hin.
+- **iPad** — alle Ausrichtungen, Split View und mehrere Fenster (jedes wird gesperrt).
+- **Apple Watch** — *Einstellungen › Benachrichtigungen › Apple Watch* (standardmäßig aus) zeigt
+  Ihre Räume und die letzten Nachrichten auf der Uhr, mit Antwort per Diktat oder Schnellantwort.
+  Die Uhr zeigt Inhalte nur, solange die App auf dem iPhone entsperrt ist, gemäß Ihrer
+  Benachrichtigungs-Privatsphäre, und wird beim Sperren geleert.
 
 ### Hinweise des Betreibers und Telefonanrufe (6.0)
 - **Ankündigung · Betreiber** — der Betreiber des Servers kann dem ganzen Raum

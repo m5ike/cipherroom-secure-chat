@@ -336,6 +336,36 @@ cest).
 `<dir>/.m5cet/backups/`) a drží posledních `BACKUP_KEEP` (5) záloh;
 `update.sh --rollback` se k poslední vrátí.
 
+## Přechod na 6.14
+
+6.14 přidává aplikaci pro iPhone, iPad a Apple Watch, její API na serveru a menu **iOS** v konzoli,
+a buzení nepřítomných při hovoru. Bez nových proměnných server běží jako dřív.
+
+- **APNs (volitelné):** aby iPhony dostávaly push (zprávy, řídicí příkazy, hovory přes VoIP),
+  nastavte `APNS_KEY_FILE` (klíč `.p8` z Apple Developer › Keys, soubor 0600, v Dockeru jako volume),
+  `APNS_KEY_ID`, `APNS_TEAM_ID`, případně `APNS_TOPIC` (bundle ID, výchozí `cz.m5cet.app`) a
+  `APNS_ENV` (`production` / `sandbox`) — `docs/build-and-deploy.md`. Instalátor je zná
+  (`update.sh` je převezme). Bez nich se zařízení iOS jen pravidelně hlásí (check-in) a hovory
+  zvoní jen při otevřené aplikaci. Data iOS jsou v `$DATA_DIR/ios` (`IOS_DATA_DIR`), události se
+  drží 180 dní (`IOS_EVENT_DAYS`).
+- **Passkeys aplikace iOS:** s `APNS_TEAM_ID` server zveřejní
+  `/.well-known/apple-app-site-association`. Referenční nginx (`deploy/nginx/m5cet.conf`) má pro něj
+  vlastní blok; web generovaný instalátorem ho předává aplikaci sám. Hostingový panel, který blokuje
+  `/.well-known/`, ho musí propustit stejně jako `assetlinks.json` (Apple ho stahuje bez
+  přesměrování). Aplikace se sestavuje s doménou serveru v `M5_WEBCREDENTIALS_DOMAIN` (`ios/README.md`).
+- **Aplikace iOS** se nesestavuje na serveru: sestaví se v Xcode s vlastním týmem Apple Developer
+  (`ios/Config/Signing.xcconfig`) a distribuuje přes **TestFlight / App Store**. V *Konzole › iOS ›
+  Vydání* se zapíše záznam verze (podepsaný klíčem serveru) s odkazem a minimální verzí — aplikace pod
+  minimem vyzve k aktualizaci. Registrační kódy, politika zámku, příkazy a design fungují jako u
+  Androidu; **Define je sdílený** s Androidem.
+- **Konzole › iOS** používá práva modulu **Android** (kdo smí na stránku Android, smí i na iOS).
+- **Buzení při hovoru:** server ohlašuje v hello vlastnost `call-wake`; klienti 6.14 pak při hovoru
+  pošlou nepřítomným položku relay s příznakem hovoru. Upozornění na hovor vyprší za 60 s (dřív
+  hodinu) a nesou značku `m5-call-<id>`; omezení na odesílatele a místnost je 1 zvonění za 10 s a 6
+  za 10 min. Aplikace Android starší než 6.14 dostanou zvonění jako dřívější upozornění bez konce.
+- **Android 6.14** (aktualizace APK jako obvykle, `update.sh --android`): opravené chyby diktování
+  a převodu text → hlas v hovoru; zamčená aplikace nepustí design na jinou obrazovku než zámek.
+
 ## Přechod na 6.13
 
 6.13 přidává jazyky a desktopovou aplikaci; nové proměnné prostředí serveru nejsou.

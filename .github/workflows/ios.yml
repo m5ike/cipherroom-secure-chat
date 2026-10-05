@@ -69,7 +69,7 @@ jobs:
           [ "$major" -ge 26 ] || { echo "::error::Xcode 26 or newer is needed (iOS 26 SDK, Swift 6.2 tools)"; exit 1; }
 
       - name: One owner per public type name
-        run: bash ios/scripts/check-duplicate-types.sh
+        run: bash ios/scripts/check-duplicate-types.sh --app
       - name: swift test
         run: swift test --package-path ios/M5Kit
 

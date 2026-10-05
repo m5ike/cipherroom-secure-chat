@@ -55,7 +55,18 @@ Which way reaches which reader, and why:
 | **PN532 on USB-serial** (FTDI, CP210x, CH340, PL2303) — Serial | yes (browser and desktop) | yes (the adapter's driver) | yes (`dialout` group) |
 | **PN532 on Bluetooth SPP** (HC-05/06, "PN532_SPP") — Serial | yes: pair it in System Settings; the chooser shows it as a Bluetooth port, or choose *Show all serial ports* (`/dev/cu.PN532_SPP`) | yes: pair it; the chooser shows the Bluetooth port (or its COM port under *all serial ports*) | yes: pair it (BlueZ) |
 | **PN532 on BLE** (Nordic UART, HM-10) — Bluetooth | yes (Chrome; desktop: native chooser) | yes | yes (Chrome with BlueZ) |
-| **A phone** | the M5cet Android app, or Chrome on Android (This device) | | |
+| **A phone** | the M5cet Android app, or Chrome on Android (This device); 6.14: the M5cet **iPhone** app (Core NFC — see below) | | |
+
+**iPhone (6.14, Core NFC).** The iOS app reads with the iPhone's own reader only (iPad and Apple
+Watch have none; no USB or Bluetooth readers on iOS): ISO 7816 cards whose application is listed
+in the app's `Info.plist` (e-ID / e-passport with BAC or PACE, the NDEF Type 4 application, APDU
+templates), NDEF tags (read, write, permanent lock after a confirmation), MIFARE Ultralight / NTAG
+and DESFire, ISO 15693, FeliCa. Core NFC never hands **MIFARE Classic** tags, **payment
+applications (EMV)** or raw ISO 14443-3 frames (UID write) to an app — the workbench shows those
+ops disabled with the reason. Card emulation (connection card, M5Cet card) needs Apple's HCE
+entitlement (`CardSession`, EU); without it the option is hidden. One reading is limited to the
+system sheet's 60 s. Code: `ios/M5Kit/Sources/M5NFC` (logic), `ios/M5cet/Platform/NFC` (Core NFC
+transport, `NfcService`), `ios/M5cet/Parts/NFC` (UI). Not yet tried with real cards.
 
 What changed in 6.13.1:
 
