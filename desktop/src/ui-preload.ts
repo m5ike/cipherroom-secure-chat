@@ -11,6 +11,8 @@ export type UiState = {
   error: string;
   lang: string;
   version: string;
+  /** The build was code-signed (else the picker says it is not). */
+  signed: boolean;
   banner: { server: string } | null;
 };
 

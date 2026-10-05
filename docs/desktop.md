@@ -98,10 +98,11 @@ Pojistky navíc:
 * **Přesměrování** odpovědi serveru se nenásleduje (API M5cet nepřesměrovává): jinak by
   Electron podal stránce obsah cíle pod původní URL.
 * Při každém otevření serveru se smažou jeho service workery a HTTP cache z dřívějška.
-* **Integrita**: každý podávaný soubor aplikace porovná se SHA-256 v hlavičce `app.asar`
-  (Electron ověřuje hlavičku proti hashi v podepsaném `Info.plist` / prostředku `.exe`, viz
-  pojistky v § 6); změněný bajt = soubor odmítnut. Ověřeno: změna jednoho bajtu v `app.asar`
-  se projeví (test `smoke.mjs` hlásí „every served client file is checked“).
+* **Integrita**: Electron ověřuje hlavičku `app.asar` proti hashi v podepsaném `Info.plist` /
+  prostředku `.exe` (pojistky v § 6) a při čtení souboru jeho bloky; aplikace navíc porovná
+  SHA-256 každého podávaného souboru s hlavičkou (`desktop/src/asar-integrity.ts`). Ověřeno
+  ručně na zabaleném buildu: po změně jednoho bajtu `index.html` uvnitř `app.asar` Electron
+  ohlásí „ASAR Integrity Violation“ a aplikace skončí — stránka se nenačte.
 
 **Kód ze serveru (výjimka).** Pokud uživatel po rozdílu verzí výslovně zvolí *Použít webový kód
 serveru*, aplikace pro ten server nic nezachytává (jako prohlížeč) a **trvale ukazuje pruh**

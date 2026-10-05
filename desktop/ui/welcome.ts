@@ -39,7 +39,7 @@ async function render(): Promise<void> {
   $("servers").textContent = s("welcome.servers");
   $("note").textContent = s("welcome.note");
   $("busy").textContent = s("welcome.checking");
-  $("version").textContent = `M5cet Desktop ${st.version}`;
+  $("version").textContent = `M5cet Desktop ${st.version}${st.signed ? "" : ` · ${s("welcome.unsigned")}`}`;
   const input = $<HTMLInputElement>("server");
   if (!input.value && st.defaultServer && st.servers.length === 0) input.value = st.defaultServer;
   showError(st.error);

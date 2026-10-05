@@ -592,7 +592,7 @@ function setupUiIpc(): void {
     const s = store.get();
     const tgt = current();
     return {
-      strings, lang: loc, version: app.getVersion(), error: welcomeError,
+      strings, lang: loc, version: app.getVersion(), error: welcomeError, signed: BUILD.signed,
       defaultServer: BUILD.defaultServer,
       servers: s.servers.map((x) => ({ origin: x.origin, display: x.display, codeSource: x.codeSource, current: x.origin === s.current })),
       banner: tgt && tgt.mode === "server" ? { server: currentDisplay() } : null,
