@@ -233,6 +233,8 @@ export class BackgroundRoom {
   }
 
   private readonly joined = new WeakSet<WebSocket>();
+  /** Review S14: sockets whose proven join was refused and that joined again without a proof. */
+  private readonly proofRetried = new WeakSet<WebSocket>();
   private seed: Promise<Uint8Array> | null = null;
 
   /** The join, once per socket — with the proof that we hold the room key over the socket's nonce (§ 13). */
@@ -277,6 +279,21 @@ export class BackgroundRoom {
       case "peer-updated": { const p = this.peers.get(String(f.peerId)); if (p) p.name = String(f.name ?? p.name); return; }
       case "peer-left": this.dropPeer(String(f.peerId)); return;
       case "phone-bridge": this.emit({ type: "phone", key: this.target.key, label: this.target.label, frame: f, socketUrl: this.socket?.url ?? "" }); return;
+      case "error": {
+        // 6.12 review S14: our proof of the room key was refused (another key registered the room — possibly a
+        // squatter): join once more without a proof (legacy, "unproven" to the others) instead of giving up;
+        // a server that then requires a proof leaves nothing to try.
+        const socket = this.socket;
+        if (f.code === "room-proof" && socket && !this.proofRetried.has(socket)) {
+          this.proofRetried.add(socket);
+          this.joined.delete(socket);
+          await this.join(socket, null);
+        } else if (f.code === "room-proof" || f.code === "room-proof-required") {
+          this.status = "offline";
+          this.changed();
+        }
+        return;
+      }
       case "signal": {
         const source = String(f.source ?? "");
         const link = this.peers.get(source);

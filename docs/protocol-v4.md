@@ -413,9 +413,21 @@ AAD end   = join(LABEL.fileEnd, transferId)
 ```
 
 `FK` travels end to end: on a data channel as a pair `file` inner message sent before
-`file-meta`; for a relayed or proxied file inside the (pair, sender-key or mailbox) message that
-announces it (field `fk` of the attachment). The room key no longer protects files between
-protocol-4 clients. Chunk and meta formats are otherwise those of protocol 3.
+`file-meta`. The room key no longer protects files between protocol-4 clients. Chunk and meta
+formats are otherwise those of protocol 3 (the frames carry `v: 4`).
+
+**Proxied files** (6.12 review P07). The server relays a file's frames (`proxy-meta`, `-chunk`,
+`-end`) when no data channel came up — so there is no pair session to carry `FK`. The sender then
+seals `FK` as a mailbox item (§ 7.2, payload `{ id: transferId, t: "fk", fk: b64(FK) }`, an
+`mb-set` for several devices) to the devices of EVERY member present that it may seal to under the
+rules of § 7.4 (seen in a valid hello, or certified by the member's pinned account), and sends it
+to that member before the meta as a hub `signal` whose (room-key-sealed, routing-only) payload is
+`{ p4: "fk", transferId, item }` — the server, or anyone with the room key, sees only the item,
+which only the recipient device opens. A receiver keeps the `FK` for (signal source, transferId),
+waits up to 5 s for it after a `v: 4` proxied meta (the proxied frames are handled in order behind
+it) and uses it once. When some member present has no device the sender may seal to, the transfer
+uses the protocol-3 room-derived file key (`v: 2`), and the sender is told that the file went under
+the room key. (The server's frame parser keeps `v` 2 and 4.)
 
 ## 9. Media (call frames)
 
@@ -491,6 +503,10 @@ A device is revoked by a `rev` entry in key transparency (§ 14); a revoked devi
   carry `proven: boolean`.
 * Clients show unproven members with a badge; server-side features that reach members by room
   (telephony route audio, calls offered to a room, `user` targets) address only proven members.
+* A client whose proven join is refused (`room-proof`) does not give up (6.12 review S14: the room
+  may have been squatted while its passphrase is right): it says so, joins once more on the same
+  socket WITHOUT a proof (legacy — the others see it unproven) unless the server then answers
+  `room-proof-required`, and tells the user that the server's owner can reset the verifier.
 
 Server details (6.12):
 

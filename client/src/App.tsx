@@ -89,7 +89,7 @@ import {
   type IncomingCallbacks,
 } from "./lib/file-transfer";
 import { detectGeolocation, getCurrentPosition, watchPosition, osmLink, type LocationWatcher } from "./lib/maps";
-import { toBase64 } from "./lib/crypto";
+import { fromBase64, toBase64 } from "./lib/crypto";
 // Crypto v2: per-purpose keys, bound contexts, signed bodies (envelope.ts).
 import {
   createReplayGuard, deriveRoomKeys, isSealedSignal, OldEnvelopeError, openMessage, openSignal, sealMessage, sealSignal,
@@ -796,7 +796,11 @@ function ChatApp() {
   const [ktStatus, setKtStatus] = useState<KtStatus>({ state: "unknown" });
   const payloadSealerRef = useRef(new PayloadSealer());
   /** Protocol-4 file keys peers handed us (§ 8): `${peerId}\0${transferId}` → FK. */
-  const fileKeysRef = useRef(new Map<string, { fk: string; at: number }>());
+  const fileKeysRef = useRef(new Map<string, { fk: string; at: number; signer?: Signer }>());
+  /** 6.12 review P07: proxied metas waiting for their FK (sender ␀ transferId → wake-ups). */
+  const fileKeyWaitersRef = useRef(new Map<string, Array<() => void>>());
+  /** Proxied file frames are handled one after another (a meta may wait for its FK; its chunks wait behind it). */
+  const proxyInboxRef = useRef<Promise<void>>(Promise.resolve());
   /** Answers of the hub's `key-bundles` / `kt-lookup` by reference (§ 7.5, § 14.3). */
   const hubAsksRef = useRef(new Map<string, Array<(answer: unknown) => void>>());
   const bundleCacheRef = useRef(new Map<string, { at: number; devices: DirectoryDevice[] }>());
@@ -809,6 +813,8 @@ function ChatApp() {
   /** The server's join nonce per socket, and whether that socket sent its join. */
   const joinOfRef = useRef(new WeakMap<WebSocket, (nonce: string | null) => Promise<void>>());
   const joinSentRef = useRef(new WeakSet<WebSocket>());
+  /** 6.12 review S14: sockets whose proven join was refused and that joined again without a proof. */
+  const proofRetriedRef = useRef(new WeakSet<WebSocket>());
   const hubSeedRef = useRef(new WeakMap<RoomKeys, Promise<Uint8Array>>());
   /** The id of the call our media keys belong to (§ 9). */
   const callIdRef = useRef(newId("call"));
@@ -2940,9 +2946,11 @@ function ChatApp() {
 
   function onPeerReady(peerId: string, info: PeerInfo) {
     setP4Peers((cur) => ({ ...cur, [peerId]: info.protocol }));
-    // The username claim of the ACCEPTED hello (review P02: in a v4 hello it is signed; protocol 3 never was).
+    // The username claim and caps of the ACCEPTED hello (review P02: in a v4 hello they are signed; protocol 3 never was).
     const user = cleanUsername(info.user);
     if (user) peerUsersRef.current.set(peerId, user); else peerUsersRef.current.delete(peerId);
+    const channel = peersRef.current.get(peerId)?.channel;
+    if (channel && info.caps.includes("bin")) binaryChannelsRef.current.add(channel);
     if (info.protocol === 3) {
       warnOnce(`legacy:${info.pk}`, tf(lang, "p4.legacyPeer", { name: peersRef.current.get(peerId)?.name || `peer-${peerId.slice(-4)}` }), "info");
       // Both sides seal call frames with the protocol-3 pair's media keys.
@@ -3055,9 +3063,7 @@ function ChatApp() {
     if (inner.t === "file") {
       const f = inner as { transferId?: unknown; key?: unknown };
       if (typeof f.transferId !== "string" || typeof f.key !== "string" || f.transferId.length > 96) return;
-      const keys = fileKeysRef.current;
-      keys.set(`${peerId}\u0000${f.transferId}`, { fk: f.key, at: Date.now() });
-      while (keys.size > 64) keys.delete(keys.keys().next().value!);
+      rememberFileKey(peerId, f.transferId, f.key);
     }
   }
 
@@ -3068,8 +3074,50 @@ function ChatApp() {
     const got = fileKeysRef.current.get(slot);
     if (!got) return null;
     fileKeysRef.current.delete(slot);
-    return { fk: got.fk, signer: p4Ref.current?.signer(from) ?? null };
+    return { fk: got.fk, signer: got.signer ?? p4Ref.current?.signer(from) ?? null };
   };
+
+  /** Keeps a transfer's FK (bounded) and wakes whoever waits for it (a proxied meta, review P07). */
+  function rememberFileKey(from: string, transferId: string, fk: string, signer?: Signer | null) {
+    const keys = fileKeysRef.current;
+    const slot = `${from}\u0000${transferId}`;
+    keys.set(slot, { fk, at: Date.now(), ...(signer ? { signer } : {}) });
+    while (keys.size > 64) keys.delete(keys.keys().next().value!);
+    const waiting = fileKeyWaitersRef.current.get(slot);
+    fileKeyWaitersRef.current.delete(slot);
+    for (const wake of waiting ?? []) wake();
+  }
+
+  /** § 8 (review P07): the FK of a proxied transfer may arrive just after its meta — wait for it, bounded. */
+  function waitForFileKey(from: string, transferId: string, ms: number): Promise<void> {
+    const slot = `${from}\u0000${transferId}`;
+    if (fileKeysRef.current.has(slot)) return Promise.resolve();
+    return new Promise((resolve) => {
+      const list = fileKeyWaitersRef.current.get(slot) ?? [];
+      list.push(resolve);
+      fileKeyWaitersRef.current.set(slot, list);
+      window.setTimeout(resolve, ms);
+    });
+  }
+
+  /**
+   * § 8 (review P07): the FK of a file the server relays (proxy transport — no data channel, so no
+   * ratchet): it came in a sealed signal from `source`, as a mailbox item sealed to one of THIS
+   * device's bundles (end to end: the room-key layer around it only routes it). Opened, it is kept
+   * for that sender and transfer, used once.
+   */
+  async function acceptProxyFileKey(source: string, sig: { transferId?: unknown; item?: unknown }) {
+    const keys = keyRef.current;
+    if (!keys || typeof sig.transferId !== "string" || sig.transferId.length > 96) return;
+    const env = sig.item as Record<string, unknown>;
+    if (!(isMailboxItem(env) || isMailboxSet(env))) return;
+    const mailbox = await ensureMailbox();
+    const got = mailbox ? await mailbox.open<{ id?: unknown; t?: unknown; fk?: unknown }>(env, keys.roomId).catch(() => null) : null;
+    if (!got || got.payload.id !== sig.transferId || got.payload.t !== "fk" || typeof got.payload.fk !== "string") return;
+    try { if (fromBase64(got.payload.fk).length !== 32) return; } catch { return; }
+    const account = await verifyAccount(got.sacc, got.spk);
+    rememberFileKey(source, sig.transferId, got.payload.fk, signerOf(got.spk, account));
+  }
 
   /**
    * An opened payload from a peer's channel, whatever sealed it: checked,
@@ -3227,7 +3275,6 @@ function ChatApp() {
       if (raw.kind === "hello") {
         // 6.12 review P02: the username claim is taken from the ACCEPTED hello (onPeerReady) — in a v4 hello it is signed.
         if (excludedRef.current.has(String(raw.pk))) { try { channel.close(); } catch { /* ignore */ } return; }
-        if (Array.isArray(raw.caps) && raw.caps.includes("bin")) binaryChannelsRef.current.add(channel);
         identityRef.current ??= await loadIdentity().catch(() => null);
         // Protocol 4 or 3, the downgrade rule, our chain: p4-session.ts (events → onPeerReady).
         await p4Room()?.handle(peerId, raw);
@@ -3430,6 +3477,9 @@ function ChatApp() {
       warnOnce(`mismatch:${source}`, t(lang, "sec.keyMismatch").replace("{name}", peersRef.current.get(source)?.name || `peer-${source.slice(-4)}`), "error");
       return;
     }
+    // 6.12 review P07 (§ 8): the FK of a file the server relays, sealed to this device's mailbox.
+    const fkSignal = desc as { p4?: unknown; transferId?: unknown; item?: unknown };
+    if (fkSignal.p4 === "fk") { await acceptProxyFileKey(source, fkSignal); return; }
 
     let handle = peersRef.current.get(source);
     if (!handle) {
@@ -3699,12 +3749,14 @@ function ChatApp() {
         const chunk = frameFromBinary(event.data);
         const keys = keyRef.current;
         if (!chunk || chunk.kind !== "proxy-chunk" || !keys) return;
-        await handleIncomingFrame(keys, incomingFilesRef.current, chunk, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
+        // Behind its meta (which may be waiting for the FK, review P07).
+        proxyInboxRef.current = proxyInboxRef.current.then(() => handleIncomingFrame(keys, incomingFilesRef.current, chunk, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
           const sock = socketRef.current;
           if (sock?.readyState !== WebSocket.OPEN) return false;
           sock.send(JSON.stringify({ type: "proxy-need", transferId, seqs }));
           return true;
-        }));
+        }))).catch(() => undefined);
+        await proxyInboxRef.current;
         return;
       }
       let frame: SignalFrame;
@@ -3974,7 +4026,18 @@ function ChatApp() {
           userDisconnect();
           return;
         }
-        // 6.12 (§ 13): the join's proof of the room key was refused, or one is required — retrying would not help.
+        // 6.12 (§ 13): the join's proof of the room key was refused. Review S14: not a dead end — someone may
+        // have registered this room with another key (squatting) while our passphrase is right. Explain, and
+        // join once more WITHOUT a proof (legacy: the others see us "unproven"); only when the server then
+        // requires a proof (`room-proof-required`) is there nothing more to try.
+        if (frame.code === "room-proof" && !proofRetriedRef.current.has(socket)) {
+          proofRetriedRef.current.add(socket);
+          systemMessage(t(lang, "p4.roomProofRetry"), { kind: "warning" });
+          setHubProven(false);
+          joinSentRef.current.delete(socket);
+          await joinOfRef.current.get(socket)?.(null);
+          return;
+        }
         if (frame.code === "room-proof" || frame.code === "room-proof-required") {
           systemMessage(t(lang, frame.code === "room-proof" ? "p4.roomProof" : "p4.roomProofRequired"), { kind: "error" });
           userDisconnect();
@@ -4020,12 +4083,20 @@ function ChatApp() {
           ...("iv" in frame && frame.iv ? { iv: frame.iv } : {}),
           ...("ciphertext" in frame && frame.ciphertext ? { ciphertext: frame.ciphertext } : {}),
         } as FileTransferEnvelope;
-        await handleIncomingFrame(keys, incomingFilesRef.current, ftx, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
-          const sock = socketRef.current;
-          if (sock?.readyState !== WebSocket.OPEN) return false;
-          sock.send(JSON.stringify({ type: "proxy-need", transferId, seqs }));
-          return true;
-        }), typeof frame.from === "string" && frame.from ? frame.from : undefined); // 6.7 (S19): the sender the server relayed it from
+        const from = typeof frame.from === "string" && frame.from ? frame.from : undefined; // 6.7 (S19): the sender the server relayed it from
+        // 6.12 review P07: one after another — a protocol-4 meta may wait (bounded) for the FK its sender
+        // sealed to this device (a signal), and the chunks wait behind it.
+        const run = async () => {
+          if (frame.type === "proxy-meta" && "v" in frame && frame.v === 4 && from) await waitForFileKey(from, frame.transferId, 5000);
+          await handleIncomingFrame(keys, incomingFilesRef.current, ftx, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
+            const sock = socketRef.current;
+            if (sock?.readyState !== WebSocket.OPEN) return false;
+            sock.send(JSON.stringify({ type: "proxy-need", transferId, seqs }));
+            return true;
+          }), from, fileKeyLookup);
+        };
+        proxyInboxRef.current = proxyInboxRef.current.then(run).catch(() => undefined);
+        await proxyInboxRef.current;
         return;
       }
     };
@@ -5637,10 +5708,23 @@ function ChatApp() {
 
     // 6.12 (§ 8): protocol-4 peers get the file under a random key of its own
     // (FK), sent to each over its pair ratchet BEFORE the meta (the channel is
-    // ordered); older peers — and the server's relay, which only carries a
-    // file when no direct channel (so no session) exists — the protocol-3 key
-    // derived from the room key, in a transfer of their own.
-    if (relayed) { await sendFileTo(file, key, channels, true, null); return; }
+    // ordered); older peers the protocol-3 key derived from the room key, in a
+    // transfer of their own. The server's relay (no direct channel, so no
+    // ratchet): review P07 — the FK sealed to every member's AUTHENTICATED
+    // devices (mailbox items, § 7.4 rules) and handed over in sealed signals;
+    // only when some member has none, the room-derived key — and the user is told.
+    if (relayed) {
+      const p4fk = await proxyFileKey();
+      if (p4fk) {
+        systemMessage(tf(lang, "app.file.proxyP4", { name: file.name }));
+        await sendFileTo(file, key, channels, true, p4fk);
+        p4fk.fk.fill(0);
+      } else {
+        systemMessage(tf(lang, "app.file.proxyRoomKey", { name: file.name }), { kind: "warning" });
+        await sendFileTo(file, key, channels, true, null);
+      }
+      return;
+    }
     const p4 = p4Ref.current;
     const p4Channels: RTCDataChannel[] = [];
     const p4Ids: string[] = [];
@@ -5659,6 +5743,56 @@ function ChatApp() {
       fk.fill(0);
     }
     if (legacyChannels.length) await sendFileTo(file, key, legacyChannels, false, null);
+  }
+
+  /**
+   * § 8 (6.12 review P07): a relayed (proxy) file between protocol-4 clients — a fresh FK, sealed to the
+   * authenticated devices of EVERY member in the room (seen in a valid hello, or certified by their pinned
+   * account; the § 7.4 rules) as a mailbox item, each sent to that member in a sealed signal before the
+   * meta. Null when the room key has to do: no session-less way to reach some member end to end (a member
+   * whose devices this client never authenticated, an older room, no mailbox).
+   */
+  async function proxyFileKey(): Promise<{ transferId: string; fk: Uint8Array } | null> {
+    const keys = keyRef.current;
+    const identity = identityRef.current;
+    const socket = socketRef.current;
+    if (!keys || keys.version !== 3 || !identity || socket?.readyState !== WebSocket.OPEN) return null;
+    const mailbox = await ensureMailbox();
+    const recipients = [...peersRef.current.keys()].filter((id) => id !== myIdRef.current);
+    if (!mailbox || recipients.length === 0) return null;
+    const book = trustRef.current;
+    const p4 = p4Ref.current;
+    const now = Date.now();
+    const transferId = `xfer-${crypto.randomUUID()}`;
+    const fk = crypto.getRandomValues(new Uint8Array(32));
+    // Keyed by peer id: its member's authenticated devices, plus the device of a valid hello this page saw.
+    const sealed = await sealForAway({
+      roomId: keys.roomId, id: transferId, payload: { id: transferId, t: "fk", fk: toBase64(fk) }, refs: recipients, mailbox,
+      senderPk: identity.publicKey, sacc: helloAccountOf(identity.attestation), now,
+      known: (peerId) => {
+        const ref = peerRefsRef.current.get(peerId);
+        const out = ref ? book.sealableDevicesOfRef(keys.roomId, ref, now) : [];
+        const info = p4?.info(peerId);
+        if (info?.protocol === 4 && info.mb && !out.some((d) => d.pk === info.pk)) out.push({ pk: info.pk, mb: info.mb, ...(info.account?.valid ? { apk: info.account.publicKey } : {}) });
+        return out;
+      },
+      directory: onHomeServer() ? (peerId) => {
+        const ref = peerRefsRef.current.get(peerId);
+        return ref ? hubAsk<DirectoryDevice[]>("key-bundles", ref).then((d) => (Array.isArray(d) ? d : [])) : Promise.resolve([]);
+      } : undefined,
+      pinnedAccount: (peerId) => {
+        const ref = peerRefsRef.current.get(peerId);
+        return ref ? book.accountOf(keys.roomId, ref) : null;
+      },
+      isRevoked: (pk) => book.isRevoked(pk),
+    }).catch(() => null);
+    if (!sealed || sealed.withoutBundle.length > 0) { fk.fill(0); return null; }
+    for (const peerId of recipients) {
+      const signal = await sealSignal(keys, myIdRef.current, peerId, { p4: "fk", transferId, item: sealed.per[peerId] });
+      if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) { fk.fill(0); return null; }
+      socket.send(JSON.stringify({ type: "signal", target: peerId, payload: signal }));
+    }
+    return { transferId, fk };
   }
 
   /** One transfer of a file to these channels (or the server's relay) — 6.12 under a protocol-4 FK when `p4` is given. */

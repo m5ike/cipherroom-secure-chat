@@ -12,6 +12,8 @@ import {
 } from "../client/src/lib/p4";
 import { sealForAway } from "../client/src/lib/p4-away";
 import { createOutbox, perPeerSender } from "../client/src/lib/outbox";
+import { handleIncomingFrame, newIncomingRegistry, sendFile, type FileTransferEnvelope } from "../client/src/lib/file-transfer";
+import { parseFrame } from "../server/signaling/frames";
 import { KtClient, KtHttpError } from "../client/src/lib/p4-kt";
 import { LocalKtStore, LocalVault, memoryBackend, VaultBundleStore, VaultReplayStore, VaultUnavailable, type KvBackend } from "../client/src/lib/p4-store";
 import { P4Room, type P4Events } from "../client/src/lib/p4-session";
@@ -733,5 +735,112 @@ describe("REVIEW-612 P06/P10 — background rooms", () => {
       expect(bg.messages[0].identity).toMatchObject(standing === "ok" ? { state: "new", account: true } : { state: "new", account: false, kt: "pending" });
       bg.stop();
     }
+  });
+});
+
+/* ------------------------------------------------------------ P07: proxied files */
+
+describe("REVIEW-612 P07 — a proxied file between protocol-4 clients", () => {
+  it("the FK reaches the recipient's authenticated device as a mailbox item; the proxied v4 frames open only with it", async () => {
+    const now = Date.now();
+    const alice = await device();
+    const bob = await device();
+    const aliceMb = new Mailbox(new MemoryBundleStore(), alice);
+    const bobMb = new Mailbox(new MemoryBundleStore(), bob);
+    const book = new TrustBook(null);
+    book.rememberDevice(bob.publicKey, { mb: (await bobMb.current(now)).bundle, hello: true }, now);
+    book.rememberRef(roomKeys.roomId, "ref-bob", bob.publicKey, now);
+    // The sender: a fresh FK, sealed to every member's authenticated devices (keyed by peer id).
+    const transferId = "xfer-proxy-p4";
+    const fk = new Uint8Array(32).map((_, i) => i * 3 + 1);
+    const sealed = await sealForAway({
+      roomId: roomKeys.roomId, id: transferId, payload: { id: transferId, t: "fk", fk: b64(fk) }, refs: ["p-bob"], mailbox: aliceMb, senderPk: alice.publicKey, now,
+      known: () => book.sealableDevicesOfRef(roomKeys.roomId, "ref-bob", now), pinnedAccount: () => book.accountOf(roomKeys.roomId, "ref-bob"),
+    });
+    expect(sealed.withoutBundle).toEqual([]);
+    const frames: FileTransferEnvelope[] = [];
+    const body = new Uint8Array(3000).map((_, i) => i % 199);
+    const result = await sendFile({
+      key: roomKeys, file: new File([body], "b.bin"), senderId: "p-alice", senderName: "Alice", chunkSize: 1024, channels: [],
+      forceTransport: "proxy", sendProxy: (f) => { frames.push(f); return true; }, p4: { transferId, fk: new Uint8Array(fk) },
+    });
+    expect(result).toMatchObject({ ok: true, transferId, transport: "proxy" });
+    expect(frames.filter((f) => f.kind !== "proxy-cancel").every((f) => (f as { v?: number }).v === 4)).toBe(true);
+    // The server's frame parser keeps v: 4 on proxied frames.
+    const meta = frames[0] as unknown as Record<string, unknown>;
+    expect(parseFrame(JSON.stringify({ ...meta, type: "proxy-meta" }))).toMatchObject({ type: "proxy-meta", v: 4 });
+    // The recipient opens the item with its own bundle — the FK — and the file with it.
+    const opened = await bobMb.open<{ id: string; t: string; fk: string }>(sealed.per["p-bob"], roomKeys.roomId, now);
+    expect(opened?.payload).toEqual({ id: transferId, t: "fk", fk: b64(fk) });
+    const registry = newIncomingRegistry();
+    let done: { size: number; version: number } | null = null;
+    const lookup = (id: string, from?: string) => (id === transferId && from === "p-alice" ? { fk: opened!.payload.fk, signer: { publicKey: alice.publicKey, valid: true } } : null);
+    for (const f of frames) await handleIncomingFrame(roomKeys, registry, f, 1e9, { onComplete: (_i, blob, _m, _t, proof) => { done = { size: blob.size, version: proof.version }; } }, "p-alice", lookup);
+    expect(done).toEqual({ size: 3000, version: 4 });
+    // Without the FK (a member with the room key only): not opened.
+    const errors: string[] = [];
+    await handleIncomingFrame(roomKeys, newIncomingRegistry(), frames[0], 1e9, { onError: (_id, m) => errors.push(m) }, "p-alice");
+    expect(errors[0]).toMatch(/No key for this file/);
+  });
+
+  it("a member without an authenticated device: no FK can reach it — the sender has to use the room-derived key", async () => {
+    const alice = await device();
+    const sealed = await sealForAway({
+      roomId: roomKeys.roomId, id: "xfer-2", payload: { id: "xfer-2", t: "fk", fk: b64(new Uint8Array(32)) }, refs: ["p-new"], mailbox: new Mailbox(new MemoryBundleStore(), alice), senderPk: alice.publicKey,
+      known: () => [], pinnedAccount: () => null,
+    });
+    expect(sealed.withoutBundle).toEqual(["p-new"]);
+  });
+});
+
+/* ------------------------------------------------------------ S14: a refused room proof */
+
+describe("REVIEW-612 S14 — a refused room proof is not a dead end", () => {
+  async function joining() {
+    const me = await device();
+    const sockets: Array<{ sent: string[]; onopen?: () => void; onmessage?: (e: { data: string }) => void; readyState: number }> = [];
+    const deps: HubDeps = {
+      wsUrl: () => "ws://test/ws", rtcConfig: async () => ({}),
+      makeSocket: () => { const s = { sent: [] as string[], readyState: 1, url: "ws://test/ws", send(t: string) { this.sent.push(t); }, close() {} }; sockets.push(s); return s as unknown as WebSocket; },
+      makePeer: () => { throw new Error("no WebRTC here"); },
+      derive: async () => roomKeys, identity: async () => me, pins: createPinStore(null), trust: new TrustBook(null),
+    };
+    const room = new BackgroundRoom({ key: roomKeyOf("team"), room: "team", label: "Team", name: "Me", passphrase: "x" }, deps, () => undefined);
+    await room.start();
+    const socket = sockets[0];
+    socket.onopen!();
+    socket.onmessage!({ data: JSON.stringify({ type: "hello", nonce: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX" }) });
+    await new Promise((r) => setTimeout(r, 50));
+    const joins = () => socket.sent.map((t) => JSON.parse(t) as { type: string; proof?: unknown }).filter((f) => f.type === "join");
+    return { room, socket, joins };
+  }
+
+  it("the join is repeated once without a proof (legacy, unproven) — and the room comes up", async () => {
+    const { room, socket, joins } = await joining();
+    expect(joins()).toHaveLength(1);
+    expect(joins()[0].proof).toBeTruthy();
+    socket.onmessage!({ data: JSON.stringify({ type: "error", code: "room-proof", message: "refused" }) });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(joins()).toHaveLength(2);
+    expect(joins()[1].proof).toBeUndefined();
+    socket.onmessage!({ data: JSON.stringify({ type: "joined", peerId: "p-me", peers: [], proven: false }) });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(room.status).toBe("joined");
+    // A second refusal on the same socket does not loop.
+    socket.onmessage!({ data: JSON.stringify({ type: "error", code: "room-proof", message: "refused" }) });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(joins()).toHaveLength(2);
+    room.stop();
+  });
+
+  it("a server that requires a proof leaves nothing to try", async () => {
+    const { room, socket, joins } = await joining();
+    socket.onmessage!({ data: JSON.stringify({ type: "error", code: "room-proof", message: "refused" }) });
+    await new Promise((r) => setTimeout(r, 20));
+    socket.onmessage!({ data: JSON.stringify({ type: "error", code: "room-proof-required", message: "required" }) });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(joins()).toHaveLength(2);
+    expect(room.status).toBe("offline");
+    room.stop();
   });
 });
