@@ -5,12 +5,14 @@
 // the message out of this device's view and history, not anyone else's. Both
 // go to the operator's audit journal (ChatMessageAudit).
 //
-// Who calls hide / unhide / delete: the message details (msg.info, the people
-// agent's MsgDetails) — they are here because the list needs the same rules.
+// One implementation in the app: the current unlock and hide / unhide / delete
+// are the People part's (PeopleParts.defaultHides / PeopleParts.hides — the
+// message details hide there); the list reads the same unlock, and the chat
+// installs the audit line into it (installAudit). The rules below are Android's,
+// pure, for the list and the tests.
 
 import Foundation
 import M5Core
-import M5Crypto
 import M5Proto
 
 @MainActor
@@ -20,20 +22,21 @@ enum BubbleHides {
     nonisolated static let durations: [Int64] = [15 * 60_000, 3_600_000, 8 * 3_600_000, 86_400_000, signIn]
     nonisolated static let names = ["15m", "1h", "8h", "1d", "until-signin"]
 
-    /// The unlock the app is in now (never stored: a new start is a new one).
-    private(set) static var unlock = newToken()
+    /// The unlock the app is in now (People's, renewed by its lock participant at every unlock; never stored).
+    static var unlock: String { PeopleParts.defaultHides.unlock }
 
-    private static func newToken() -> String {
-        var b = [UInt8](repeating: 0, count: 9)
-        _ = SecRandomCopyBytes(kSecRandomDefault, b.count, &b)
-        return Data(b).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-    }
-
-    /// The app was unlocked: hides "until the next sign-in" end, the lists filter again, the audit queue goes.
+    /// The app was unlocked: hides "until the next sign-in" end — the lists filter again, the audit queue goes.
     static func unlocked() {
-        unlock = newToken()
         ChatState.shared.hidesChanged()
         ChatMessageAudit.flush()
+    }
+
+    /// The audit line of every hide, unhide and delete (People's hides call it); a deleted message's pictures go too.
+    static func installAudit() {
+        PeopleParts.defaultHides.audit = { action, room, m, until in
+            ChatMessageAudit.add(action, room: room, message: m, until: until)
+            if action == "delete" { ChatState.shared.forget(m.id) }
+        }
     }
 
     /// Is the message hidden in this view now?
@@ -63,25 +66,12 @@ enum BubbleHides {
         return next
     }
 
-    /// Hides for durations[choice]; logged.
-    static func hide(_ room: any RoomModel, _ m: ChatMessage, choice: Int) {
-        let i = max(0, min(durations.count - 1, choice))
-        let span = durations[i]
-        let until = span == signIn ? signIn : Millis.now + span
-        room.hide(m.id, until: until, unlock: unlock, why: names[i])
-        ChatMessageAudit.add("hide", room: room, message: m, until: until == signIn ? 0 : until)
-    }
+    /// Hides for durations[choice]; logged (through People's hides).
+    static func hide(_ room: any RoomModel, _ m: ChatMessage, choice: Int) { PeopleParts.hides.hide(room, m, choice: choice) }
 
     /// Shows a hidden message again before its time; logged.
-    static func unhide(_ room: any RoomModel, _ m: ChatMessage) {
-        room.hide(m.id, until: 0, unlock: nil, why: "user")
-        ChatMessageAudit.add("unhide", room: room, message: m, until: 0)
-    }
+    static func unhide(_ room: any RoomModel, _ m: ChatMessage) { PeopleParts.hides.unhide(room, m) }
 
-    /// Deletes it from this device (view and history); logged. Its pictures and previews leave the memory too.
-    static func delete(_ room: any RoomModel, _ m: ChatMessage) {
-        ChatMessageAudit.add("delete", room: room, message: m, until: 0)
-        ChatState.shared.forget(m.id)
-        room.deleteLocal(m.id)
-    }
+    /// Deletes it from this device (view and history); logged.
+    static func delete(_ room: any RoomModel, _ m: ChatMessage) { PeopleParts.hides.delete(room, m) }
 }

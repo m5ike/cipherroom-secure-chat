@@ -80,25 +80,19 @@ struct MsgBodyView: View {
                 if m.vanishSeconds > 0 { BodyNote(text: "⏳ \(state.vanishLeft(m)) s", fg: fg, italic: false) }
             }
         }
-        .frame(minWidth: answerMinWidth(m), alignment: .leading)
-        .padding(.vertical, isModelAnswer(m) ? 2 : 0)
+        .frame(minWidth: isTextAnswer(m) ? 220 : nil, alignment: .leading)
+        .padding(.vertical, BubbleModelFace.of(m) != nil && !FnMessageContent.isCall(m) ? 2 : 0)
     }
 
-    /// What is shown when nothing hides it: a command's call or outputs, a map, the text; then the attachment.
+    /// What is shown when nothing hides it: a command's call or outputs (the Tools part's FnMessageContent — the
+    /// call bubble, its status, a wrong call's head, the outputs incl. HTML), a map, the text; then the attachment.
     @ViewBuilder
     private func shown(_ m: ChatMessage, fg: Color, accent: Color) -> some View {
-        let fd = m.fnDraw
-        let fnCall = fd != nil && (fd!.has("query") || fd!.bool("pending") == true || fd!.object("status") != nil)
-        let fnOut = !(fd?.array("outputs") ?? []).isEmpty
-        let model = BubbleModelFace.of(m) != nil
         let map = mapFailed ? nil : MapBubble.policy(for: m)
         let positionMap = map != nil && BubbleKinds.isPositionMessage(m)
         let _ = ChatState.shared.mapGeneration
-        if model && !fnCall, let fd, fd.bool("problem") == true { ProblemHead(title: fd.optString("title"), danger: ctx.color("@danger", DesignColor(argb: 0xFFCC_3333))) }
-        if fnCall, let fd {
-            FnCallView(message: m, fd: fd, fg: fg, accent: accent, ctx: ctx)
-        } else if fnOut, let fd {
-            ChatFnOutputs.view(m, fd, fg: fg, ctx: ctx)
+        if FnMessageContent.handles(m) {
+            FnMessageContent(message: m, ink: fg, accent: accent)
         } else if positionMap, let map {
             MapBubbleView(message: m, policy: map, fg: fg, primary: ctx.context.color("@primary", .blue), maxWidth: Self.maxW, t: ctx.t,
                           onTap: { ChatActions.mapPreview(m, host: ctx.host) }, onFail: { mapFailed = true })
@@ -129,22 +123,8 @@ struct MsgBodyView: View {
 
     // MARK: 6.11 a model's answer fits what it shows
 
-    private func isModelAnswer(_ m: ChatMessage) -> Bool {
-        guard BubbleModelFace.of(m) != nil, let fd = m.fnDraw else { return BubbleModelFace.of(m) != nil }
-        return !(fd.has("query") || fd.bool("pending") == true || fd.object("status") != nil)
-    }
-
-    /// At least a comfortable width, and the whole row (less a margin) for what needs room: a table, code, JSON, a
-    /// form, a page, a picture, a video. The row: 12 each side, the 36 avatar and 8 gap, the bubble's 12 padding each side, 16 margin.
-    private func answerMinWidth(_ m: ChatMessage) -> CGFloat? {
-        guard isModelAnswer(m) else { return nil }
-        let wide = (m.fnDraw?.array("outputs") ?? []).contains { o in
-            ["table", "code", "json", "form", "html", "image", "video"].contains(o["type"]?.stringValue ?? "")
-        }
-        let window = min(ChatFileActions.topController()?.view.bounds.width ?? 390, DesignShell.readableWidth)
-        let avail = window - (12 + 12 + 36 + 8 + 24 + 16)
-        return max(0, min(wide ? 560 : 220, avail))
-    }
+    /// A model's answer drawn as text (FnMessageContent sizes the ones it draws): fitAnswer's comfortable width.
+    private func isTextAnswer(_ m: ChatMessage) -> Bool { BubbleModelFace.of(m) != nil && !FnMessageContent.handles(m) }
 }
 
 /// Holding a "tap" message (the chip, the hold area): its revealed step the first time, the set of held ones.
@@ -196,22 +176,6 @@ struct BodyChip: View {
             .background(Capsule().fill(accent.opacity(0.16)))
             .overlay(Capsule().strokeBorder(accent.opacity(0.5), lineWidth: 1))
             .contentShape(Capsule())
-    }
-}
-
-/// 6.11: a wrong call's answer starts with what it is about, in the danger colour.
-struct ProblemHead: View {
-    let title: String
-    let danger: Color
-    @Environment(\.designTextScale) private var scale
-
-    var body: some View {
-        HStack(spacing: 8) {
-            DesignIcon(name: "circle-alert", size: 18, color: danger).accessibilityHidden(true)
-            Text(verbatim: title).font(.system(size: 14.5 * scale, weight: .bold)).foregroundStyle(danger)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.top, 2).padding(.bottom, 6)
     }
 }
 

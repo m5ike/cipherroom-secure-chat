@@ -244,6 +244,7 @@ final class BubblesTests: XCTestCase {
         m.hiddenFor = BubbleHides.unlock
         XCTAssertTrue(BubbleHides.hidden(m, 5))
         let generation = ChatState.shared.hidesGeneration
+        PeopleParts.defaultHides.lockDidUnlock() // the unlock id is People's (one for the list and the details)
         BubbleHides.unlocked()
         XCTAssertGreaterThan(ChatState.shared.hidesGeneration, generation)
         XCTAssertFalse(BubbleHides.hidden(m, 5))
@@ -260,6 +261,8 @@ final class BubblesTests: XCTestCase {
         XCTAssertEqual(BubbleHides.nextEnd([a, b, c], 3000), 5000)
         XCTAssertEqual(BubbleHides.nextEnd([c], 0), Int64.max)
         XCTAssertEqual(BubbleHides.durations.count, BubbleHides.names.count)
+        XCTAssertEqual(BubbleHides.durations, DetailsHides.spans) // the message details offer the same
+        XCTAssertEqual(BubbleHides.names, DetailsHides.names)
     }
 
     /// Every word the bubbles look up is in the design's strings (server/android/design-62-bubbles.ts), in all three languages.

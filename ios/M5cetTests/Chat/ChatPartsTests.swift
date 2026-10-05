@@ -146,6 +146,37 @@ final class ChatPartsTests: XCTestCase {
         XCTAssertFalse(sink.entries.contains { $0.stringify().contains("Super") }) // never the text
     }
 
+    func testTheMessageDetailsHideWithTheListsUnlock() throws {
+        // People's msg.info hides through PeopleParts.hides: one "until the next sign-in" for the details and the list.
+        let sink = AuditSink()
+        ChatMessageAudit.sink = sink
+        defer { ChatMessageAudit.sink = nil }
+        let m = try XCTUnwrap(room.message("m7"))
+        PeopleParts.hides.hide(room, m, choice: BubbleHides.names.firstIndex(of: "until-signin")!)
+        let hidden = try XCTUnwrap(room.message("m7"))
+        XCTAssertEqual(hidden.hiddenUntil, ChatMessage.untilSignIn)
+        XCTAssertEqual(hidden.hiddenFor, BubbleHides.unlock)
+        XCTAssertTrue(MessagesPart.filter(room.messages, tag: "", peek: false, now: Millis.now).hidden.contains("m7"))
+        XCTAssertEqual(sink.actions, ["hide"]) // the chat's audit line
+        XCTAssertEqual(sink.entries.first?.int64("until"), 0)
+        PeopleParts.defaultHides.lockDidUnlock() // the next sign-in
+        XCTAssertFalse(MessagesPart.filter(room.messages, tag: "", peek: false, now: Millis.now).hidden.contains("m7"))
+        PeopleParts.hides.unhide(room, hidden)
+        XCTAssertEqual(room.message("m7")?.hiddenUntil, 0)
+    }
+
+    func testTheNfcPartForwardsThroughTheChatsSheet() throws {
+        let forward = try XCTUnwrap(NfcUiHooks.forward)
+        var card = ChatMessage()
+        card.id = "nfc-card-1"
+        card.text = "Karta: 4111 •••• 1111"
+        card.senderName = "NFC"
+        forward(card, host)
+        XCTAssertEqual(host.sheet?.screen, "message.forward")
+        XCTAssertEqual(host.form["forward"]?["text"].stringValue, card.text)
+        host.closeOverlay()
+    }
+
     func testATagFiltersTheConversation() {
         var m = ChatMessage()
         m.text = "Kdo vezme #faktury? A #faktury2."

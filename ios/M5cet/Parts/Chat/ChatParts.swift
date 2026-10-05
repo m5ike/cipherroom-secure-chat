@@ -9,7 +9,8 @@
 // UI: msg.forward, msg.forwardRoom, msg.forwardTo (the forward sheet) and
 // message.recipients (who gets the next message). A later registration wins.
 // The lock clears what the parts hold (pictures, held messages, the lists' state);
-// an unlock ends the hides "until the next sign-in".
+// an unlock ends the hides "until the next sign-in" (People's hides keep the unlock id;
+// the chat gives them the audit line). NfcUiHooks.forward is the chat's forward sheet.
 
 import M5Design
 import M5Proto
@@ -37,6 +38,10 @@ enum ChatParts {
         slots.register("msgHold") { ctx in AnyView(HoldAreaView(ctx: ctx)) }
         slots.register("composer") { ctx in AnyView(ComposerPart(ctx: ctx)) }
         actions.register(Self.actions) { action, ctx in perform(action, host: ctx.host) }
+        // Hides: People's (one unlock id for the list and the message details), with the chat's audit line.
+        BubbleHides.installAudit()
+        // The NFC part forwards a message that is in no room yet (a card read) with the chat's forward sheet.
+        NfcUiHooks.forward = { m, host in ChatForward.start(m, host: host) }
         if let center = SecurityCenter.shared { center.add(lock) }
     }
 
@@ -74,5 +79,6 @@ enum ChatParts {
 @MainActor
 private final class ChatLock: LockParticipant {
     func lockDidForget() { ChatParts.forget() }
-    func lockDidUnlock() { BubbleHides.unlocked() }
+    /// After People's hides took the new unlock id (participants run in turn): the lists filter again.
+    func lockDidUnlock() { Task { @MainActor in BubbleHides.unlocked() } }
 }
