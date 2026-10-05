@@ -397,7 +397,7 @@ final class Files {
      * room-key lane. A protocol-4 peer still making its session, or a refused
      * (downgraded) one, does not get this file.
      */
-    private void planLanes(Out out, List<Peer> peers) throws InterruptedException, P4Error {
+    private void planLanes(Out out, List<Peer> peers) throws InterruptedException, P4Error, IOException {
         List<Peer> v4 = new ArrayList<>(), v3 = new ArrayList<>();
         byte[] fk = Crypto.random(32);
         try {
@@ -405,7 +405,8 @@ final class Files {
             room.post(() -> {
                 try {
                     for (Peer p : peers) {
-                        if (p.downgrade) continue;
+                        // A peer whose hello has not come yet (its protocol unknown) or a refused one does not get this file.
+                        if (p.downgrade || (p.protocol.isEmpty() && room.p4 != null)) continue;
                         if (room.isV4(p)) { if (room.p4.ready(p.id) && room.p4.sendFileKey(p.id, out.id, fk)) v4.add(p); }
                         else v3.add(p);
                     }
@@ -414,6 +415,7 @@ final class Files {
             if (!done.await(10, TimeUnit.SECONDS)) throw new InterruptedException("the room did not answer");
             if (!v4.isEmpty()) out.lanes.add(new Lane(true, v4, Files4.fileKey(fk, out.id)));
             if (!v3.isEmpty() || peers.isEmpty()) out.lanes.add(new Lane(false, v3, room.keys.fileKey(out.id)));
+            if (out.lanes.isEmpty()) throw new IOException("the connections are still being secured — try again in a moment");
         } finally {
             Crypto.wipe(fk);
         }

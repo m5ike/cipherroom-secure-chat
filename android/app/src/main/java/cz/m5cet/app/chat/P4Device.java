@@ -80,7 +80,9 @@ final class P4Device {
         if (app.account == null || !app.account.signedIn()) return null;
         long now = System.currentTimeMillis();
         JSONObject cert = store.cert();
-        boolean fresh = id.publicKey.equals(cert.optString("pk")) && cert.optLong("exp") - now > P4.DEVICE_CERT_LIFETIME_MS / 3;
+        // The certificate of this device key, by the account signed in now, with more than a third of its lifetime left.
+        boolean fresh = id.publicKey.equals(cert.optString("pk")) && app.account.username().equals(cert.optString("user"))
+            && cert.optLong("exp") - now > P4.DEVICE_CERT_LIFETIME_MS / 3;
         if (!fresh) {
             byte[] seed = app.account.accountSeed();
             if (seed == null) return null;
@@ -99,6 +101,13 @@ final class P4Device {
         }
         try { return new JSONObject().put("apk", cert.getString("apk")).put("ac", cert.getString("sig")).put("cv", 2).put("exp", cert.getLong("exp")); }
         catch (JSONException e) { return null; }
+    }
+
+    /** This device's account key (b64) as its certificate names it — "" when signed out or not certified yet. Never creates one. */
+    String myAccountKey(ChatIdentity id) {
+        if (app.account == null || !app.account.signedIn()) return "";
+        JSONObject cert = store.cert();
+        return id.publicKey.equals(cert.optString("pk")) && app.account.username().equals(cert.optString("user")) ? cert.optString("apk") : "";
     }
 
     /**

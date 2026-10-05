@@ -89,7 +89,8 @@ final class P4Room {
     private final Link link;
     private final Rng rng;
     final SenderKeys4 senderKeys;
-    private final Map<String, PeerState> peers = new HashMap<>();
+    /** Written on the room's thread; read also by the UI (the People widget). */
+    private final Map<String, PeerState> peers = new java.util.concurrent.ConcurrentHashMap<>();
 
     P4Room(String roomId, String check, ChatIdentity identity, P4Store store, HelloExtras extras, Link link, Rng rng) {
         this.roomId = roomId;

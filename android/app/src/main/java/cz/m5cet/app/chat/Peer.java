@@ -52,6 +52,8 @@ final class Peer {
     String kt = "";
     /** The caps its hello listed. */
     org.json.JSONArray caps;
+    /** 6.12: payloads for it before its hello said which protocol it speaks ({payload, private?}); sent then. */
+    final List<Object[]> beforeHello = new ArrayList<>();
     final List<RtpSender> senders = new ArrayList<>();
     VideoTrack remoteVideo;
     /** 6.1: the peer's audio (audio ↔ text calls transcribe it). */

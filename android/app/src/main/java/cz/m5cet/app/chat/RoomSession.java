@@ -596,6 +596,7 @@ public final class RoomSession {
         p.protocol = proto;
         if (p.downgrade) {
             p.verified = false;
+            p.beforeHello.clear();
             system("⚠ " + p.name + ": " + tr("p4.downgrade"));
             changed();
             return;
@@ -616,7 +617,30 @@ public final class RoomSession {
             if (sk != null) p.send(sk.toString());
             profiles().hello(p.id, caps); // 6.7: the pair key exists now — they learn my profile's version
         }
+        // What waited for this hello goes now, in the protocol it speaks (protocol 4: behind its session).
+        List<Object[]> waiting = new ArrayList<>(p.beforeHello);
+        p.beforeHello.clear();
+        for (Object[] w : waiting) deliverTo(p, (JSONObject) w[0], (Boolean) w[1]);
         changed();
+    }
+
+    /** One payload to one peer whose protocol is known — deliver's choice for that peer. */
+    private void deliverTo(Peer p, JSONObject payload, boolean priv) {
+        if (p.downgrade || !p.open()) return;
+        String id = payload.optString("id");
+        if (isV4(p)) {
+            if (priv) { p4.sendPrivate(p.id, payload); return; }
+            try { p4.sendRoom(java.util.Collections.singletonList(p.id), id, payload.toString(), System.currentTimeMillis()); }
+            catch (P4Error e) { Log.w("room", "cannot seal a protocol-4 room message: " + e.getMessage()); }
+            return;
+        }
+        JSONObject envelope;
+        if (priv && senderKeys.hasPair(p.id)) envelope = senderKeys.sealPrivate(keys, id, payload, myId, p.id, identity);
+        else if (senderKeys.hasPair(p.id)) {
+            if (!senderKeys.hasOurKey(p.id)) { JSONObject sk = senderKeys.senderKeyFor(keys, myId, p.id); if (sk != null) p.send(sk.toString()); }
+            envelope = senderKeys.sealLive(keys, id, payload, identity);
+        } else envelope = Envelopes.sealMessage(keys, id, payload, identity);
+        if (envelope != null) p.send(envelope.toString());
     }
 
     /** The pair session with a protocol-4 peer is up: what waited for it goes now. */
@@ -988,6 +1012,11 @@ public final class RoomSession {
         int sent = 0;
         for (Peer p : new ArrayList<>(peers.values())) {
             if (!p.open() || p.downgrade || (targets != null && !targets.contains(p.id))) continue;
+            // 6.12: its hello has not said yet which protocol it speaks — the payload waits for it (onHello).
+            if (p.protocol.isEmpty() && p4 != null) {
+                if (p.beforeHello.size() < 200) { p.beforeHello.add(new Object[]{payload, targets != null}); sent++; }
+                continue;
+            }
             if (isV4(p)) {
                 if (targets != null) { if (p4.sendPrivate(p.id, payload)) sent++; }
                 else v4Room.add(p.id);
@@ -1739,8 +1768,8 @@ public final class RoomSession {
         Peer p = peers.get(peerId);
         String theirs = p == null || p.publicKey == null ? "" : p.publicKey, mine = myPublicKey();
         Handshake.AccountCheck acc = p == null || p4 == null || !"v4".equals(p.protocol) ? null : p4.account(peerId);
-        JSONObject my = identity == null ? null : rooms.p4().account(identity);
-        if (acc != null && acc.valid && my != null) return new String[]{my.optString("apk"), acc.publicKey};
+        String my = identity == null ? "" : rooms.p4().myAccountKey(identity);
+        if (acc != null && acc.valid && !my.isEmpty()) return new String[]{my, acc.publicKey};
         return new String[]{mine, theirs};
     }
 
