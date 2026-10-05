@@ -36,10 +36,12 @@ export type Settings = {
   /** The page's UI language, as last reported (menus follow it). */
   locale: Locale | null;
   autoUpdate: boolean;
+  /** 6.13.1: servers (origins) the user allowed to use the computer's smart-card readers (PC/SC). */
+  pcsc: string[];
 };
 
 export function defaultSettings(): Settings {
-  return { v: 1, servers: [], current: null, window: null, startAtLogin: false, closeToTray: true, passkeys: "auto", locale: null, autoUpdate: true };
+  return { v: 1, servers: [], current: null, window: null, startAtLogin: false, closeToTray: true, passkeys: "auto", locale: null, autoUpdate: true, pcsc: [] };
 }
 
 const num = (v: unknown, min: number, max: number): number | undefined =>
@@ -83,7 +85,25 @@ export function sanitizeSettings(raw: unknown, opts: { allowLoopbackHttp?: boole
   out.passkeys = r.passkeys === "app" || r.passkeys === "browser" ? r.passkeys : "auto";
   out.locale = isLocale(r.locale) ? r.locale : null;
   out.autoUpdate = r.autoUpdate !== false;
+  // A grant only for a server still in the list, written as its origin.
+  if (Array.isArray(r.pcsc)) {
+    for (const o of r.pcsc.slice(0, MAX_SERVERS)) {
+      if (typeof o === "string" && out.servers.some((s) => s.origin === o) && !out.pcsc.includes(o)) out.pcsc.push(o);
+    }
+  }
   return out;
+}
+
+/** 6.13.1: whether a server may use the smart-card readers. */
+export function pcscAllowed(s: Settings, origin: string | null): boolean {
+  return Boolean(origin) && s.pcsc.includes(origin!);
+}
+
+/** 6.13.1: allow or withdraw the smart-card readers for a server (only one in the list). */
+export function setPcscAllowed(s: Settings, origin: string, allowed: boolean): Settings {
+  const rest = s.pcsc.filter((o) => o !== origin);
+  if (!allowed || !s.servers.some((x) => x.origin === origin)) return { ...s, pcsc: rest };
+  return { ...s, pcsc: [...rest, origin] };
 }
 
 /** Adds (or refreshes) a server and makes it current. */
@@ -101,7 +121,7 @@ export function addServer(s: Settings, origin: string, now: number, opts: { allo
 
 export function removeServer(s: Settings, origin: string): Settings {
   const servers = s.servers.filter((x) => x.origin !== origin);
-  return { ...s, servers, current: s.current === origin ? null : s.current };
+  return { ...s, servers, current: s.current === origin ? null : s.current, pcsc: s.pcsc.filter((o) => o !== origin) };
 }
 
 export function setCodeSource(s: Settings, origin: string, source: CodeSource): Settings {

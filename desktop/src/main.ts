@@ -16,9 +16,12 @@
 //               start at login, window state, updates (signed builds only)
 //   passkeys    in the app (Windows Hello, security keys) or through the system
 //               browser (desktop-auth: the result comes back encrypted)
+//   readers     6.13.1: the computer's smart-card readers through PC/SC
+//               (pcsc.ts — asked once per server, the user picks the reader),
+//               Web Bluetooth's device chooser and pairing prompts (bluetooth.ts)
 
 import {
-  app, BaseWindow, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, Notification, protocol, session,
+  app, BaseWindow, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, session,
   shell, systemPreferences, Tray, WebContentsView,
   type IpcMainEvent, type IpcMainInvokeEvent, type Session, type WebContents, type WebPreferences,
 } from "electron";
@@ -33,8 +36,12 @@ import { applicationMenu, contextMenu, trayMenu, type MenuContext } from "./menu
 import { decideNavigation, decideWindowOpen, describeExternal } from "./nav-guard";
 import { decideDevicePermission, decidePermission } from "./permissions";
 import { parseServerUrl, type ServerUrlError } from "./server-url";
-import { addServer, effectivePasskeyMode, removeServer, serverEntry, setCodeSource, type CodeSource, type PasskeyMode } from "./settings";
+import { addServer, effectivePasskeyMode, pcscAllowed, removeServer, serverEntry, setCodeSource, setPcscAllowed, type CodeSource, type PasskeyMode } from "./settings";
 import { SettingsStore } from "./store";
+import { PcscService, senderPage, type PcscPage } from "./pcsc";
+import { createPcscMiniBackend } from "./pcsc-backend";
+import { BluetoothPicker, bluetoothLabel } from "./bluetooth";
+import type { PcscReader } from "../../client/src/lib/nfc/pcsc-bridge";
 import { Updater } from "./updater";
 import { compareVersions, type Compat } from "./version-compat";
 import { webSecurityHeaders } from "./web-headers";
@@ -49,6 +56,8 @@ const IS_WIN = process.platform === "win32";
 const ALLOW_LOOPBACK = !app.isPackaged || process.env.M5CET_ALLOW_LOOPBACK === "1";
 const SMOKE_REPORT = process.env.M5CET_SMOKE_REPORT ?? "";
 const SMOKE_SERVER = process.env.M5CET_SMOKE_SERVER ?? "";
+/** 6.13.1: the self-test also reads the smart-card readers (read-only: ATR and GET UID). */
+const SMOKE_PCSC = Boolean(SMOKE_REPORT) && process.env.M5CET_SMOKE_PCSC === "1";
 
 // A packaged build is not debuggable from the command line: remote debugging
 // would hand the page (and its keys) to whoever started the process. (The
@@ -91,6 +100,10 @@ const pendingLinks: string[] = [];
 const notes = new Map<string, Notification>();
 let authBox: AbortController | null = null;
 let ready = false;
+let pcsc: PcscService;
+let btPicker: BluetoothPicker;
+/** The self-test's server may use the readers without the question (never stored; M5CET_SMOKE_PCSC only). */
+let smokePcscOrigin = "";
 
 const headersFor = (target: Target) => webSecurityHeaders({ insecureLoopback: target.origin.startsWith("http:") });
 
@@ -230,6 +243,23 @@ function setupPageSession(ses: Session): void {
     if (!isServerFrame(details.frame?.url)) return callback();
     void choose(details.deviceList.map((d) => ({ id: d.deviceId, label: d.productName || d.manufacturerName || `${d.vendorId}:${d.productId}` }))).then((id) => callback(id ?? undefined));
   });
+  // 6.13.1: Web Bluetooth pairing (Windows, Linux — macOS pairs by itself). A confirmation or a PIN
+  // to compare is asked natively; a PIN to type is not possible here: pair in the system first.
+  if (!IS_MAC) {
+    ses.setBluetoothPairingHandler((details, callback) => {
+      if (!details.frame || details.frame !== page?.webContents.mainFrame || !isServerFrame(details.frame.url)) return callback({ confirmed: false });
+      const device = btPicker?.names.get(details.deviceId) || L("dlg.bt.unnamed");
+      if (details.pairingKind === "providePin") {
+        void messageBox({ type: "info", message: L("dlg.btPair.title"), detail: L("dlg.btPair.enterPin", { device }), buttons: [L("btn.ok")] });
+        return callback({ confirmed: false });
+      }
+      const detail = details.pairingKind === "confirmPin"
+        ? L("dlg.btPair.pin", { server: currentDisplay(), device, pin: String(details.pin ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 16) })
+        : L("dlg.btPair.confirm", { server: currentDisplay(), device });
+      void messageBox({ type: "question", message: L("dlg.btPair.title"), detail, buttons: [L("btn.pair"), L("btn.cancel")], defaultId: 1, cancelId: 1, noLink: true })
+        .then((r) => callback({ confirmed: r === 0 }), () => callback({ confirmed: false }));
+    });
+  }
   ses.setDisplayMediaRequestHandler((request, callback) => {
     if (!isServerFrame(request.securityOrigin)) return callback({});
     void desktopCapturer.getSources({ types: ["screen", "window"], thumbnailSize: { width: 0, height: 0 } }).then(async (sources) => {
@@ -354,6 +384,18 @@ function createMainWindow(): void {
   layout();
   guardContents(page.webContents, "page");
   const wc = page.webContents;
+  // 6.13.1: Web Bluetooth's chooser (Electron cancels requestDevice() without it): the scan's
+  // devices are collected for a moment, then the user picks one natively.
+  wc.on("select-bluetooth-device", (event, devices, callback) => {
+    event.preventDefault();
+    if (!isServerFrame(wc.getURL())) { callback(""); return; }
+    btPicker.onEvent(devices, callback);
+  });
+  // A new document in the page: its reader connections, reader picks and a pending device request end.
+  const wcId = wc.id;
+  const release = () => { pcsc?.releasePage(wcId); btPicker?.cancel(); };
+  wc.on("did-start-navigation", (details) => { if (details.isMainFrame && !details.isSameDocument) release(); });
+  wc.on("destroyed", release);
   wc.on("page-title-updated", (_e, title) => {
     unread.title = unreadFromTitle(title);
     updateBadge();
@@ -628,12 +670,71 @@ function setupUiIpc(): void {
 
 /* ========================================================= page bridge */
 
+/** The page a message may act for: the app window's page, its main frame, on the chosen server's origin (pcsc.ts › senderPage). */
+function pageOf(e: IpcMainEvent | IpcMainInvokeEvent): PcscPage | null {
+  const isPage = Boolean(page) && e.sender === page!.webContents;
+  let frame: Electron.WebFrameMain | null = null;
+  try { frame = e.senderFrame; } catch { frame = null; }
+  return senderPage({
+    isPage,
+    isMainFrame: isPage && Boolean(frame) && frame === page!.webContents.mainFrame,
+    frameUrl: frame?.url ?? null,
+    serverOrigin: current()?.origin ?? null,
+    pageId: e.sender.id,
+  });
+}
+
 function isPageSender(e: IpcMainEvent | IpcMainInvokeEvent): boolean {
-  const tgt = current();
-  if (!tgt || !page || e.sender !== page.webContents) return false;
-  const frame = e.senderFrame;
-  if (!frame || frame !== page.webContents.mainFrame) return false;
-  try { return new URL(frame.url).origin === tgt.origin; } catch { return false; }
+  return pageOf(e) !== null;
+}
+
+/* ===================================================== smart-card readers */
+
+/** The native reader chooser: "ACS ACR1281 1S Dual Reader(2) — contactless · card inserted" (at most 8). */
+async function chooseReader(origin: string, readers: PcscReader[], preferred: string | null): Promise<string | null> {
+  const display = serverEntry(store.get(), origin)?.display ?? new URL(origin).host;
+  const ordered = [...readers].sort((a, b) => Number(b.name === preferred) - Number(a.name === preferred) || Number(b.card) - Number(a.card));
+  const shown = ordered.slice(0, 8);
+  const label = (r: PcscReader) => {
+    const slot = r.slot === "unknown" ? "" : L(`pcsc.slot.${r.slot}`);
+    const bits = [slot, r.card ? L("pcsc.card") : ""].filter(Boolean).join(" · ");
+    return `${r.name.slice(0, 60)}${bits ? ` — ${bits}` : ""}`;
+  };
+  const r = await messageBox({
+    type: "question", message: L("dlg.pcscReader.title"), detail: L("dlg.pcscReader.body", { server: display }),
+    buttons: [...shown.map(label), L("btn.cancel")], cancelId: shown.length, noLink: true,
+  });
+  return r < shown.length ? shown[r].name : null;
+}
+
+function setupReaders(): void {
+  pcsc = new PcscService(createPcscMiniBackend, {
+    isAllowed: (origin) => pcscAllowed(store.get(), origin) || (smokePcscOrigin !== "" && origin === smokePcscOrigin),
+    askAllow: async (origin) => {
+      const display = serverEntry(store.get(), origin)?.display ?? new URL(origin).host;
+      showMain();
+      const r = await messageBox({
+        type: "question", message: L("dlg.pcsc.title", { server: display }), detail: L("dlg.pcsc.body"),
+        buttons: [L("btn.allow"), L("btn.dontAllow")], defaultId: 1, cancelId: 1, noLink: true,
+      });
+      return r === 0;
+    },
+    allow: (origin) => { store.set(setPcscAllowed(store.get(), origin, true)); refreshMenus(); },
+    chooseReader,
+    notify: (pageId, readers) => { if (page && !page.webContents.isDestroyed() && page.webContents.id === pageId) page.webContents.send("m5:pcsc-change", readers); },
+    log: (m) => console.warn(m),
+  });
+  btPicker = new BluetoothPicker(
+    (devices) => choose(devices.map((d) => ({ id: d.deviceId, label: bluetoothLabel(d, L("dlg.bt.unnamed")) }))),
+    () => { void messageBox({ type: "info", message: L("dlg.device.title"), detail: L("dlg.device.none"), buttons: [L("btn.ok")] }); },
+  );
+  // No reader access while the screen is locked; every connection closes when it locks.
+  powerMonitor.on("lock-screen", () => pcsc.setLocked(true));
+  powerMonitor.on("unlock-screen", () => pcsc.setLocked(false));
+  ipcMain.handle("m5:pcsc-list", (e) => pcsc.list(pageOf(e)));
+  ipcMain.handle("m5:pcsc-connect", (e, reader: unknown) => pcsc.connect(pageOf(e), reader));
+  ipcMain.handle("m5:pcsc-transmit", (e, handle: unknown, apdu: unknown) => pcsc.transmit(pageOf(e), handle, apdu));
+  ipcMain.handle("m5:pcsc-disconnect", (e, handle: unknown) => pcsc.disconnect(pageOf(e), handle));
 }
 
 function setupPageIpc(): void {
@@ -732,7 +833,16 @@ function menuContext(): MenuContext {
     locale: locale(), platform: process.platform, isPackaged: app.isPackaged,
     server: tgt?.origin ?? null, codeSource: tgt?.mode === "server" ? "server" : "app",
     passkeys: s.passkeys, startAtLogin: s.startAtLogin, closeToTray: s.closeToTray, unread: Math.max(unread.title, unread.bridge),
+    pcscAllowed: pcscAllowed(s, tgt?.origin ?? null),
     actions: {
+      setPcscAllowed: (on) => {
+        const origin = current()?.origin;
+        if (!origin) return;
+        store.set(setPcscAllowed(store.get(), origin, on));
+        // Withdrawn: the page's connections close and it hears no more reader events.
+        if (!on) pcsc?.revoke(origin);
+        refreshMenus();
+      },
       about: () => {
         if (IS_MAC) { app.showAboutPanel(); return; }
         void messageBox({ type: "info", message: `M5cet Desktop ${app.getVersion()}`, detail: `build ${BUILD.build}${BUILD.signed ? "" : " · unsigned"}\nElectron ${process.versions.electron} · Chromium ${process.versions.chrome}`, buttons: [L("btn.ok")] });
@@ -796,6 +906,7 @@ async function selfTest(): Promise<void> {
   try {
     const parsed = parseServerUrl(SMOKE_SERVER, { allowLoopbackHttp: ALLOW_LOOPBACK });
     if (!parsed.ok) throw new Error(`server: ${parsed.error}`);
+    if (SMOKE_PCSC) smokePcscOrigin = parsed.value.origin;
     const added = addServer(store.get(), parsed.value.origin, Date.now(), { allowLoopbackHttp: ALLOW_LOOPBACK });
     if (!added.ok) throw new Error("add");
     store.set(added.settings);
@@ -804,6 +915,7 @@ async function selfTest(): Promise<void> {
     await new Promise((r) => setTimeout(r, 6000));
     report.title = page?.webContents.getTitle();
     report.url = page?.webContents.getURL();
+    console.log("[m5cet] self-test: page checks");
     report.page = await page?.webContents.executeJavaScript(`(async () => ({
       root: document.getElementById("root")?.childElementCount ?? 0,
       bridge: typeof window.m5desktop === "object" && window.m5desktop.isDesktop === true,
@@ -827,6 +939,35 @@ async function selfTest(): Promise<void> {
     }))()`, true);
     report.stats = { ...interceptor.stats };
     report.refused = interceptor.refused.slice(-10);
+    if (SMOKE_PCSC) {
+      console.log("[m5cet] self-test: PC/SC");
+      // 6.13.1: the readers as the app sees them (ATR; GET UID on a contactless slot) …
+      report.pcsc = await pcsc.selfTest();
+      console.log("[m5cet] self-test: PC/SC through the page");
+      // … and through the page's bridge: list, and — when exactly one reader holds a card, so no
+      // chooser opens — connect, GET UID on a contactless card, disconnect. Read-only.
+      const pageTest = page?.webContents.executeJavaScript(`(async () => {
+        const p = window.m5desktop && window.m5desktop.pcsc;
+        if (!p) return { bridge: false };
+        const hex = (b) => Array.from(b || [], (x) => x.toString(16).padStart(2, "0")).join("");
+        const list = await p.listReaders();
+        const out = { bridge: true, list: list.ok ? list.readers : list.code };
+        const withCard = list.ok ? list.readers.filter((r) => r.card) : [];
+        if (withCard.length !== 1) return out;
+        const c = await p.connect(null);
+        out.connect = c.ok ? { reader: c.reader, slot: c.slot, atr: hex(c.atr), protocol: c.protocol } : c.code;
+        if (c.ok && c.slot === "contactless") {
+          const r = await p.transmit(c.handle, new Uint8Array([0xff, 0xca, 0x00, 0x00, 0x00]));
+          out.getUid = r.ok ? hex(r.response) : r.code;
+        }
+        if (c.ok) out.disconnect = (await p.disconnect(c.handle)).ok;
+        const bad = await p.transmit("no-such-handle", new Uint8Array([0x00, 0xa4, 0x04, 0x00]));
+        out.badHandle = bad.ok ? "accepted" : bad.code;
+        return out;
+      })()`, true).catch((e: Error) => ({ error: e.message }));
+      report.pcscPage = await Promise.race([pageTest, new Promise((done) => setTimeout(() => done({ error: "timeout" }), 30_000))]);
+      report.pcscOpenAfter = pcsc.openHandles();
+    }
     report.ok = true;
   } catch (err) {
     report.ok = false;
@@ -834,6 +975,7 @@ async function selfTest(): Promise<void> {
   }
   writeFileSync(SMOKE_REPORT, JSON.stringify(report, null, 2));
   quitting = true;
+  pcsc?.shutdown();
   app.exit(0);
 }
 
@@ -854,6 +996,7 @@ app.whenReady().then(async () => {
   setupPageSession(pageSession);
   setupAppScheme();
   setupUiIpc();
+  setupReaders();
   setupPageIpc();
   updater = new Updater({
     locale, window: () => win,
@@ -888,7 +1031,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("activate", () => showMain());
-app.on("before-quit", () => { quitting = true; saveWindowState(); store?.flush(); });
+app.on("before-quit", () => { quitting = true; saveWindowState(); store?.flush(); pcsc?.shutdown(); });
 app.on("window-all-closed", () => {
   // macOS keeps the app in the dock; elsewhere the tray keeps it unless the user turned that off.
   if (!IS_MAC && !(store?.get().closeToTray && tray)) app.quit();

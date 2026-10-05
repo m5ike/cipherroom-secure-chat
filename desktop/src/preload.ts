@@ -20,6 +20,40 @@ const listen = <T>(channel: string, fn: (value: T) => void): (() => void) => {
 let seq = 0;
 const newId = () => `${Date.now().toString(36)}-${(seq += 1).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
+/* 6.13.1: the system smart-card readers (client/src/lib/nfc/pcsc-bridge.ts is the contract). */
+type PcscFail = { ok: false; code: string; message: string; reader?: string };
+const PCSC_MAX_APDU = 4 + 3 + 65_535 + 3;
+const badRequest = (message: string): Promise<PcscFail> => Promise.resolve({ ok: false, code: "bad-request", message });
+const isName = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 200;
+const isHandle = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 64;
+/** Readers as plain objects (nothing else crosses into the page). */
+const readerList = (v: unknown) => (Array.isArray(v) ? v.slice(0, 32).map((r: { name?: unknown; slot?: unknown; card?: unknown }) => ({
+  name: String(r?.name ?? "").slice(0, 200),
+  slot: ["contact", "contactless", "sam"].includes(String(r?.slot)) ? String(r.slot) : "unknown",
+  card: r?.card === true,
+})) : []);
+
+const pcsc = {
+  listReaders(): Promise<unknown> { return ipcRenderer.invoke("m5:pcsc-list"); },
+  /** Without a name (or one the user has not picked on this page) the app asks which reader. */
+  connect(reader?: string | null): Promise<unknown> {
+    if (reader !== undefined && reader !== null && !isName(reader)) return badRequest("Bad reader name");
+    return ipcRenderer.invoke("m5:pcsc-connect", reader ?? null);
+  },
+  transmit(handle: string, apdu: Uint8Array): Promise<unknown> {
+    if (!isHandle(handle)) return badRequest("Bad handle");
+    if (!(apdu instanceof Uint8Array) || apdu.length < 4 || apdu.length > PCSC_MAX_APDU) return badRequest("The APDU must be 4 to 65544 bytes");
+    return ipcRenderer.invoke("m5:pcsc-transmit", handle, new Uint8Array(apdu));
+  },
+  disconnect(handle: string): Promise<unknown> {
+    if (!isHandle(handle)) return badRequest("Bad handle");
+    return ipcRenderer.invoke("m5:pcsc-disconnect", handle);
+  },
+  onChange(fn: (readers: Array<{ name: string; slot: string; card: boolean }>) => void): () => void {
+    return listen<unknown>("m5:pcsc-change", (v) => fn(readerList(v)));
+  },
+};
+
 const bridge = {
   isDesktop: true as const,
   version: String(info?.version ?? ""),
@@ -43,6 +77,8 @@ const bridge = {
     offerBrowser(): Promise<boolean> { return ipcRenderer.invoke("m5:auth-offer-browser") as Promise<boolean>; },
     onCallback(fn: (id: string) => void): () => void { return listen<string>("m5:auth-callback", fn); },
   },
+  /** 6.13.1: the computer's smart-card readers (PC/SC); the app asks the user and lets them pick the reader. */
+  pcsc,
 };
 
 contextBridge.exposeInMainWorld("m5desktop", bridge);
