@@ -44,7 +44,7 @@ enum NfcErrorMap {
         case userCanceled: return .userCancelled
         case sessionTimeout: return .timeout
         case systemIsBusy: return .busy
-        case unsupportedFeature: return .unavailable("This device has no NFC reader (iPad and Apple Watch have none).")
+        case unsupportedFeature: return .unavailable(NfcPlatform.noReader)
         case securityViolation: return .unavailable("Core NFC refused the session: the app's NFC entitlement or its Info.plist NFC keys are missing.")
         case radioDisabled: return .unavailable("NFC is turned off on this iPhone.")
         case ineligible, accessNotAccepted: return .unavailable("This iPhone is not eligible for this NFC reader.")
@@ -80,7 +80,7 @@ enum NfcErrorMap {
         case securityViolation: return NfcError(.unsupported, "Core NFC refused the command (an application not listed in Info.plist?)")
         case invalidParameter, invalidParameterLength, parameterOutOfBound, invalidConfiguration:
             return NfcError(.invalidArgument, "Core NFC refused the command's parameters")
-        case unsupportedFeature: return NfcError(.unsupported, "This device has no NFC reader (iPad and Apple Watch have none).")
+        case unsupportedFeature: return NfcError(.unsupported, NfcPlatform.noReader)
         case radioDisabled: return NfcError(.unsupported, "NFC is turned off on this iPhone.")
         case ndefTagNotWritable: return NfcError(.cardError, "read-only")
         case ndefTagSizeTooSmall: return NfcError(.cardError, "too-small")

@@ -84,7 +84,7 @@ actor NfcTagSession {
         if !started {
             started = true
             guard let d = factory(request, queue, NfcSessionEvents(session: self)) else {
-                end = .unavailable("This device has no NFC reader (iPad and Apple Watch have none).")
+                end = .unavailable(NfcPlatform.noReader)
                 throw NfcErrorMap.error(for: end!)
             }
             driver = d

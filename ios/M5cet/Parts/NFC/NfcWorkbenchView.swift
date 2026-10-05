@@ -50,7 +50,8 @@ struct NfcWorkbenchView: View {
                             DesignIcon(name: "nfc", size: 22, color: p.muted)
                             NfcText(text: w.or("nfc.unavailable.device", "nfc.unavailable"), size: 15, color: p.fg, bold: true, family: p.family)
                         }
-                        NfcText(text: why, size: 13, color: p.muted, family: p.family)
+                        // The service's generic reason is English and says the same as the design's line above.
+                        if why != NfcService.noReader { NfcText(text: why, size: 13, color: p.muted, family: p.family) }
                     }
                     .accessibilityIdentifier("nfc.noReader")
                     .padding(.bottom, 4)

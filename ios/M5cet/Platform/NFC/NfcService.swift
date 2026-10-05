@@ -97,7 +97,8 @@ final class NfcService {
 
     nonisolated static let ndefAids = [Hex.upper(Ndef.t4tAid), "D2760000850100"]
     nonisolated static let eidAids = [Hex.upper(MrtdReader.aid)]
-    nonisolated static let noReader = "This device has no NFC reader (iPad and Apple Watch have none)."
+    /// In the app's language (M5NFC's NfcTexts — the iOS design's nfc.ios.limit.noReader).
+    nonisolated static var noReader: String { NfcPlatform.noReader }
     nonisolated static let lockNeedsYes = "Making a tag read-only is permanent — it needs the explicit confirmation."
 
     /// How a reading ends on the sheet.

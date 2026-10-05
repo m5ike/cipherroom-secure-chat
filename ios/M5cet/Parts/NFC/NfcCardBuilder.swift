@@ -218,7 +218,7 @@ struct NfcCardBuilderView: View {
                 }
                 if model.writing { NfcSpinner(palette: p).padding(.top, 8) }
                 if let why {
-                    NfcText(text: w.or("nfc.unavailable.device", "nfc.unavailable") + " " + why, size: 12, color: p.muted, family: p.family)
+                    NfcText(text: why, size: 12, color: p.muted, family: p.family)
                         .padding(.top, 6)
                         .accessibilityIdentifier("nfc.builder.why")
                 }

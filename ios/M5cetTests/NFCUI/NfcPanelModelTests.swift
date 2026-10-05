@@ -31,7 +31,7 @@ final class NfcPanelModelTests: XCTestCase {
 
         let pad = panel(FakeNfcUi(iPhone: false))
         XCTAssertEqual(pad.scope["available"], false)
-        XCTAssertEqual(pad.status, NfcUiTest.w("nfc.unavailable"))
+        XCTAssertEqual(pad.status, NfcUiTest.w("nfc.unavailable.device"))
         pad.action("read")
         XCTAssertEqual(pad.mode, "idle")
     }
