@@ -35,6 +35,14 @@ public struct URLConfirmation: Sendable, Hashable {
     public var title: String
     public var confirm: String
     public var cancel: String
+
+    /// For the app's own parts (links in messages, function outputs) that ask the same question.
+    public init(url: String, title: String, confirm: String, cancel: String) {
+        self.url = url
+        self.title = title
+        self.confirm = confirm
+        self.cancel = cancel
+    }
 }
 
 /// The app's side of the design's actions. The SwiftUI app implements it (main actor).
